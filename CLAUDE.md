@@ -118,20 +118,29 @@ Component detail and coding standards live in the domain docs:
 
 Kept open deliberately. Each lists the criteria to decide on when the time comes.
 
-- [ ] **Model store / API** — must permit mass download for personal ML use (verify ToS),
-      expose metadata for weak labels, and offer a rate-limited official API (no scraping).
-      *Precedent:* Objaverse (~800k annotated objects from Sketchfab).
-- [ ] **Cloud provider** — pick ONE, don't split. Criteria: serverless container + managed
-      queue + object storage in one ecosystem, spot/preemptible GPU availability, free-tier
-      headroom vs. the $100 budget. Candidates: GCP (Cloud Run + Pub/Sub + GCS) vs. AWS
-      (Fargate/Batch + SQS + S3).
-- [ ] **Queue technology** — managed (SQS / Pub/Sub) vs. self-hosted (Redis + Celery/Dramatiq/RQ).
-      Criteria: operational overhead, cost at idle, at-least-once delivery + retries, fit with
-      the chosen cloud.
+- [x] **Model store / API → Objaverse.** ~800k Sketchfab-sourced objects with tags/categories/
+      titles for weak labels, distributed via an official Python package that pulls from a hosted
+      mirror — no scraping, no bulk-download ToS friction. See
+      [server/server.md](server/server.md#ingestion-source).
+- [x] **Cloud provider → GCP.** Picked as the single ecosystem for its scale-to-zero serverless
+      compute and zero-idle managed queue, which fit the bursty-preprocessing + $100-budget profile
+      better than AWS. Component-by-component rationale in
+      [server/server.md](server/server.md#cloud-platform-gcp).
+- [x] **Queue technology → Pub/Sub (managed), push subscriptions.** Native at-least-once + retries +
+      dead-letter at zero idle cost, vs. self-hosted Redis+Celery's standing cost/ops. One
+      topic+subscription per stage, DLQ on each. See [server/server.md](server/server.md#queue).
 - [ ] **Final class list** — 10–20 classes chosen AFTER inspecting the metadata distribution;
       avoid long-tail classes with few examples (milestone 1).
-- [ ] **Database** — see [server/server.md](server/server.md#database) for the requirements and the
-      shortlist to decide from.
+- [x] **Database → PostgreSQL everywhere.** Managed Cloud SQL Postgres in cloud (smallest tier);
+      Postgres in Docker locally (not SQLite) so dev shares prod's upsert + concurrency semantics —
+      critical for the idempotency invariant (NFR-2) and parallel-worker scale (NFR-3). See
+      [server/server.md](server/server.md#database).
+
+## Development Workflow
+
+- **Stage, don't commit.** Every change is staged (`git add`) so it can be reviewed as a diff.
+  Do **not** commit until the user has reviewed the staged diff and explicitly approved. No
+  auto-commits — this applies to code and docs alike.
 
 ## Doc Maintenance
 
