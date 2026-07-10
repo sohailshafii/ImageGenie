@@ -46,15 +46,14 @@ to choose the class list and fix the support threshold. Sources:
 Outputs CSVs + `summary.json` to `data/exploration/` (gitignored — derived data isn't redistributed,
 NFR-6).
 
-**Run** (macOS framework-Python needs the cert shim):
+**Run** via the `Makefile` (targets wrap venv creation, deps, and — because macOS
+framework-Python doesn't trust the system cert store — the `SSL_CERT_FILE` cert shim):
 
 ```
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
-SSL_CERT_FILE=$(.venv/bin/python -m certifi) .venv/bin/python ml/explore_metadata.py --mode lvis
+make setup                 # create .venv, install runtime + dev deps
+make explore               # metadata exploration, MODE=lvis (default)
+make explore MODE=both     # LVIS + sampled raw Sketchfab
 ```
-
-> **TODO (setup script):** wrap venv creation + `pip install` + the `SSL_CERT_FILE` cert wiring into a
-> `scripts/setup.py` (or Makefile target) so running the pipeline isn't a manual incantation.
 
 **Findings:**
 
