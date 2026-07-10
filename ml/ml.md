@@ -33,6 +33,66 @@ Store metadata (categories, tags, titles) → thousands of free-but-noisy labels
   uncertainty (active learning — milestone 8).
 - **Precedent:** Objaverse (~800k annotated objects from Sketchfab) shows this practice is accepted.
 
+### Metadata Exploration (milestone 1)
+
+`ml/explore_metadata.py` pulls category/tag distributions from Objaverse (metadata only — no meshes)
+to choose the class list and fix the support threshold. Sources:
+
+- **LVIS** (`--mode lvis`) — curated per-object categories; one small download.
+- **Raw Sketchfab** (`--mode raw --shards N`) — the weak-label source (tags/categories), sampled by
+  *whole metadata shard* (160 shards × ~5k objects). Sampling scattered uids forces downloading nearly
+  every shard, so we sample whole shards instead.
+
+Outputs CSVs + `summary.json` to `data/exploration/` (gitignored — derived data isn't redistributed,
+NFR-6).
+
+**Run** (macOS framework-Python needs the cert shim):
+
+```
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+SSL_CERT_FILE=$(.venv/bin/python -m certifi) .venv/bin/python ml/explore_metadata.py --mode lvis
+```
+
+> **TODO (setup script):** wrap venv creation + `pip install` + the `SSL_CERT_FILE` cert wiring into a
+> `scripts/setup.py` (or Makefile target) so running the pipeline isn't a manual incantation.
+
+**Findings:**
+
+- **LVIS is too granular** — 1,156 categories over ~46k objects (~40 each); only `chair` (453) and
+  `seashell` (371) clear the ≥300 bar. Clean but sparse: good as a curated eval set or a merge base,
+  not a class list on its own.
+- **Raw Sketchfab categories are coarse but high-volume** — ~18 top-level categories; on a 5k sample
+  the object-like ones (extrapolated ×160 over ~800k) clear the bar with room to spare:
+  `furniture-home`, `characters-creatures`, `animals-pets`, `cars-vehicles`, `weapons-military`,
+  `electronics-gadgets`, `food-drink`, `nature-plants`. The rest (`architecture`, `art-abstract`,
+  `cultural-heritage`, `science-technology`, `places-travel`, `people`…) are too abstract/mixed to be
+  visual classes.
+- **Tags are noisy** — dominated by tool/style tags (`lowpoly`, `blender`, `substancepainter`) and
+  uploader batches (a `stair`/`staircase`/`staircon`/`pamir` cluster). Usable only with heavy curation.
+
+**Class-list approach — hybrid (chosen).** ~12–15 mid-level, visually-distinct classes (candidate
+roster: chair, table, car, aircraft, animal, character/figure, weapon, lamp, food, plant, electronics,
+building — exact membership firms up once merged counts are in). Labels come from two passes:
+
+1. **LVIS merge — clean seed + gold set.** Merge related fine LVIS categories into each class (e.g.
+   `chair` + `folding_chair` + `highchair` → chair). Gives clean, curated labels for the ~46k
+   LVIS-annotated objects and — crucially — a **gold set to tune and measure the weak-label rules**
+   below (does the `chair` rule catch what LVIS independently calls chairs, without dragging in
+   stools?).
+2. **Sketchfab rules — volume.** For the full ~798k corpus, assign a class from raw metadata: the
+   coarse **`categories` field as a pre-filter + disambiguator**, then **tags/title keywords** for the
+   fine assignment. The category disambiguates polysemous keywords — *"jaguar"* is a car in
+   `cars-vehicles` but an animal in `animals-pets`. **This rule-pass is the weak labeling (FR-3)** —
+   deliberately noisy, corrected later via the [labeling frontend](../web/web.md#labeling-ui) (FR-4).
+
+**Volume is driven by label-source coverage, not the class list.** LVIS covers only ~46k objects, so
+LVIS-only labels cap there; the Sketchfab rules cover the full ~798k, which is where per-class volume
+comes from. The class list only changes how those models are *distributed* across classes (broader
+classes absorb more of the same corpus).
+
+**Support threshold:** provisionally **≥ 300** weak-labeled examples/class, revisited per-class once
+merged counts land. Resolves the class-list [open decision](../CLAUDE.md#open-decisions).
+
 ## Dataset Splits
 
 Resolves the dev-set-percentage TODO.

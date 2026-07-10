@@ -1,1 +1,17 @@
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Objaverse cache + derived data (NOT redistributed — see NFR-6 / distribution policy)
+.objaverse/
+data/
+*.csv
+!requirements*.txt

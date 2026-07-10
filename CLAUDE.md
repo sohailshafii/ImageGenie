@@ -129,8 +129,11 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
 - [x] **Queue technology → Pub/Sub (managed), push subscriptions.** Native at-least-once + retries +
       dead-letter at zero idle cost, vs. self-hosted Redis+Celery's standing cost/ops. One
       topic+subscription per stage, DLQ on each. See [server/server.md](server/server.md#queue).
-- [ ] **Final class list** — 10–20 classes chosen AFTER inspecting the metadata distribution;
-      avoid long-tail classes with few examples (milestone 1).
+- [x] **Class list → hybrid weak-labeling, ~12–15 mid-level classes.** Candidate roster (chair,
+      table, car, aircraft, animal, character/figure, weapon, lamp, food, plant, electronics,
+      building); clean LVIS-merge seed + gold set, expanded to the full ~798k via Sketchfab
+      category+tag rules. Exact membership finalizes as merges/rules land. See
+      [ml/ml.md](ml/ml.md#metadata-exploration-milestone-1).
 - [x] **Database → PostgreSQL everywhere.** Managed Cloud SQL Postgres in cloud (smallest tier);
       Postgres in Docker locally (not SQLite) so dev shares prod's upsert + concurrency semantics —
       critical for the idempotency invariant (NFR-2) and parallel-worker scale (NFR-3). See

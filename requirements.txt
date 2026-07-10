@@ -1,0 +1,3 @@
+# Runtime deps. Milestone 1 (metadata exploration) needs only objaverse;
+# pandas/pyarrow/requests come in transitively. See ml/ml.md.
+objaverse==0.1.7
