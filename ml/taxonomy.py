@@ -1,0 +1,110 @@
+"""Class taxonomy for ImageGenie weak labeling (FR-3).
+
+Single source of truth mapping the final class roster to its label sources. Two
+passes back the labels (see `ml/ml.md#class-list-approach`):
+
+* ``LVIS_MERGES`` — curated fine LVIS categories folded into each class. Clean
+  seed + gold set; `ml/build_class_list.py` unions their object UIDs to measure
+  per-class support and lock the roster against the >=300 bar.
+* *(next task)* Sketchfab category/tag rules for full-corpus weak labels.
+
+LVIS strings must match ``objaverse.load_lvis_annotations()`` keys **exactly**;
+quirks are preserved on purpose (e.g. ``crab_(animal)``,
+``monitor_(computer_equipment) computer_monitor``). `build_class_list.py`
+validates every string against the live keys and fails loudly on a typo.
+
+Curation is deliberate, not a keyword sweep: a broad grep pulls in homographs
+(``bowl``/``bowling_ball``/``bowler_hat`` are not animals; ``spear`` and
+``steak_knife`` are not food; ``table_lamp`` is a lamp, not a table). Only
+visually-coherent members are listed; notable exclusions are noted inline.
+"""
+
+from __future__ import annotations
+
+# class -> curated LVIS categories merged into it. Order is by count (descending)
+# for readability only; the build script treats each list as a set.
+LVIS_MERGES: dict[str, list[str]] = {
+    # Seating. Excludes typewriter (keyword-sweep false positive).
+    "chair": [
+        "chair", "armchair", "bench", "sofa", "stool", "pew_(church_bench)",
+        "sofa_bed", "loveseat", "wheelchair", "step_stool", "music_stool",
+        "footstool", "recliner", "ottoman", "deck_chair", "rocking_chair",
+        "highchair", "folding_chair",
+    ],
+    # Tables/desks. Excludes table_lamp (-> lamp) and tablecloth (textile).
+    "table": [
+        "table", "desk", "dining_table", "coffee_table", "kitchen_table",
+        "pool_table", "table-tennis_table",
+    ],
+    # Road motor vehicles. Two-wheelers included for volume; rail (freight_car,
+    # train) excluded to keep the class visually coherent as "car".
+    "car": [
+        "pickup_truck", "car_(automobile)", "race_car", "police_cruiser",
+        "motorcycle", "jeep", "tractor_(farm_equipment)", "motor_scooter",
+        "bus_(vehicle)", "truck", "school_bus", "trailer_truck",
+        "convertible_(automobile)", "camper_(vehicle)", "minivan", "cab_(taxi)",
+        "ambulance", "garbage_truck", "tow_truck",
+    ],
+    "aircraft": [
+        "fighter_jet", "helicopter", "airplane", "drone", "blimp", "jet_plane",
+        "seaplane",
+    ],
+    # Live creatures. Excludes teddy_bear (-> figure) and the bowl/bowling/
+    # bowler homograph cluster.
+    "animal": [
+        "owl", "lion", "rabbit", "elephant", "crab_(animal)", "shark", "pony",
+        "wolf", "frog", "penguin", "butterfly", "kitten", "turtle", "horse",
+        "giraffe", "puppy", "cat", "dog", "bird", "fish", "snake", "monkey",
+        "lizard", "duckling", "bat_(animal)", "tiger", "cow", "eagle", "deer",
+        "chicken_(animal)", "goldfish", "octopus_(animal)", "dolphin", "bear",
+        "starfish", "seahorse",
+    ],
+    # Human/creature figures and figurines.
+    "figure": [
+        "snowman", "figurine", "teddy_bear", "sculpture", "mascot",
+        "statue_(sculpture)", "puppet", "doll", "rag_doll",
+    ],
+    # Edibles. Vegetables (cauliflower, eggplant) live here, not under plant.
+    # Excludes spear/steak_knife (-> weapon).
+    "food": [
+        "doughnut", "banana", "mushroom", "pumpkin", "apple", "pizza",
+        "cupcake", "hamburger", "chocolate_cake", "bread", "pineapple", "pear",
+        "tomato", "strawberry", "wedding_cake", "sandwich", "patty_(food)",
+        "carrot", "birthday_cake", "cake", "potato", "orange_(fruit)", "sushi",
+        "edible_corn", "lemon", "pancake", "sweet_potato", "cornbread",
+        "pita_(bread)", "mashed_potato", "crisp_(potato_chip)", "cauliflower",
+        "eggplant", "fish_(food)",
+    ],
+    # Decorative plants/trees + potted arrangements.
+    "plant": [
+        "Christmas_tree", "flowerpot", "flower_arrangement", "sunflower",
+        "carnation", "window_box_(for_plants)", "sugarcane_(plant)",
+    ],
+    # Consumer electronics. Excludes telephone_booth/telephone_pole (fixtures).
+    "electronics": [
+        "monitor_(computer_equipment) computer_monitor", "telephone",
+        "television_set", "computer_keyboard", "earphone", "radio_receiver",
+        "microphone", "boom_microphone", "remote_control",
+        "mouse_(computer_equipment)", "laptop_computer", "calculator",
+        "speaker_(stero_equipment)", "television_camera",
+        "router_(computer_equipment)", "cellular_telephone", "printer",
+        "camera",
+    ],
+    # Arms + armor. Excludes steak_knife (cutlery, -> food).
+    "weapon": [
+        "shield", "armor", "sword", "rifle", "machine_gun", "pistol", "gun",
+        "knife", "projectile_(weapon)", "pocketknife", "spear", "dagger",
+        "bow_(weapon)",
+    ],
+    # Light fixtures. candle_holder included; bare candle excluded (consumable).
+    "lamp": [
+        "chandelier", "lampshade", "lamppost", "oil_lamp", "table_lamp",
+        "lantern", "candle_holder", "streetlight",
+    ],
+    # Structures. LVIS is object-centric so this is thin here; full volume comes
+    # from the Sketchfab `architecture` category in pass 2.
+    "building": [
+        "windmill", "fireplace", "telephone_booth", "dollhouse", "birdhouse",
+        "clock_tower", "water_tower", "houseboat",
+    ],
+}

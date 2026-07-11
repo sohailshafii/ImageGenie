@@ -30,5 +30,8 @@ lint: ## ruff-check the codebase
 explore: ## run milestone-1 metadata exploration (MODE=lvis|raw|both)
 	$(RUN) ml/explore_metadata.py --mode $(MODE)
 
+classlist: ## build + validate the final class list from LVIS merges (ml/taxonomy.py)
+	$(RUN) ml/build_class_list.py
+
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache

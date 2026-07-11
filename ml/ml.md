@@ -69,9 +69,8 @@ make explore MODE=both     # LVIS + sampled raw Sketchfab
 - **Tags are noisy** — dominated by tool/style tags (`lowpoly`, `blender`, `substancepainter`) and
   uploader batches (a `stair`/`staircase`/`staircon`/`pamir` cluster). Usable only with heavy curation.
 
-**Class-list approach — hybrid (chosen).** ~12–15 mid-level, visually-distinct classes (candidate
-roster: chair, table, car, aircraft, animal, character/figure, weapon, lamp, food, plant, electronics,
-building — exact membership firms up once merged counts are in). Labels come from two passes:
+**Class-list approach — hybrid (chosen).** Mid-level, visually-distinct classes. Labels come from two
+passes:
 
 1. **LVIS merge — clean seed + gold set.** Merge related fine LVIS categories into each class (e.g.
    `chair` + `folding_chair` + `highchair` → chair). Gives clean, curated labels for the ~46k
@@ -89,8 +88,30 @@ LVIS-only labels cap there; the Sketchfab rules cover the full ~798k, which is w
 comes from. The class list only changes how those models are *distributed* across classes (broader
 classes absorb more of the same corpus).
 
-**Support threshold:** provisionally **≥ 300** weak-labeled examples/class, revisited per-class once
-merged counts land. Resolves the class-list [open decision](../CLAUDE.md#open-decisions).
+**Locked class list — 12 classes.** `ml/taxonomy.py` (`LVIS_MERGES`) is the source of truth: a curated
+map from each class to its exact LVIS category strings (hand-curated, not a keyword sweep — `bowl` is
+not an animal, `spear`/`steak_knife` are not food). `ml/build_class_list.py` (`make classlist`) applies
+it, counting **unique objects** per class (union of UIDs, no double-counting) and self-checking for
+unknown keys + large unassigned categories. Latest run — all 12 clear the ≥300 bar *within LVIS alone*,
+0 objects multi-class:
+
+| class | objs | class | objs | class | objs |
+|-------|-----:|-------|-----:|-------|-----:|
+| animal | 3,003 | electronics | 1,170 | aircraft | 573 |
+| food | 1,883 | weapon | 1,175 | building | 454 |
+| car | 1,269 | figure | 853 | table | 411 |
+| chair | 1,189 | lamp | 754 | plant | 384 |
+
+These are the *LVIS-merged* counts (the clean ~46k subset) — a viability signal + gold set, **not** the
+final weak-label volume, which comes from the Sketchfab pass. `plant`/`building`/`table` are thin here
+(LVIS is object-centric) and lean on pass 2 for volume.
+
+The 12 classes cover **13,118 / 46,207 LVIS objects (~28%)**; the other ~33k sit in 972 out-of-roster
+categories (`seashell`, `mug`, `guitar`, `shoe`, …) — expected for a curated 12-class list, and a
+non-issue since LVIS is the gold set, not the volume source.
+
+**Support threshold: ≥ 300** weak-labeled examples/class (revisit per-class after the Sketchfab pass).
+Resolves the class-list [open decision](../CLAUDE.md#open-decisions).
 
 ## Dataset Splits
 
