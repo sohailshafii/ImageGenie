@@ -113,6 +113,23 @@ non-issue since LVIS is the gold set, not the volume source.
 **Support threshold: ≥ 300** weak-labeled examples/class (revisit per-class after the Sketchfab pass).
 Resolves the class-list [open decision](../CLAUDE.md#open-decisions).
 
+### Sketchfab weak labeling (pass 2, FR-3)
+
+`ml/weak_label.py` (`make weaklabel [SHARDS=N]`) assigns a class per object from raw Sketchfab metadata,
+built up in stages so each is measurable:
+
+- **Stage 1 — category gate (done).** `taxonomy.SKETCHFAB_CATEGORY_CLASSES` maps the 18 top-level
+  Sketchfab categories to the candidate roster classes under each. Single-candidate categories
+  (`weapons-military`→weapon, `architecture`→building) label directly; three are multi-candidate and
+  deferred to keyword rules (`furniture-home`→chair/table/lamp, `cars-vehicles`→car/aircraft,
+  `characters-creatures`→figure/animal); unmapped categories (abstract/mixed: `art-abstract`,
+  `science-technology`, …) yield no label. On a 5k-object shard: **19% labeled by category, 21%
+  ambiguous, 60% out-of-scope** — so pass 2's real work is the ~21% ambiguous slice plus rescuing
+  out-of-scope objects by keyword.
+- **Stage 2 — keyword resolution (next).** Tag/title keywords pick within a multi-candidate set and
+  disambiguate homographs by category (*"jaguar"* is a car under `cars-vehicles`, an animal under
+  `animals-pets`), then measured against the LVIS gold set.
+
 ## Dataset Splits
 
 Resolves the dev-set-percentage TODO.

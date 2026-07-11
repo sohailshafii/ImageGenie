@@ -8,6 +8,7 @@ PYTHON ?= python3
 VENV   := .venv
 BIN    := $(VENV)/bin
 MODE   ?= lvis
+SHARDS ?= 1
 
 # venv Python with the cert shim (see header). `$$(...)` defers to recipe-time so
 # it isn't evaluated before the venv exists.
@@ -32,6 +33,9 @@ explore: ## run milestone-1 metadata exploration (MODE=lvis|raw|both)
 
 classlist: ## build + validate the final class list from LVIS merges (ml/taxonomy.py)
 	$(RUN) ml/build_class_list.py
+
+weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
+	$(RUN) ml/weak_label.py --shards $(SHARDS)
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache

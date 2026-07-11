@@ -6,7 +6,11 @@ passes back the labels (see `ml/ml.md#class-list-approach`):
 * ``LVIS_MERGES`` — curated fine LVIS categories folded into each class. Clean
   seed + gold set; `ml/build_class_list.py` unions their object UIDs to measure
   per-class support and lock the roster against the >=300 bar.
-* *(next task)* Sketchfab category/tag rules for full-corpus weak labels.
+* ``SKETCHFAB_CATEGORY_CLASSES`` — the coarse Sketchfab top-level `categories`
+  field as a pre-filter/disambiguator for the full-corpus weak labels (FR-3
+  pass 2). Each category maps to the *set* of roster classes plausibly under it;
+  tag/title keywords (next commit) pick within the set. `ml/weak_label.py`
+  applies it.
 
 LVIS strings must match ``objaverse.load_lvis_annotations()`` keys **exactly**;
 quirks are preserved on purpose (e.g. ``crab_(animal)``,
@@ -107,4 +111,27 @@ LVIS_MERGES: dict[str, list[str]] = {
         "windmill", "fireplace", "telephone_booth", "dollhouse", "birdhouse",
         "clock_tower", "water_tower", "houseboat",
     ],
+}
+
+
+# Sketchfab top-level category -> candidate roster classes it can contain (pass 2
+# pre-filter + disambiguator). A category maps to the *set* of classes plausibly
+# under it; single-class categories yield a label directly, multi-class ones are
+# resolved by tag/title keywords (next commit). Categories too abstract or mixed
+# to imply any roster class are deliberately omitted — objects whose only
+# category is unmapped get no category-gated label. Omitted (and why):
+# art-abstract, cultural-heritage-history, science-technology, places-travel,
+# fashion-style, sports-fitness, music, news-politics, people-less scenes.
+SKETCHFAB_CATEGORY_CLASSES: dict[str, list[str]] = {
+    "animals-pets": ["animal"],
+    "food-drink": ["food"],
+    "weapons-military": ["weapon"],
+    "electronics-gadgets": ["electronics"],
+    "nature-plants": ["plant"],
+    "architecture": ["building"],
+    "people": ["figure"],
+    # Multi-candidate — need keyword disambiguation:
+    "cars-vehicles": ["car", "aircraft"],          # "jet"/"plane" -> aircraft
+    "furniture-home": ["chair", "table", "lamp"],   # "lamp"/"desk"/"sofa" split
+    "characters-creatures": ["figure", "animal"],   # creature vs. humanoid figure
 }
