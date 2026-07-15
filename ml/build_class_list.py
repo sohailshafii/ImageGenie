@@ -31,80 +31,81 @@ from taxonomy import LVIS_MERGES
 def build(out_dir: Path, min_support: int, top_unassigned: int) -> dict[str, object]:
     annotations: dict[str, list[str]] = objaverse.load_lvis_annotations()
     live_keys = set(annotations)
-    n_lvis_objects = len({u for uids in annotations.values() for u in uids})
+    n_lvis_objects = len({uid for uids in annotations.values() for uid in uids})
 
-    assigned: set[str] = set()
-    unknown: dict[str, list[str]] = {}
+    assigned_categories: set[str] = set()
+    unknown_by_class: dict[str, list[str]] = {}
     per_class: list[dict[str, object]] = []
 
-    for cls, cats in LVIS_MERGES.items():
-        bad = [c for c in cats if c not in live_keys]
-        if bad:
-            unknown[cls] = bad
-        uids: set[str] = set()
-        for c in cats:
-            uids.update(annotations.get(c, []))
-        assigned.update(cats)
+    for class_name, categories in LVIS_MERGES.items():
+        unknown_in_class = [c for c in categories if c not in live_keys]
+        if unknown_in_class:
+            unknown_by_class[class_name] = unknown_in_class
+        class_object_uids: set[str] = set()
+        for category in categories:
+            class_object_uids.update(annotations.get(category, []))
+        assigned_categories.update(categories)
         per_class.append({
-            "class": cls,
-            "n_objects": len(uids),
-            "n_categories": len(cats),
-            "clears_bar": len(uids) >= min_support,
+            "class": class_name,
+            "n_objects": len(class_object_uids),
+            "n_categories": len(categories),
+            "clears_bar": len(class_object_uids) >= min_support,
         })
 
-    per_class.sort(key=lambda r: r["n_objects"], reverse=True)
+    per_class.sort(key=lambda class_row: class_row["n_objects"], reverse=True)
 
     # Objects claimed by more than one class (union double-counts across classes).
-    seen: set[str] = set()
-    overlap: set[str] = set()
-    for cats in LVIS_MERGES.values():
-        cls_uids = {u for c in cats for u in annotations.get(c, [])}
-        overlap |= seen & cls_uids
-        seen |= cls_uids
+    assigned_object_uids: set[str] = set()
+    multi_class_uids: set[str] = set()
+    for categories in LVIS_MERGES.values():
+        class_uids = {uid for c in categories for uid in annotations.get(c, [])}
+        multi_class_uids |= assigned_object_uids & class_uids
+        assigned_object_uids |= class_uids
 
     unassigned = sorted(
-        ((c, len(annotations[c])) for c in live_keys - assigned),
-        key=lambda kv: kv[1], reverse=True,
+        ((category, len(annotations[category])) for category in live_keys - assigned_categories),
+        key=lambda entry: entry[1], reverse=True,
     )[:top_unassigned]
 
-    if unknown:
+    if unknown_by_class:
         print("!! unknown LVIS categories (fix typos in taxonomy.py):")
-        for cls, bad in unknown.items():
-            print(f"   {cls}: {bad}")
+        for class_name, unknown_in_class in unknown_by_class.items():
+            print(f"   {class_name}: {unknown_in_class}")
 
     print(f"\n=== LVIS-merged class support ("
-          f"{len(assigned):,}/{len(live_keys):,} categories, "
-          f"{len(seen):,}/{n_lvis_objects:,} objects = "
-          f"{len(seen) / n_lvis_objects * 100:.0f}% of LVIS) ===")
+          f"{len(assigned_categories):,}/{len(live_keys):,} categories, "
+          f"{len(assigned_object_uids):,}/{n_lvis_objects:,} objects = "
+          f"{len(assigned_object_uids) / n_lvis_objects * 100:.0f}% of LVIS) ===")
     print(f"{'class':<14}{'objects':>9}  {'cats':>4}  bar(>={min_support})")
-    for r in per_class:
-        mark = "PASS" if r["clears_bar"] else "below"
-        print(f"{r['class']:<14}{r['n_objects']:>9,}  {r['n_categories']:>4}  {mark}")
+    for class_row in per_class:
+        mark = "PASS" if class_row["clears_bar"] else "below"
+        print(f"{class_row['class']:<14}{class_row['n_objects']:>9,}  "
+              f"{class_row['n_categories']:>4}  {mark}")
 
-    n_pass = sum(r["clears_bar"] for r in per_class)
+    n_pass = sum(class_row["clears_bar"] for class_row in per_class)
     print(f"\n{n_pass}/{len(per_class)} classes clear the LVIS bar; "
-          f"{len(overlap):,} objects are claimed by >1 class.")
+          f"{len(multi_class_uids):,} objects are claimed by >1 class.")
     print("(LVIS is the ~46k clean subset — volume for the bar comes from the "
           "Sketchfab pass; below-bar here = lean on pass 2, not dropped.)")
 
     print(f"\ntop {top_unassigned} unassigned LVIS categories (candidate omissions):")
-    for cat, n in unassigned:
-        print(f"  {n:5,}  {cat}")
+    for category, count in unassigned:
+        print(f"  {count:5,}  {category}")
 
     result: dict[str, object] = {
         "min_support": min_support,
         "n_classes": len(per_class),
         "n_classes_clear_bar": n_pass,
         "n_lvis_objects": n_lvis_objects,
-        "n_objects_assigned": len(seen),
-        "n_objects_multi_class": len(overlap),
+        "n_objects_assigned": len(assigned_object_uids),
+        "n_objects_multi_class": len(multi_class_uids),
         "classes": per_class,
-        "unknown_categories": unknown,
+        "unknown_categories": unknown_by_class,
         "top_unassigned": unassigned,
     }
     out_path = out_dir / "class_list.json"
-    with out_path.open("w", encoding="utf-8") as fh:
-        json.dump(result, fh, indent=2)
+    with out_path.open("w", encoding="utf-8") as out_file:
+        json.dump(result, out_file, indent=2)
     print(f"\nwrote {out_path}")
     return result
 

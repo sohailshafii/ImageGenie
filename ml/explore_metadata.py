@@ -31,31 +31,33 @@ def _write_csv(path: Path, header: tuple[str, str], rows: list[tuple[str, int]])
     """Write ranked (name, count) rows to a CSV using stdlib csv semantics."""
     import csv
 
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
         writer.writerow(header)
         writer.writerows(rows)
 
 
-def explore_lvis(out_dir: Path, top: int, min_support: int) -> dict[str, object]:
+def explore_lvis(out_dir: Path, top_n: int, min_support: int) -> dict[str, object]:
     """Rank curated LVIS categories by object count; the class-list signal."""
     annotations: dict[str, list[str]] = objaverse.load_lvis_annotations()
-    counts: Counter[str] = Counter({cat: len(uids) for cat, uids in annotations.items()})
+    counts: Counter[str] = Counter(
+        {category: len(uids) for category, uids in annotations.items()}
+    )
     ranked = counts.most_common()
 
     _write_csv(out_dir / "lvis_category_counts.csv", ("category", "count"), ranked)
 
     total_assignments = sum(counts.values())
     unique_objects = len({uid for uids in annotations.values() for uid in uids})
-    trainable = [(c, n) for c, n in ranked if n >= min_support]
+    trainable = [(category, count) for category, count in ranked if count >= min_support]
 
     print("\n=== LVIS categories (curated) ===")
     print(f"categories: {len(counts):,}   assignments: {total_assignments:,}   "
           f"unique objects: {unique_objects:,}")
     print(f"categories with >= {min_support} objects (trainable bar): {len(trainable):,}")
-    print(f"\ntop {top} categories:")
-    for cat, n in ranked[:top]:
-        print(f"  {n:6,}  {cat}")
+    print(f"\ntop {top_n} categories:")
+    for category, count in ranked[:top_n]:
+        print(f"  {count:6,}  {category}")
 
     return {
         "n_categories": len(counts),
@@ -63,12 +65,12 @@ def explore_lvis(out_dir: Path, top: int, min_support: int) -> dict[str, object]
         "n_unique_objects": unique_objects,
         "min_support": min_support,
         "n_trainable_categories": len(trainable),
-        "top_categories": ranked[:top],
+        "top_categories": ranked[:top_n],
         "trainable_categories": trainable,
     }
 
 
-def explore_raw(out_dir: Path, n_shards: int, top: int) -> dict[str, object]:
+def explore_raw(out_dir: Path, shard_count: int, top_n: int) -> dict[str, object]:
     """Aggregate raw Sketchfab tags/categories over whole metadata shards.
 
     Objaverse metadata is 160 shards (~5k objects each). We sample by *whole
@@ -78,48 +80,48 @@ def explore_raw(out_dir: Path, n_shards: int, top: int) -> dict[str, object]:
     reproducibility (NFR-4).
     """
     object_paths: dict[str, str] = objaverse._load_object_paths()  # uid -> "glbs/000-000/uid.glb"
-    by_shard: dict[str, list[str]] = {}
+    uids_by_shard: dict[str, list[str]] = {}
     for uid, path in object_paths.items():
-        by_shard.setdefault(path.split("/")[1], []).append(uid)
+        uids_by_shard.setdefault(path.split("/")[1], []).append(uid)
 
-    shard_ids = sorted(by_shard)[:n_shards]
-    sample = [uid for sid in shard_ids for uid in by_shard[sid]]
+    shard_ids = sorted(uids_by_shard)[:shard_count]
+    sample_uids = [uid for shard_id in shard_ids for uid in uids_by_shard[shard_id]]
     print(f"\n=== Raw Sketchfab annotations "
-          f"({len(shard_ids)} shard(s), {len(sample):,} / {len(object_paths):,} objects) ===")
+          f"({len(shard_ids)} shard(s), {len(sample_uids):,} / {len(object_paths):,} objects) ===")
     print(f"downloading metadata shards: {', '.join(shard_ids)} ...")
-    anns: dict[str, dict] = objaverse.load_annotations(sample)
+    annotations: dict[str, dict] = objaverse.load_annotations(sample_uids)
 
-    cat_counter: Counter[str] = Counter()
-    tag_counter: Counter[str] = Counter()
-    for ann in anns.values():
-        for c in ann.get("categories") or []:
-            name = c.get("name") if isinstance(c, dict) else c
+    category_counts: Counter[str] = Counter()
+    tag_counts: Counter[str] = Counter()
+    for annotation in annotations.values():
+        for category in annotation.get("categories") or []:
+            name = category.get("name") if isinstance(category, dict) else category
             if name:
-                cat_counter[str(name)] += 1
-        for t in ann.get("tags") or []:
-            name = t.get("name") if isinstance(t, dict) else t
+                category_counts[str(name)] += 1
+        for tag in annotation.get("tags") or []:
+            name = tag.get("name") if isinstance(tag, dict) else tag
             if name:
-                tag_counter[str(name)] += 1
+                tag_counts[str(name)] += 1
 
     _write_csv(out_dir / "raw_sketchfab_categories.csv", ("category", "count"),
-               cat_counter.most_common())
-    _write_csv(out_dir / "raw_sketchfab_tags.csv", ("tag", "count"), tag_counter.most_common())
+               category_counts.most_common())
+    _write_csv(out_dir / "raw_sketchfab_tags.csv", ("tag", "count"), tag_counts.most_common())
 
-    print(f"\ntop {top} raw categories:")
-    for cat, n in cat_counter.most_common(top):
-        print(f"  {n:6,}  {cat}")
-    print(f"\ntop {top} raw tags:")
-    for tag, n in tag_counter.most_common(top):
-        print(f"  {n:6,}  {tag}")
+    print(f"\ntop {top_n} raw categories:")
+    for category, count in category_counts.most_common(top_n):
+        print(f"  {count:6,}  {category}")
+    print(f"\ntop {top_n} raw tags:")
+    for tag, count in tag_counts.most_common(top_n):
+        print(f"  {count:6,}  {tag}")
 
     return {
         "shard_ids": shard_ids,
-        "sample_size": len(sample),
-        "n_annotations_returned": len(anns),
-        "n_categories": len(cat_counter),
-        "n_tags": len(tag_counter),
-        "top_categories": cat_counter.most_common(top),
-        "top_tags": tag_counter.most_common(top),
+        "sample_size": len(sample_uids),
+        "n_annotations_returned": len(annotations),
+        "n_categories": len(category_counts),
+        "n_tags": len(tag_counts),
+        "top_categories": category_counts.most_common(top_n),
+        "top_tags": tag_counts.most_common(top_n),
     }
 
 
@@ -150,8 +152,8 @@ def main() -> None:
         summary["raw"] = explore_raw(args.out_dir, args.shards, args.top)
 
     summary_path = args.out_dir / "summary.json"
-    with summary_path.open("w", encoding="utf-8") as fh:
-        json.dump(summary, fh, indent=2, default=str)
+    with summary_path.open("w", encoding="utf-8") as summary_file:
+        json.dump(summary, summary_file, indent=2, default=str)
     print(f"\nwrote CSVs + summary to {args.out_dir}/")
 
 
