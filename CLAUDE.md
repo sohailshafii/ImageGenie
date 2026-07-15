@@ -145,6 +145,16 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
   Do **not** commit until the user has reviewed the staged diff and explicitly approved. No
   auto-commits — this applies to code and docs alike.
 
+## Coding Conventions (all languages)
+
+Cross-cutting rules; language-specific standards live in the domain docs.
+
+- **Self-documenting names.** No 1–3 character variable names — a name must be long enough to read
+  as what it holds (`annotation`, not `a`; `class_name`, not `c`; `shard_count`, not `n`). This
+  applies to locals, loop variables, and comprehension targets alike. The only exemptions are
+  established domain terms/acronyms already used across the codebase (e.g. `uid`) — prefer even those
+  spelled out when it doesn't hurt readability.
+
 ## Doc Maintenance
 
 These docs are the source of truth for design. A Claude Code hook reminds you to update the

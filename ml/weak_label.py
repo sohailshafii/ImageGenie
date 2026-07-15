@@ -6,13 +6,15 @@ stages (see `ml/ml.md#class-list-approach`):
 1. **Category gate** — `taxonomy.SKETCHFAB_CATEGORY_CLASSES` maps the coarse
    top-level `categories` field to the candidate roster classes under it. One
    candidate -> label directly; none -> unlabeled; several -> ambiguous.
-2. *(next commit)* **Keyword resolution** — tag/title keywords pick a single
-   class within a multi-candidate set (e.g. `cars-vehicles` + tag `jet` ->
-   aircraft), and disambiguate homographs by category.
+2. **Keyword resolution** — `taxonomy.CLASS_KEYWORDS` tag/title keywords pick a
+   single class within a multi-candidate set (e.g. `cars-vehicles` + tag `jet`
+   -> aircraft). The category gate has already narrowed candidates, so homographs
+   disambiguate for free ("jaguar" under `cars-vehicles` only scores car/aircraft).
+   No clear winner -> left "ambiguous", not guessed.
 
-This commit implements stage 1 only and reports coverage (out-of-scope /
-labeled-by-category / ambiguous) so the ambiguous slice that stage 2 must
-resolve is measured before the keyword rules are written.
+Reports coverage by reason (category / keyword / ambiguous / out-of-scope) and
+per-class label counts. Out-of-scope objects stay unlabeled for now; rescuing
+them by keyword is a later, separately-measured step.
 
 Samples by *whole metadata shard* — same discipline as `explore_metadata.py`
 (scattered-uid sampling forces downloading nearly every shard). Metadata only;
@@ -23,78 +25,112 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
 import objaverse
-from taxonomy import SKETCHFAB_CATEGORY_CLASSES
+from taxonomy import CLASS_KEYWORDS, SKETCHFAB_CATEGORY_CLASSES
+
+_TOKEN = re.compile(r"[a-z0-9]+")
 
 
-def _sample_uids_by_shard(n_shards: int) -> tuple[list[str], list[str]]:
-    """Return (uids, shard_ids) for the first `n_shards` whole metadata shards."""
+def _sample_uids_by_shard(shard_count: int) -> tuple[list[str], list[str]]:
+    """Return (uids, shard_ids) for the first `shard_count` whole metadata shards."""
     object_paths: dict[str, str] = objaverse._load_object_paths()
-    by_shard: dict[str, list[str]] = {}
+    uids_by_shard: dict[str, list[str]] = {}
     for uid, path in object_paths.items():
-        by_shard.setdefault(path.split("/")[1], []).append(uid)
-    shard_ids = sorted(by_shard)[:n_shards]
-    return [uid for sid in shard_ids for uid in by_shard[sid]], shard_ids
+        uids_by_shard.setdefault(path.split("/")[1], []).append(uid)
+    shard_ids = sorted(uids_by_shard)[:shard_count]
+    return [uid for shard_id in shard_ids for uid in uids_by_shard[shard_id]], shard_ids
 
 
-def category_candidates(ann: dict) -> set[str]:
+def category_candidates(annotation: dict) -> set[str]:
     """Roster classes implied by an object's Sketchfab `categories` (the gate)."""
-    cands: set[str] = set()
-    for c in ann.get("categories") or []:
-        cands.update(SKETCHFAB_CATEGORY_CLASSES.get(c.get("name"), []))
-    return cands
+    candidates: set[str] = set()
+    for category in annotation.get("categories") or []:
+        candidates.update(SKETCHFAB_CATEGORY_CLASSES.get(category.get("name"), []))
+    return candidates
 
 
-def label_object(ann: dict) -> tuple[str | None, str]:
+def _tokens(annotation: dict) -> set[str]:
+    """Lowercase word tokens from the object's title + tag names."""
+    text_fields = [annotation.get("name") or ""]
+    text_fields += [tag.get("name") or "" for tag in annotation.get("tags") or []]
+    return {token for field in text_fields for token in _TOKEN.findall(field.lower())}
+
+
+def resolve_by_keywords(annotation: dict, candidates: set[str]) -> str | None:
+    """Pick one class from `candidates` by keyword hits; None if no clear winner.
+
+    Scores each candidate by how many of its `CLASS_KEYWORDS` appear in the
+    object's tokens; returns the sole top scorer, or None on a zero or tied top
+    (stay conservative — an unresolved object is better than a wrong label).
+    """
+    tokens = _tokens(annotation)
+    scores = {
+        class_name: sum(keyword in tokens for keyword in CLASS_KEYWORDS.get(class_name, []))
+        for class_name in candidates
+    }
+    top_score = max(scores.values())
+    if top_score == 0:
+        return None
+    winners = [class_name for class_name, score in scores.items() if score == top_score]
+    return winners[0] if len(winners) == 1 else None
+
+
+def label_object(annotation: dict) -> tuple[str | None, str]:
     """Weak-label one object. Returns (class_or_None, reason).
 
-    Stage 1 only: a single-candidate category yields its class; multi-candidate
-    returns None/"ambiguous" for stage 2's keyword rules to resolve.
+    Single-candidate category -> its class; multi-candidate -> keyword resolution
+    (reason "keyword"), or "ambiguous" if keywords pick no clear winner; no
+    mapped category -> "out-of-scope".
     """
-    cands = category_candidates(ann)
-    if not cands:
+    candidates = category_candidates(annotation)
+    if not candidates:
         return None, "out-of-scope"
-    if len(cands) == 1:
-        return next(iter(cands)), "category"
+    if len(candidates) == 1:
+        return next(iter(candidates)), "category"
+    resolved_class = resolve_by_keywords(annotation, candidates)
+    if resolved_class is not None:
+        return resolved_class, "keyword"
     return None, "ambiguous"
 
 
-def run(out_dir: Path, n_shards: int) -> dict[str, object]:
-    sample, shard_ids = _sample_uids_by_shard(n_shards)
-    print("=== Sketchfab weak labels — stage 1 (category gate) ===")
-    print(f"shards {', '.join(shard_ids)} ({len(sample):,} objects); downloading metadata ...")
-    anns = objaverse.load_annotations(sample)
+def run(out_dir: Path, shard_count: int) -> dict[str, object]:
+    sample_uids, shard_ids = _sample_uids_by_shard(shard_count)
+    print("=== Sketchfab weak labels — category gate + keyword resolution ===")
+    print(f"shards {', '.join(shard_ids)} ({len(sample_uids):,} objects); "
+          f"downloading metadata ...")
+    annotations = objaverse.load_annotations(sample_uids)
 
-    reasons: Counter[str] = Counter()
-    per_class: Counter[str] = Counter()
-    for ann in anns.values():
-        cls, reason = label_object(ann)
-        reasons[reason] += 1
-        if cls is not None:
-            per_class[cls] += 1
+    counts_by_reason: Counter[str] = Counter()
+    counts_by_class: Counter[str] = Counter()
+    for annotation in annotations.values():
+        class_name, reason = label_object(annotation)
+        counts_by_reason[reason] += 1
+        if class_name is not None:
+            counts_by_class[class_name] += 1
 
-    n = len(anns)
-    print(f"\nof {n:,} objects:")
-    for reason in ("category", "ambiguous", "out-of-scope"):
-        c = reasons[reason]
-        print(f"  {c:6,}  ({c / n * 100:4.0f}%)  {reason}")
-    print("\nlabeled-by-category, per class:")
-    for cls, c in per_class.most_common():
-        print(f"  {c:6,}  {cls}")
+    object_count = len(annotations)
+    print(f"\nof {object_count:,} objects:")
+    for reason in ("category", "keyword", "ambiguous", "out-of-scope"):
+        count = counts_by_reason[reason]
+        print(f"  {count:6,}  ({count / object_count * 100:4.0f}%)  {reason}")
+    print("\nlabeled (category + keyword), per class:")
+    for class_name, count in counts_by_class.most_common():
+        print(f"  {count:6,}  {class_name}")
 
     result: dict[str, object] = {
         "shard_ids": shard_ids,
-        "sample_size": len(sample),
-        "n_annotations": n,
-        "by_reason": dict(reasons),
-        "labeled_by_category": dict(per_class),
+        "sample_size": len(sample_uids),
+        "n_annotations": object_count,
+        "by_reason": dict(counts_by_reason),
+        "labeled_by_category": dict(counts_by_class),
     }
     out_path = out_dir / "weak_label_coverage.json"
-    with out_path.open("w", encoding="utf-8") as fh:
-        json.dump(result, fh, indent=2)
+    with out_path.open("w", encoding="utf-8") as out_file:
+        json.dump(result, out_file, indent=2)
     print(f"\nwrote {out_path}")
     return result
 

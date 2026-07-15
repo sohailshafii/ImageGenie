@@ -123,12 +123,17 @@ built up in stages so each is measurable:
   (`weapons-military`→weapon, `architecture`→building) label directly; three are multi-candidate and
   deferred to keyword rules (`furniture-home`→chair/table/lamp, `cars-vehicles`→car/aircraft,
   `characters-creatures`→figure/animal); unmapped categories (abstract/mixed: `art-abstract`,
-  `science-technology`, …) yield no label. On a 5k-object shard: **19% labeled by category, 21%
-  ambiguous, 60% out-of-scope** — so pass 2's real work is the ~21% ambiguous slice plus rescuing
-  out-of-scope objects by keyword.
-- **Stage 2 — keyword resolution (next).** Tag/title keywords pick within a multi-candidate set and
-  disambiguate homographs by category (*"jaguar"* is a car under `cars-vehicles`, an animal under
-  `animals-pets`), then measured against the LVIS gold set.
+  `science-technology`, …) yield no label.
+- **Stage 2 — keyword resolution (done).** `taxonomy.CLASS_KEYWORDS` tag/title keywords pick one class
+  within a multi-candidate set; the category gate having already narrowed candidates means homographs
+  disambiguate for free (*"jaguar"* under `cars-vehicles` only scores car/aircraft, never animal). No
+  clear winner → left ambiguous, never guessed. On a 5k shard: **19% category + 7% keyword = 26%
+  labeled, 14% ambiguous, 60% out-of-scope**; all 12 classes populated, smallest ~15/shard (×160 ≈ 2.4k,
+  clears the bar). Residual ambiguity is mostly generic metadata (`furniture`/tool tags) that names no
+  sub-class — correctly left for manual labeling (FR-4).
+- **Next — gold-set eval + tuning.** Measure keyword precision/recall against the LVIS gold set (e.g.
+  `seat` catching toilet seats, the figure/animal boundary), then tune. Out-of-scope rescue by
+  high-precision keywords is a separate, later step.
 
 ## Dataset Splits
 

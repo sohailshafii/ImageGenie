@@ -135,3 +135,31 @@ SKETCHFAB_CATEGORY_CLASSES: dict[str, list[str]] = {
     "furniture-home": ["chair", "table", "lamp"],   # "lamp"/"desk"/"sofa" split
     "characters-creatures": ["figure", "animal"],   # creature vs. humanoid figure
 }
+
+
+# class -> indicative tag/title keywords (single lowercase tokens), for resolving a
+# multi-candidate category to one class (stage 2). The resolver scores each *in-set*
+# candidate by how many of its keywords appear in the object's tokenized tags+title
+# and picks a clear winner, so the category gate already rules out cross-category
+# homographs ("jaguar" in cars-vehicles only scores car/aircraft, never animal).
+# Only the classes reachable via a multi-candidate category are needed here; the
+# rest are added if/when out-of-scope objects are rescued by keyword.
+CLASS_KEYWORDS: dict[str, list[str]] = {
+    "chair": ["chair", "armchair", "sofa", "couch", "seat", "stool", "bench",
+              "recliner", "loveseat", "ottoman"],
+    "table": ["table", "desk", "nightstand", "dining", "workbench", "countertop"],
+    # Bare "light" omitted — too broad (matches lighting/highlight/etc.).
+    "lamp": ["lamp", "lampshade", "chandelier", "lantern", "sconce", "luminaire",
+             "lamppost", "streetlight"],
+    "car": ["car", "truck", "vehicle", "van", "bus", "jeep", "sedan", "suv",
+            "automobile", "motorcycle", "scooter", "wagon", "ambulance",
+            "tractor", "tank"],
+    "aircraft": ["aircraft", "airplane", "plane", "jet", "helicopter", "chopper",
+                 "drone", "glider", "biplane", "seaplane", "spaceship", "rocket"],
+    "figure": ["character", "figure", "figurine", "statue", "doll", "robot",
+               "person", "human", "man", "woman", "girl", "boy", "soldier",
+               "warrior", "knight", "hero", "zombie", "skeleton", "mannequin"],
+    "animal": ["animal", "creature", "monster", "dragon", "pokemon", "beast",
+               "cat", "dog", "horse", "bird", "fish", "snake", "dinosaur",
+               "wolf", "bear", "lion", "tiger"],
+}
