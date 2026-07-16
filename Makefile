@@ -10,8 +10,13 @@ BIN    := $(VENV)/bin
 MODE   ?= lvis
 SHARDS ?= 1
 
-# venv Python with the cert shim (see header). `$$(...)` defers to recipe-time so
-# it isn't evaluated before the venv exists.
+# Run a script through the venv Python ($(BIN)/python, which has the deps — not
+# $(PYTHON), the system interpreter used only to bootstrap the venv in `setup`).
+# The venv Python appears twice on purpose: `python -m certifi` prints the path
+# to certifi's CA bundle, which is exported as SSL_CERT_FILE for the second
+# python that actually runs the script (the cert shim; see header). Uses shell
+# `$$(...)`, not make's $(shell ...), so certifi is located at recipe time — not
+# at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
 .PHONY: setup lint explore clean help
