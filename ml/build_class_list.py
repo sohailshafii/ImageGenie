@@ -1,6 +1,6 @@
 """Milestone 1 — lock the class list from the LVIS merge (pass 1 of FR-3).
 
-Applies `ml/taxonomy.py`'s ``LVIS_MERGES`` to the curated LVIS annotations and
+Applies `ml/taxonomy.py`'s ``CLASS_TO_LVIS_CATEGORIES`` to the curated LVIS annotations and
 reports, per class, the count of **unique objects** (union of the merged
 categories' UIDs — shared objects are not double-counted). This is the clean
 "seed + gold set" signal for the roster; it does NOT measure final weak-label
@@ -21,61 +21,73 @@ summary. Metadata only; no meshes downloaded.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import objaverse
-from taxonomy import LVIS_MERGES
+from io_utils import write_json
+from taxonomy import CLASS_TO_LVIS_CATEGORIES
 
 
 def build(out_dir: Path, min_support: int, top_unassigned: int) -> dict[str, object]:
-    annotations: dict[str, list[str]] = objaverse.load_lvis_annotations()
-    live_keys = set(annotations)
-    n_lvis_objects = len({uid for uids in annotations.values() for uid in uids})
+    category_to_uids: dict[str, list[str]] = objaverse.load_lvis_annotations()
+    live_category_set = set(category_to_uids)
+    n_lvis_objects = len({uid for uids in category_to_uids.values() for uid in uids})
 
-    assigned_categories: set[str] = set()
-    unknown_by_class: dict[str, list[str]] = {}
+    assigned_categories_set: set[str] = set()
+    class_to_unknown_categories: dict[str, list[str]] = {}
     per_class: list[dict[str, object]] = []
 
-    for class_name, categories in LVIS_MERGES.items():
-        unknown_in_class = [c for c in categories if c not in live_keys]
+    # loop for class_name mapped to list of lvis categories
+    # class_name is what we hardcoded
+    for class_name, categories in CLASS_TO_LVIS_CATEGORIES.items():
+        # get categories that do not correspond to any lvis items
+        # categories here are handpicked, which means they can have typos
+        unknown_in_class = [
+            category for category in categories if category not in live_category_set
+        ]
         if unknown_in_class:
-            unknown_by_class[class_name] = unknown_in_class
-        class_object_uids: set[str] = set()
+            class_to_unknown_categories[class_name] = unknown_in_class
+        class_object_uids_set: set[str] = set()
+        # for all lvis categories, builds the corresponding set of uids
         for category in categories:
-            class_object_uids.update(annotations.get(category, []))
-        assigned_categories.update(categories)
+            class_object_uids_set.update(category_to_uids.get(category, []))
+        assigned_categories_set.update(categories)
         per_class.append({
             "class": class_name,
-            "n_objects": len(class_object_uids),
+            "n_objects": len(class_object_uids_set),
             "n_categories": len(categories),
-            "clears_bar": len(class_object_uids) >= min_support,
+            "clears_bar": len(class_object_uids_set) >= min_support,
         })
 
     per_class.sort(key=lambda class_row: class_row["n_objects"], reverse=True)
 
     # Objects claimed by more than one class (union double-counts across classes).
-    assigned_object_uids: set[str] = set()
-    multi_class_uids: set[str] = set()
-    for categories in LVIS_MERGES.values():
-        class_uids = {uid for c in categories for uid in annotations.get(c, [])}
-        multi_class_uids |= assigned_object_uids & class_uids
-        assigned_object_uids |= class_uids
+    assigned_object_uids_set: set[str] = set()
+    multi_class_uids_set: set[str] = set()
+    for categories in CLASS_TO_LVIS_CATEGORIES.values():
+        class_uids_set = {
+            uid for category in categories for uid in category_to_uids.get(category, [])
+        }
+        multi_class_uids_set |= assigned_object_uids_set & class_uids_set
+        assigned_object_uids_set |= class_uids_set
 
     unassigned = sorted(
-        ((category, len(annotations[category])) for category in live_keys - assigned_categories),
+        (
+            (category, len(category_to_uids[category]))
+            for category in live_category_set - assigned_categories_set
+        ),
         key=lambda entry: entry[1], reverse=True,
     )[:top_unassigned]
 
-    if unknown_by_class:
+    if class_to_unknown_categories:
         print("!! unknown LVIS categories (fix typos in taxonomy.py):")
-        for class_name, unknown_in_class in unknown_by_class.items():
+        for class_name, unknown_in_class in class_to_unknown_categories.items():
             print(f"   {class_name}: {unknown_in_class}")
 
     print(f"\n=== LVIS-merged class support ("
-          f"{len(assigned_categories):,}/{len(live_keys):,} categories, "
-          f"{len(assigned_object_uids):,}/{n_lvis_objects:,} objects = "
-          f"{len(assigned_object_uids) / n_lvis_objects * 100:.0f}% of LVIS) ===")
+          f"{len(assigned_categories_set):,}/{len(live_category_set):,} categories, "
+          f"{len(assigned_object_uids_set):,}/{n_lvis_objects:,} objects = "
+          f"{len(assigned_object_uids_set) / n_lvis_objects * 100:.0f}% of LVIS) ===")
     print(f"{'class':<14}{'objects':>9}  {'cats':>4}  bar(>={min_support})")
     for class_row in per_class:
         mark = "PASS" if class_row["clears_bar"] else "below"
@@ -84,7 +96,7 @@ def build(out_dir: Path, min_support: int, top_unassigned: int) -> dict[str, obj
 
     n_pass = sum(class_row["clears_bar"] for class_row in per_class)
     print(f"\n{n_pass}/{len(per_class)} classes clear the LVIS bar; "
-          f"{len(multi_class_uids):,} objects are claimed by >1 class.")
+          f"{len(multi_class_uids_set):,} objects are claimed by >1 class.")
     print("(LVIS is the ~46k clean subset — volume for the bar comes from the "
           "Sketchfab pass; below-bar here = lean on pass 2, not dropped.)")
 
@@ -97,15 +109,14 @@ def build(out_dir: Path, min_support: int, top_unassigned: int) -> dict[str, obj
         "n_classes": len(per_class),
         "n_classes_clear_bar": n_pass,
         "n_lvis_objects": n_lvis_objects,
-        "n_objects_assigned": len(assigned_object_uids),
-        "n_objects_multi_class": len(multi_class_uids),
+        "n_objects_assigned": len(assigned_object_uids_set),
+        "n_objects_multi_class": len(multi_class_uids_set),
         "classes": per_class,
-        "unknown_categories": unknown_by_class,
+        "unknown_categories": class_to_unknown_categories,
         "top_unassigned": unassigned,
     }
     out_path = out_dir / "class_list.json"
-    with out_path.open("w", encoding="utf-8") as out_file:
-        json.dump(result, out_file, indent=2)
+    write_json(out_path, result)
     print(f"\nwrote {out_path}")
     return result
 

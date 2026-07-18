@@ -154,6 +154,15 @@ Cross-cutting rules; language-specific standards live in the domain docs.
   applies to locals, loop variables, and comprehension targets alike. The only exemptions are
   established domain terms/acronyms already used across the codebase (e.g. `uid`) — prefer even those
   spelled out when it doesn't hurt readability.
+- **Dict/map names read `key_to_value`.** Name a mapping for what it maps, full words, no
+  abbreviations (`category_to_uids`, `class_to_keywords`, `shard_id_to_uids`) — not `annotations`,
+  `by_shard`, or `cat_to_uids`. (Record-like dicts with fixed fields, e.g. a `class_row`, are objects,
+  not maps, so this doesn't apply to them.)
+- **Set variables end in `_set`.** A variable holding a `set` carries the suffix
+  (`assigned_categories_set`, `candidates_set`, `tokens_set`) so its type is legible at the use site.
+- **File writes go through helpers.** Don't `open()`-and-write inline; use the shared `write_json` /
+  `write_csv` helpers (`ml/io_utils.py`) so every write reports permission/OS errors uniformly
+  instead of dumping a traceback.
 
 ## Doc Maintenance
 

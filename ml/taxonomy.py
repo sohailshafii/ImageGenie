@@ -3,10 +3,10 @@
 Single source of truth mapping the final class roster to its label sources. Two
 passes back the labels (see `ml/ml.md#class-list-approach`):
 
-* ``LVIS_MERGES`` — curated fine LVIS categories folded into each class. Clean
+* ``CLASS_TO_LVIS_CATEGORIES`` — curated fine LVIS categories folded into each class. Clean
   seed + gold set; `ml/build_class_list.py` unions their object UIDs to measure
   per-class support and lock the roster against the >=300 bar.
-* ``SKETCHFAB_CATEGORY_CLASSES`` — the coarse Sketchfab top-level `categories`
+* ``SKETCHFAB_CATEGORY_TO_CLASSES`` — the coarse Sketchfab top-level `categories`
   field as a pre-filter/disambiguator for the full-corpus weak labels (FR-3
   pass 2). Each category maps to the *set* of roster classes plausibly under it;
   tag/title keywords (next commit) pick within the set. `ml/weak_label.py`
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 # class -> curated LVIS categories merged into it. Order is by count (descending)
 # for readability only; the build script treats each list as a set.
-LVIS_MERGES: dict[str, list[str]] = {
+CLASS_TO_LVIS_CATEGORIES: dict[str, list[str]] = {
     # Seating. Excludes typewriter (keyword-sweep false positive).
     "chair": [
         "chair", "armchair", "bench", "sofa", "stool", "pew_(church_bench)",
@@ -122,7 +122,7 @@ LVIS_MERGES: dict[str, list[str]] = {
 # category is unmapped get no category-gated label. Omitted (and why):
 # art-abstract, cultural-heritage-history, science-technology, places-travel,
 # fashion-style, sports-fitness, music, news-politics, people-less scenes.
-SKETCHFAB_CATEGORY_CLASSES: dict[str, list[str]] = {
+SKETCHFAB_CATEGORY_TO_CLASSES: dict[str, list[str]] = {
     "animals-pets": ["animal"],
     "food-drink": ["food"],
     "weapons-military": ["weapon"],
@@ -144,7 +144,7 @@ SKETCHFAB_CATEGORY_CLASSES: dict[str, list[str]] = {
 # homographs ("jaguar" in cars-vehicles only scores car/aircraft, never animal).
 # Only the classes reachable via a multi-candidate category are needed here; the
 # rest are added if/when out-of-scope objects are rescued by keyword.
-CLASS_KEYWORDS: dict[str, list[str]] = {
+CLASS_TO_KEYWORDS: dict[str, list[str]] = {
     "chair": ["chair", "armchair", "sofa", "couch", "seat", "stool", "bench",
               "recliner", "loveseat", "ottoman"],
     "table": ["table", "desk", "nightstand", "dining", "workbench", "countertop"],

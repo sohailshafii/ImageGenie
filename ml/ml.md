@@ -88,7 +88,7 @@ LVIS-only labels cap there; the Sketchfab rules cover the full ~798k, which is w
 comes from. The class list only changes how those models are *distributed* across classes (broader
 classes absorb more of the same corpus).
 
-**Locked class list — 12 classes.** `ml/taxonomy.py` (`LVIS_MERGES`) is the source of truth: a curated
+**Locked class list — 12 classes.** `ml/taxonomy.py` (`CLASS_TO_LVIS_CATEGORIES`) is the source of truth: a curated
 map from each class to its exact LVIS category strings (hand-curated, not a keyword sweep — `bowl` is
 not an animal, `spear`/`steak_knife` are not food). `ml/build_class_list.py` (`make classlist`) applies
 it, counting **unique objects** per class (union of UIDs, no double-counting) and self-checking for
@@ -118,13 +118,13 @@ Resolves the class-list [open decision](../CLAUDE.md#open-decisions).
 `ml/weak_label.py` (`make weaklabel [SHARDS=N]`) assigns a class per object from raw Sketchfab metadata,
 built up in stages so each is measurable:
 
-- **Stage 1 — category gate (done).** `taxonomy.SKETCHFAB_CATEGORY_CLASSES` maps the 18 top-level
+- **Stage 1 — category gate (done).** `taxonomy.SKETCHFAB_CATEGORY_TO_CLASSES` maps the 18 top-level
   Sketchfab categories to the candidate roster classes under each. Single-candidate categories
   (`weapons-military`→weapon, `architecture`→building) label directly; three are multi-candidate and
   deferred to keyword rules (`furniture-home`→chair/table/lamp, `cars-vehicles`→car/aircraft,
   `characters-creatures`→figure/animal); unmapped categories (abstract/mixed: `art-abstract`,
   `science-technology`, …) yield no label.
-- **Stage 2 — keyword resolution (done).** `taxonomy.CLASS_KEYWORDS` tag/title keywords pick one class
+- **Stage 2 — keyword resolution (done).** `taxonomy.CLASS_TO_KEYWORDS` tag/title keywords pick one class
   within a multi-candidate set; the category gate having already narrowed candidates means homographs
   disambiguate for free (*"jaguar"* under `cars-vehicles` only scores car/aircraft, never animal). No
   clear winner → left ambiguous, never guessed. On a 5k shard: **19% category + 7% keyword = 26%
