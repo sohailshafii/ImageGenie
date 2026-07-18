@@ -144,8 +144,15 @@ built up in stages so each is measurable:
   and **plant (0.42)** precision (over-predicting non-members). The `confusion_matrix` shows *where*:
   **`building` is a false-positive magnet** (animal/chair/electronics/figure/food/lamp all bleed in —
   `architecture` gate too broad), and **`food → plant` is the single biggest confusion** (produce
-  caught by plant rules). Those are the concrete tuning targets. Out-of-scope rescue by high-precision
-  keywords is a separate, later step.
+  caught by plant rules). Both were category-gate FPs (single-candidate categories auto-committing), not
+  keyword misfires.
+- **Tuning — plant/food boundary (done).** Made `nature-plants` multi-candidate `[plant, food]` and
+  added `food`/`plant` keyword lists so produce (apple, pumpkin, mushroom) resolves to food, flora to
+  plant. Result (4 shards): `food → plant` **8 → 1**; plant precision **0.42 → 0.86**; food recall
+  **0.26 → 0.47** (produce recovered) at ~no precision cost; other classes unchanged.
+- **Still to tune:** `architecture → building` (make it keyword-confirmed so benches/streetlights/
+  statues stop auto-labeling as building). Out-of-scope rescue by high-precision keywords is a separate,
+  later step.
 
 ## Dataset Splits
 

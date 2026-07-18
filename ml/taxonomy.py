@@ -127,13 +127,13 @@ SKETCHFAB_CATEGORY_TO_CLASSES: dict[str, list[str]] = {
     "food-drink": ["food"],
     "weapons-military": ["weapon"],
     "electronics-gadgets": ["electronics"],
-    "nature-plants": ["plant"],
     "architecture": ["building"],
     "people": ["figure"],
     # Multi-candidate — need keyword disambiguation:
     "cars-vehicles": ["car", "aircraft"],          # "jet"/"plane" -> aircraft
     "furniture-home": ["chair", "table", "lamp"],   # "lamp"/"desk"/"sofa" split
     "characters-creatures": ["figure", "animal"],   # creature vs. humanoid figure
+    "nature-plants": ["plant", "food"],             # produce (apple, mushroom) -> food
 }
 
 
@@ -162,4 +162,15 @@ CLASS_TO_KEYWORDS: dict[str, list[str]] = {
     "animal": ["animal", "creature", "monster", "dragon", "pokemon", "beast",
                "cat", "dog", "horse", "bird", "fish", "snake", "dinosaur",
                "wolf", "bear", "lion", "tiger"],
+    # food vs. plant split the `nature-plants` category: produce/fungi are food,
+    # flora is plant. Keys mirror the LVIS food/plant merges (edible corn/pumpkin/
+    # mushroom are food, not plant).
+    "food": ["food", "apple", "banana", "orange", "pear", "strawberry",
+             "pineapple", "lemon", "tomato", "potato", "carrot", "corn",
+             "pumpkin", "mushroom", "fruit", "vegetable", "bread", "cake",
+             "cupcake", "pizza", "burger", "hamburger", "sandwich", "sushi",
+             "doughnut", "donut", "egg", "pie"],
+    "plant": ["plant", "tree", "flower", "leaf", "cactus", "palm", "fern",
+              "bonsai", "succulent", "shrub", "bush", "foliage", "sunflower",
+              "rose", "tulip", "houseplant", "ivy", "bamboo", "grass"],
 }
