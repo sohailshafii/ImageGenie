@@ -138,8 +138,11 @@ built up in stages so each is measurable:
   `CLASS_TO_LVIS_CATEGORIES`, counts matching `build_class_list`) and weak-vs-gold **coverage** — on a
   5k shard, 325 of ~13k gold objects fall in the sample and the weak rules label only **39%** of them
   (rest ambiguous or out-of-scope), a recall ceiling the keyword rules alone can't lift. Per-class
-  precision/recall + confusion matrix next. Out-of-scope rescue by high-precision keywords is a
-  separate, later step.
+  precision/recall (`per_class_metrics`) over 4 shards: **precision is high where the labeler commits**
+  (car/chair/food/lamp 1.00, animal 0.96, weapon 0.95) — the conservative design working — while
+  **recall stays low** (0.22–0.61) from that coverage ceiling. Weak spots to tune: **building (0.38)**
+  and **plant (0.42)** precision (over-predicting non-members). Confusion matrix next. Out-of-scope
+  rescue by high-precision keywords is a separate, later step.
 
 ## Dataset Splits
 

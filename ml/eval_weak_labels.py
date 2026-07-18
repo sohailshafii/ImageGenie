@@ -66,6 +66,47 @@ def collect_gold_weak_pairs(
     return gold_weak_pairs, shard_ids
 
 
+def per_class_metrics(
+    gold_weak_pairs: list[tuple[str, str | None, str]],
+) -> dict[str, dict[str, object]]:
+    """Per-class precision/recall of the weak labels against gold.
+
+    recall    = correctly labeled class / gold objects of that class (unlabeled
+                objects count against it — the recall ceiling).
+    precision = correctly labeled class / everything labeled that class.
+    Either is None when its denominator is 0 (class absent from this sample).
+    """
+    gold_total = Counter()
+    predicted_total = Counter()
+    true_positive = Counter()
+    for gold_class, weak_label, _ in gold_weak_pairs:
+        gold_total[gold_class] += 1
+        if weak_label is None:
+            continue
+        predicted_total[weak_label] += 1
+        if weak_label == gold_class:
+            true_positive[gold_class] += 1
+
+    class_to_metrics: dict[str, dict[str, object]] = {}
+    for class_name in sorted(CLASS_TO_LVIS_CATEGORIES):
+        gold_count = gold_total[class_name]
+        predicted_count = predicted_total[class_name]
+        correct = true_positive[class_name]
+        class_to_metrics[class_name] = {
+            "gold": gold_count,
+            "predicted": predicted_count,
+            "true_positive": correct,
+            "precision": correct / predicted_count if predicted_count else None,
+            "recall": correct / gold_count if gold_count else None,
+        }
+    return class_to_metrics
+
+
+def _format_ratio(value: float | None) -> str:
+    """Format a precision/recall value in [0, 1], or a dash when undefined."""
+    return f"{value:.2f}" if value is not None else "   -"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=Path("data/exploration"),
@@ -91,12 +132,24 @@ def main() -> None:
         for reason in ("category", "keyword", "ambiguous", "out-of-scope"):
             print(f"  {reason_to_count[reason]:5,}  {reason}")
 
+    class_to_metrics = per_class_metrics(gold_weak_pairs)
+    print("\n=== Per-class precision/recall (weak vs gold) ===")
+    print(f"{'class':<13}{'gold':>5}{'pred':>6}{'TP':>4}{'prec':>7}{'recall':>8}")
+    for class_name in sorted(CLASS_TO_LVIS_CATEGORIES):
+        class_metrics = class_to_metrics[class_name]
+        print(f"{class_name:<13}{class_metrics['gold']:>5}{class_metrics['predicted']:>6}"
+              f"{class_metrics['true_positive']:>4}"
+              f"{_format_ratio(class_metrics['precision']):>7}"
+              f"{_format_ratio(class_metrics['recall']):>8}")
+    print("(small per-class gold counts at 1 shard are noisy — raise SHARDS for stable numbers.)")
+
     write_json(args.out_dir / "weak_label_eval.json", {
         "shard_ids": shard_ids,
         "n_gold_total": len(uid_to_gold_class),
         "n_gold_in_sample": n_gold_in_sample,
         "n_labeled": n_labeled,
         "by_reason": dict(reason_to_count),
+        "per_class_metrics": class_to_metrics,
     })
     print(f"\nwrote {args.out_dir / 'weak_label_eval.json'}")
 
