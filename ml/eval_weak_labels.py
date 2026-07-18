@@ -107,6 +107,24 @@ def _format_ratio(value: float | None) -> str:
     return f"{value:.2f}" if value is not None else "   -"
 
 
+def confusion_matrix(
+    gold_weak_pairs: list[tuple[str, str | None, str]],
+) -> dict[str, Counter[str]]:
+    """Confusion counts per gold class (rows=gold, cols=weak label).
+
+    Only committed labels (weak_label not None) appear — unlabeled gold objects
+    are recall misses, not confusions. The diagonal is correct predictions; a
+    row's off-diagonal entries show which classes that gold class gets called.
+    """
+    gold_to_weak_counts: dict[str, Counter[str]] = {
+        class_name: Counter() for class_name in CLASS_TO_LVIS_CATEGORIES
+    }
+    for gold_class, weak_label, _ in gold_weak_pairs:
+        if weak_label is not None:
+            gold_to_weak_counts[gold_class][weak_label] += 1
+    return gold_to_weak_counts
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=Path("data/exploration"),
@@ -143,6 +161,19 @@ def main() -> None:
               f"{_format_ratio(class_metrics['recall']):>8}")
     print("(small per-class gold counts at 1 shard are noisy — raise SHARDS for stable numbers.)")
 
+    gold_to_weak_counts = confusion_matrix(gold_weak_pairs)
+    classes = sorted(CLASS_TO_LVIS_CATEGORIES)
+    header_label = "gold \\ weak"
+    header = "".join(f"{class_name[:4]:>5}" for class_name in classes)
+    print("\n=== Confusion matrix (rows=gold, cols=weak; '.'=0, diagonal=correct) ===")
+    print(f"{header_label:<13}{header}")
+    for gold_class in classes:
+        cells = "".join(
+            f"{(gold_to_weak_counts[gold_class][weak_class] or '.'):>5}"
+            for weak_class in classes
+        )
+        print(f"{gold_class:<13}{cells}")
+
     write_json(args.out_dir / "weak_label_eval.json", {
         "shard_ids": shard_ids,
         "n_gold_total": len(uid_to_gold_class),
@@ -150,6 +181,10 @@ def main() -> None:
         "n_labeled": n_labeled,
         "by_reason": dict(reason_to_count),
         "per_class_metrics": class_to_metrics,
+        "confusion_matrix": {
+            gold_class: dict(weak_counts)
+            for gold_class, weak_counts in gold_to_weak_counts.items()
+        },
     })
     print(f"\nwrote {args.out_dir / 'weak_label_eval.json'}")
 

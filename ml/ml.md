@@ -141,8 +141,11 @@ built up in stages so each is measurable:
   precision/recall (`per_class_metrics`) over 4 shards: **precision is high where the labeler commits**
   (car/chair/food/lamp 1.00, animal 0.96, weapon 0.95) — the conservative design working — while
   **recall stays low** (0.22–0.61) from that coverage ceiling. Weak spots to tune: **building (0.38)**
-  and **plant (0.42)** precision (over-predicting non-members). Confusion matrix next. Out-of-scope
-  rescue by high-precision keywords is a separate, later step.
+  and **plant (0.42)** precision (over-predicting non-members). The `confusion_matrix` shows *where*:
+  **`building` is a false-positive magnet** (animal/chair/electronics/figure/food/lamp all bleed in —
+  `architecture` gate too broad), and **`food → plant` is the single biggest confusion** (produce
+  caught by plant rules). Those are the concrete tuning targets. Out-of-scope rescue by high-precision
+  keywords is a separate, later step.
 
 ## Dataset Splits
 
