@@ -131,9 +131,12 @@ built up in stages so each is measurable:
   labeled, 14% ambiguous, 60% out-of-scope**; all 12 classes populated, smallest ~15/shard (×160 ≈ 2.4k,
   clears the bar). Residual ambiguity is mostly generic metadata (`furniture`/tool tags) that names no
   sub-class — correctly left for manual labeling (FR-4).
-- **Next — gold-set eval + tuning.** Measure keyword precision/recall against the LVIS gold set (e.g.
-  `seat` catching toilet seats, the figure/animal boundary), then tune. Out-of-scope rescue by
-  high-precision keywords is a separate, later step.
+- **Stage 3 — gold-set eval + tuning (in progress).** `ml/eval_weak_labels.py` (`make evalweak`)
+  measures the weak labels against the LVIS gold set (objects with both a weak and a clean label) to
+  get per-class precision/recall and drive keyword tuning (e.g. `seat` catching toilet seats, the
+  figure/animal boundary). First piece landed: the gold-label lookup (`uid → roster class`, inverting
+  `CLASS_TO_LVIS_CATEGORIES`) — 13,118 objects, per-class counts matching `build_class_list`. Out-of-scope
+  rescue by high-precision keywords is a separate, later step.
 
 ## Dataset Splits
 
