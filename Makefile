@@ -42,8 +42,8 @@ classlist: ## build + validate the final class list from LVIS merges (ml/taxonom
 weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
 	$(RUN) ml/weak_label.py --shards $(SHARDS)
 
-evalweak: ## evaluate weak labels vs the LVIS gold set (ml/eval_weak_labels.py)
-	$(RUN) ml/eval_weak_labels.py
+evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
+	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache

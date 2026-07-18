@@ -5,10 +5,14 @@ the *noisy* Sketchfab weak labels against them on the objects that have both, we
 can measure per-class precision/recall of the weak-labeling rules and tune the
 keyword lists from data instead of by eyeball. See `ml/ml.md#sketchfab-weak-labeling`.
 
-This commit builds the **gold-label lookup** only: `uid -> roster class`, by
-inverting `taxonomy.CLASS_TO_LVIS_CATEGORIES` over the curated LVIS annotations.
-Its per-class counts are a sanity check — they must match `build_class_list.py`'s
-per-class object counts (same union, keyed the other way).
+Built up in small steps:
+
+* **gold-label lookup** — `uid -> roster class`, inverting
+  `taxonomy.CLASS_TO_LVIS_CATEGORIES` over the curated LVIS annotations (per-class
+  counts match `build_class_list.py`).
+* **coverage** — sample whole shards, pair each gold object's clean label with the
+  weak labeler's guess, and report how much of the gold set the weak rules label at
+  all (a recall proxy). Per-class precision/recall + confusion matrix come next.
 
 Metadata only; no meshes downloaded. Output JSON is gitignored (NFR-6).
 """
@@ -22,6 +26,7 @@ from pathlib import Path
 import objaverse
 from io_utils import write_json
 from taxonomy import CLASS_TO_LVIS_CATEGORIES
+from weak_label import label_object, sample_uids_by_shard
 
 
 def build_uid_to_gold_class() -> dict[str, str]:
@@ -40,26 +45,60 @@ def build_uid_to_gold_class() -> dict[str, str]:
     return uid_to_gold_class
 
 
+def collect_gold_weak_pairs(
+    uid_to_gold_class: dict[str, str], shard_count: int
+) -> tuple[list[tuple[str, str | None, str]], list[str]]:
+    """Pair (gold_class, weak_label, reason) for gold objects in the sampled shards.
+
+    Only objects that carry an LVIS gold label are kept — they're the ones we can
+    score the weak labeler against. `weak_label` is None when the labeler left the
+    object unlabeled (reason "ambiguous" / "out-of-scope").
+    """
+    sample_uids, shard_ids = sample_uids_by_shard(shard_count)
+    uid_to_annotation = objaverse.load_annotations(sample_uids)
+    gold_weak_pairs: list[tuple[str, str | None, str]] = []
+    for uid, annotation in uid_to_annotation.items():
+        gold_class = uid_to_gold_class.get(uid)
+        if gold_class is None:
+            continue
+        weak_label, reason = label_object(annotation)
+        gold_weak_pairs.append((gold_class, weak_label, reason))
+    return gold_weak_pairs, shard_ids
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=Path("data/exploration"),
-                        help="output directory for the gold-label summary (gitignored)")
+                        help="output directory for the eval summary (gitignored)")
+    parser.add_argument("--shards", type=int, default=1,
+                        help="number of whole metadata shards to sample (~5k each)")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     uid_to_gold_class = build_uid_to_gold_class()
-    gold_class_to_count = Counter(uid_to_gold_class.values())
+    gold_weak_pairs, shard_ids = collect_gold_weak_pairs(uid_to_gold_class, args.shards)
 
-    print(f"=== LVIS gold labels: {len(uid_to_gold_class):,} objects, "
-          f"{len(gold_class_to_count)} classes ===")
-    for class_name, count in gold_class_to_count.most_common():
-        print(f"  {count:6,}  {class_name}")
+    n_gold_in_sample = len(gold_weak_pairs)
+    reason_to_count = Counter(reason for _, _, reason in gold_weak_pairs)
+    n_labeled = sum(1 for _, weak_label, _ in gold_weak_pairs if weak_label is not None)
 
-    write_json(args.out_dir / "gold_labels_summary.json", {
-        "n_gold_objects": len(uid_to_gold_class),
-        "gold_class_to_count": dict(gold_class_to_count),
+    print(f"=== Weak-vs-gold coverage (shards {', '.join(shard_ids)}) ===")
+    print(f"gold objects total: {len(uid_to_gold_class):,}")
+    print(f"gold objects in sample: {n_gold_in_sample:,}")
+    if n_gold_in_sample:
+        print(f"weak labeler assigned a label to {n_labeled}/{n_gold_in_sample} "
+              f"({n_labeled / n_gold_in_sample * 100:.0f}%):")
+        for reason in ("category", "keyword", "ambiguous", "out-of-scope"):
+            print(f"  {reason_to_count[reason]:5,}  {reason}")
+
+    write_json(args.out_dir / "weak_label_eval.json", {
+        "shard_ids": shard_ids,
+        "n_gold_total": len(uid_to_gold_class),
+        "n_gold_in_sample": n_gold_in_sample,
+        "n_labeled": n_labeled,
+        "by_reason": dict(reason_to_count),
     })
-    print(f"\nwrote {args.out_dir / 'gold_labels_summary.json'}")
+    print(f"\nwrote {args.out_dir / 'weak_label_eval.json'}")
 
 
 if __name__ == "__main__":

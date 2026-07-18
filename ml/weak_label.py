@@ -35,7 +35,7 @@ from taxonomy import CLASS_TO_KEYWORDS, SKETCHFAB_CATEGORY_TO_CLASSES
 _TOKEN = re.compile(r"[a-z0-9]+")
 
 
-def _sample_uids_by_shard(shard_count: int) -> tuple[list[str], list[str]]:
+def sample_uids_by_shard(shard_count: int) -> tuple[list[str], list[str]]:
     """Return (uids, shard_ids) for the first `shard_count` whole metadata shards."""
     uid_to_path: dict[str, str] = objaverse._load_object_paths()
     shard_id_to_uids: dict[str, list[str]] = {}
@@ -98,7 +98,7 @@ def label_object(annotation: dict) -> tuple[str | None, str]:
 
 
 def run(out_dir: Path, shard_count: int) -> dict[str, object]:
-    sample_uids, shard_ids = _sample_uids_by_shard(shard_count)
+    sample_uids, shard_ids = sample_uids_by_shard(shard_count)
     print("=== Sketchfab weak labels — category gate + keyword resolution ===")
     print(f"shards {', '.join(shard_ids)} ({len(sample_uids):,} objects); "
           f"downloading metadata ...")

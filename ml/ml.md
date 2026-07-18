@@ -134,9 +134,12 @@ built up in stages so each is measurable:
 - **Stage 3 — gold-set eval + tuning (in progress).** `ml/eval_weak_labels.py` (`make evalweak`)
   measures the weak labels against the LVIS gold set (objects with both a weak and a clean label) to
   get per-class precision/recall and drive keyword tuning (e.g. `seat` catching toilet seats, the
-  figure/animal boundary). First piece landed: the gold-label lookup (`uid → roster class`, inverting
-  `CLASS_TO_LVIS_CATEGORIES`) — 13,118 objects, per-class counts matching `build_class_list`. Out-of-scope
-  rescue by high-precision keywords is a separate, later step.
+  figure/animal boundary). Landed so far: the gold-label lookup (`uid → roster class`, inverting
+  `CLASS_TO_LVIS_CATEGORIES`, counts matching `build_class_list`) and weak-vs-gold **coverage** — on a
+  5k shard, 325 of ~13k gold objects fall in the sample and the weak rules label only **39%** of them
+  (rest ambiguous or out-of-scope), a recall ceiling the keyword rules alone can't lift. Per-class
+  precision/recall + confusion matrix next. Out-of-scope rescue by high-precision keywords is a
+  separate, later step.
 
 ## Dataset Splits
 
