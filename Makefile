@@ -9,6 +9,8 @@ VENV   := .venv
 BIN    := $(VENV)/bin
 MODE   ?= lvis
 SHARDS ?= 1
+COUNT  ?= 100
+COMPOSE := docker compose -f server/docker-compose.yml
 
 # Run a script through the venv Python ($(BIN)/python, which has the deps — not
 # $(PYTHON), the system interpreter used only to bootstrap the venv in `setup`).
@@ -19,19 +21,22 @@ SHARDS ?= 1
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup lint explore clean help
+.PHONY: setup lint test explore clean help compose-up compose-seed compose-down
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
-		awk 'BEGIN{FS=":.*## "}{printf "  %-10s %s\n", $$1, $$2}'
+		awk 'BEGIN{FS=":.*## "}{printf "  %-13s %s\n", $$1, $$2}'
 
-setup: ## create the virtualenv and install runtime + dev deps
+setup: ## create the virtualenv and install ml + server + dev deps
 	$(PYTHON) -m venv $(VENV)
 	$(BIN)/pip install --upgrade pip
-	$(BIN)/pip install -r requirements.txt -e ".[dev]"
+	$(BIN)/pip install -r requirements.txt -r server/requirements.txt -e ".[dev]"
 
 lint: ## ruff-check the codebase
 	$(BIN)/ruff check .
+
+test: ## run the test suite (server tests spin up Postgres via testcontainers)
+	$(BIN)/pytest
 
 explore: ## run milestone-1 metadata exploration (MODE=lvis|raw|both)
 	$(RUN) ml/explore_metadata.py --mode $(MODE)
@@ -44,6 +49,15 @@ weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
 
 evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
 	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
+
+compose-up: ## build + start the pipeline skeleton (Postgres, Pub/Sub emulator, worker)
+	$(COMPOSE) up -d --build
+
+compose-seed: ## publish COUNT download jobs into the running skeleton (default 100)
+	$(COMPOSE) run --rm seed python -m app.seed --count $(COUNT)
+
+compose-down: ## stop the skeleton and remove its volumes
+	$(COMPOSE) down -v
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache

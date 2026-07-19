@@ -17,11 +17,14 @@ import logging
 from pathlib import Path
 
 import objaverse
+from google.cloud import pubsub_v1
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..config import get_settings
-from ..db import session_scope
+from ..consumer import consume
+from ..db import init_db, session_scope
 from ..models import DownloadStatus, Model
+from ..queue import ensure_subscription
 from ..storage import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -75,3 +78,21 @@ def process(job: dict) -> str:
 
     logger.info("downloaded", extra={"uid": uid, "stage": STAGE, "content_hash": content_hash})
     return "downloaded"
+
+
+def main() -> None:
+    """Run the worker: bootstrap the DB/subscription, then consume jobs forever."""
+    init_db()
+    settings = get_settings()
+    publisher = pubsub_v1.PublisherClient()
+    subscriber = pubsub_v1.SubscriberClient()
+    ensure_subscription(
+        subscriber, publisher, settings.download_subscription, settings.download_topic
+    )
+    logger.info("download worker consuming %s", settings.download_subscription)
+    consume(settings.download_subscription, process)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()

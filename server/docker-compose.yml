@@ -1,0 +1,53 @@
+# Local pipeline skeleton (milestone 2): Postgres + Pub/Sub emulator + the
+# download worker. `make compose-up` builds and starts it; `make compose-seed`
+# publishes jobs; `make compose-down` tears it down. Exercises the same worker
+# code that runs on Cloud Run against managed Pub/Sub + Cloud SQL.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: imagegenie
+      POSTGRES_PASSWORD: imagegenie
+      POSTGRES_DB: imagegenie
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imagegenie"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pubsub:
+    image: messagebird/gcloud-pubsub-emulator:latest
+    environment:
+      PUBSUB_PROJECT1: imagegenie-local  # emulator serves this project on :8681
+
+  worker:
+    build: .
+    restart: on-failure  # retry until the emulator/DB are ready
+    environment: &worker-env
+      PUBSUB_EMULATOR_HOST: pubsub:8681
+      IMAGEGENIE_DATABASE_URL: postgresql+psycopg://imagegenie:imagegenie@postgres:5432/imagegenie
+      IMAGEGENIE_STORAGE_ROOT: /data/storage
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pubsub:
+        condition: service_started
+
+  # Producer — run on demand via `make compose-seed` (profile keeps it off `up`).
+  seed:
+    build: .
+    profiles: ["seed"]
+    environment: *worker-env
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pubsub:
+        condition: service_started
+
+volumes:
+  storage:

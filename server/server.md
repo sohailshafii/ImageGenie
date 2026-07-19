@@ -264,6 +264,26 @@ lose work nor hammer dependencies:
 - **REST API side.** The FastAPI layer applies per-user rate limiting and returns proper status codes;
   the frontend retries transient 5xx with the same backoff-and-jitter policy.
 
+## Running the Skeleton (milestone 2)
+
+The local skeleton is one `download` worker fed by a queue, wired in
+`server/docker-compose.yml` (Postgres + Pub/Sub emulator + worker) and driven by
+Makefile targets:
+
+```
+make compose-up               # build + start Postgres, Pub/Sub emulator, worker
+make compose-seed COUNT=100   # publish N download jobs (producer)
+make compose-down             # stop + remove volumes
+make test                     # unit + integration tests (Postgres via testcontainers)
+```
+
+Flow: `seed` (producer) publishes `{"uid"}` jobs to the `download-jobs` topic → the
+worker (consumer, pull subscription) fetches each mesh via objaverse into the
+`storage` volume and upserts a `model` row. Idempotent, so re-seeding the same uids
+re-processes nothing. The worker image is the same one that runs on Cloud Run; only
+the env (managed Pub/Sub, Cloud SQL, GCS) changes. Verified end-to-end: seed → download
+→ blobs stored → rows in Postgres.
+
 ## Coding Standards (backend)
 
 - **Language:** Python 3.11+. Type hints on all public functions; check with a static type checker.
