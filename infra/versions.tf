@@ -14,4 +14,9 @@ terraform {
 provider "google" {
   project = var.project_id
   region  = var.region
+
+  # Send a billing/quota project header on requests. Required for user ADC to
+  # call APIs like billingbudgets that demand a quota project.
+  user_project_override = true
+  billing_project       = var.project_id
 }

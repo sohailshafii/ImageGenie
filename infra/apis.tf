@@ -4,6 +4,7 @@
 
 locals {
   services = [
+    "cloudresourcemanager.googleapis.com", # project/API management (bootstrap)
     "run.googleapis.com",             # Cloud Run (workers)
     "pubsub.googleapis.com",          # queue
     "sqladmin.googleapis.com",        # Cloud SQL (Postgres)
