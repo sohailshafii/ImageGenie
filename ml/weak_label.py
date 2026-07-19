@@ -29,7 +29,7 @@ from collections import Counter
 from pathlib import Path
 
 import objaverse
-from io_utils import write_json
+from io_utils import write_csv, write_json
 from taxonomy import (
     CLASS_TO_KEYWORDS,
     CONFIRM_REQUIRED_CLASSES,
@@ -122,11 +122,13 @@ def run(out_dir: Path, shard_count: int) -> dict[str, object]:
 
     reason_to_count: Counter[str] = Counter()
     class_to_count: Counter[str] = Counter()
-    for annotation in uid_to_annotation.values():
+    labeled_rows: list[tuple[str, str, str]] = []
+    for uid, annotation in uid_to_annotation.items():
         class_name, reason = label_object(annotation)
         reason_to_count[reason] += 1
         if class_name is not None:
             class_to_count[class_name] += 1
+            labeled_rows.append((uid, class_name, reason))
 
     object_count = len(uid_to_annotation)
     print(f"\nof {object_count:,} objects:")
@@ -146,7 +148,12 @@ def run(out_dir: Path, shard_count: int) -> dict[str, object]:
     }
     out_path = out_dir / "weak_label_coverage.json"
     write_json(out_path, result)
-    print(f"\nwrote {out_path}")
+
+    # Persist the actual labeled set (uid → class), the ingestion input: the
+    # pipeline seeds download jobs from these uids (server/app/seed.py).
+    labels_path = out_dir / "weak_labels.csv"
+    write_csv(labels_path, ("uid", "class", "reason"), labeled_rows)
+    print(f"\nwrote {out_path}\nwrote {labels_path} ({len(labeled_rows):,} labeled uids)")
     return result
 
 

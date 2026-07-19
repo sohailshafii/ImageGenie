@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 
-def write_csv(path: Path, header: tuple[str, str], rows: list[tuple[str, int]]) -> None:
-    """Write ranked (name, count) rows to a CSV, reporting write errors."""
+def write_csv(path: Path, header: tuple[str, ...], rows: Sequence[tuple]) -> None:
+    """Write `rows` under `header` to a CSV, reporting write errors.
+
+    Columns are whatever the caller supplies (e.g. ``(name, count)`` for ranked
+    tallies, ``(uid, class, reason)`` for weak labels) — the header width and row
+    widths just need to agree.
+    """
     try:
         with path.open("w", newline="", encoding="utf-8") as csv_file:
             writer = csv.writer(csv_file)
