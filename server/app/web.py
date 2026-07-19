@@ -13,16 +13,27 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
+from .db import init_db
 from .queue import decode_message
 from .workers.download import process
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Materialize the schema before serving (idempotent; skeleton bootstrap).
+    init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/healthz")
