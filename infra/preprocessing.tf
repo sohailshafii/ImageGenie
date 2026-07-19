@@ -78,6 +78,12 @@ resource "google_cloud_run_v2_service" "stage" {
         name  = "IMAGEGENIE_STAGE"
         value = each.key
       }
+      # Publish the next stage's job to the real project's topics (config defaults
+      # to the local emulator project). Harmless on render, which publishes nothing.
+      env {
+        name  = "IMAGEGENIE_PUBSUB_PROJECT"
+        value = var.project_id
+      }
       env {
         name  = "IMAGEGENIE_STORAGE_BACKEND"
         value = "gcs"

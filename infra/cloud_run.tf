@@ -49,6 +49,12 @@ resource "google_cloud_run_v2_service" "download" {
         name  = "IMAGEGENIE_STAGE"
         value = "download"
       }
+      # Publish downstream jobs to the real project's topics (config defaults to the
+      # local emulator project); download hands off to the convert stage.
+      env {
+        name  = "IMAGEGENIE_PUBSUB_PROJECT"
+        value = var.project_id
+      }
       env {
         name  = "IMAGEGENIE_STORAGE_BACKEND"
         value = "gcs"
