@@ -147,7 +147,7 @@ def main() -> None:
     if n_gold_in_sample:
         print(f"weak labeler assigned a label to {n_labeled}/{n_gold_in_sample} "
               f"({n_labeled / n_gold_in_sample * 100:.0f}%):")
-        for reason in ("category", "keyword", "ambiguous", "out-of-scope"):
+        for reason in ("category", "keyword", "rescue", "ambiguous", "out-of-scope"):
             print(f"  {reason_to_count[reason]:5,}  {reason}")
 
     class_to_metrics = per_class_metrics(gold_weak_pairs)

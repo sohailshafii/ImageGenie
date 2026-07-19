@@ -89,11 +89,18 @@ def label_object(annotation: dict) -> tuple[str | None, str]:
     Single-candidate category -> its class directly, unless that class is
     confirm-required (its category is a noisy grab-bag) in which case a keyword
     must confirm it. Multi-candidate -> keyword resolution (reason "keyword"), or
-    "ambiguous" if keywords pick no clear winner; no mapped category ->
-    "out-of-scope".
+    "ambiguous" if keywords pick no clear winner. No mapped category -> a keyword
+    rescue over *all* classes (reason "rescue"), else "out-of-scope".
     """
     candidates_set = category_candidates(annotation)
     if not candidates_set:
+        # No Sketchfab category maps this object to a class, so there's no
+        # category gate (SKETCHFAB_CATEGORY_TO_CLASSES) to constrain candidates.
+        # Fall back to a keyword rescue over every class — lower precision, since
+        # keywords score with no category to disambiguate homographs.
+        rescued_class = resolve_by_keywords(annotation, set(CLASS_TO_KEYWORDS))
+        if rescued_class is not None:
+            return rescued_class, "rescue"
         return None, "out-of-scope"
     if len(candidates_set) == 1:
         only_class = next(iter(candidates_set))
@@ -123,7 +130,7 @@ def run(out_dir: Path, shard_count: int) -> dict[str, object]:
 
     object_count = len(uid_to_annotation)
     print(f"\nof {object_count:,} objects:")
-    for reason in ("category", "keyword", "ambiguous", "out-of-scope"):
+    for reason in ("category", "keyword", "rescue", "ambiguous", "out-of-scope"):
         count = reason_to_count[reason]
         print(f"  {count:6,}  ({count / object_count * 100:4.0f}%)  {reason}")
     print("\nlabeled (category + keyword), per class:")

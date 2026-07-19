@@ -157,8 +157,13 @@ built up in stages so each is measurable:
   precision **0.38 → 0.75**; recall **0.21 → 0.12** (the accepted cost — real buildings without a
   keyword abstain). Building stays a weak, low-recall class (LVIS is object-sparse for structures);
   it leans on manual labeling (FR-4).
-- **Later:** out-of-scope rescue by high-precision keywords (lift the 60% coverage floor) is a
-  separate step.
+- **Tuning — out-of-scope rescue (done).** When no category maps, `label_object` now tries a keyword
+  rescue over *all* keyworded classes (reason `rescue`) before giving up — recovering objects whose
+  category is abstract/unmapped but whose title/tags name a class. Result (4 shards): gold coverage
+  **40% → 52%** (+66 labels), recall up across nearly every class (food 0.47→0.73, building 0.12→0.33)
+  at held blended precision (~0.93). The rescue has no category gate, so it leans entirely on
+  keyword specificity — measured rescue precision ~0.88. `electronics` and `weapon` have no keyword
+  lists yet, so they can't be rescued — added next.
 
 ## Dataset Splits
 
