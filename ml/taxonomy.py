@@ -180,6 +180,19 @@ CLASS_TO_KEYWORDS: dict[str, list[str]] = {
                  "cottage", "hut", "lighthouse", "windmill", "fortress", "palace",
                  "mansion", "warehouse", "factory", "dome", "fort", "shed",
                  "stadium", "pyramid", "villa", "apartment", "hall"],
+    # weapon/electronics get no keyword disambiguation from their (single-candidate)
+    # categories; these lists exist so out-of-scope objects can be rescued. Kept
+    # conservative for the gateless rescue: no "mouse" (-> animal), "drone"
+    # (-> aircraft), or "tank" (-> car).
+    "weapon": ["weapon", "sword", "gun", "rifle", "pistol", "knife", "dagger",
+               "spear", "blade", "cannon", "shield", "armor", "firearm",
+               "revolver", "shotgun", "grenade", "missile", "katana", "machete",
+               "crossbow", "halberd", "warhammer", "axe", "mace"],
+    "electronics": ["electronics", "computer", "laptop", "phone", "smartphone",
+                    "keyboard", "monitor", "camera", "television", "radio",
+                    "speaker", "headphone", "earphone", "microphone", "printer",
+                    "router", "console", "tablet", "calculator", "telephone",
+                    "motherboard", "circuit", "charger", "gadget"],
 }
 
 

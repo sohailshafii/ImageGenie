@@ -162,8 +162,10 @@ built up in stages so each is measurable:
   category is abstract/unmapped but whose title/tags name a class. Result (4 shards): gold coverage
   **40% → 52%** (+66 labels), recall up across nearly every class (food 0.47→0.73, building 0.12→0.33)
   at held blended precision (~0.93). The rescue has no category gate, so it leans entirely on
-  keyword specificity — measured rescue precision ~0.88. `electronics` and `weapon` have no keyword
-  lists yet, so they can't be rescued — added next.
+  keyword specificity — measured rescue precision ~0.88. Adding `weapon`/`electronics` keyword lists
+  (kept conservative for the gateless rescue — no `mouse`→animal, `drone`→aircraft) made those two
+  rescuable as well: electronics recall 0.33→0.58, weapon 0.50→0.72, lifting coverage to **56%** at
+  ~0.94 blended precision. All 12 classes now rescuable.
 
 ## Dataset Splits
 
