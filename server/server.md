@@ -175,6 +175,11 @@ VM was rejected: cheaper per-hour but requires manual teardown, reintroducing th
 - **Dead-letter handling** — models that fail a stage N times go to a dead-letter queue with the
   error recorded in the DB, not silently dropped.
 - Queue technology is **Pub/Sub** (managed) — see [Queue](#queue) for topology and delivery semantics.
+- **Implementation.** Each worker is a module with a single `process(job)` entrypoint under
+  `server/app/workers/`. Milestone 2 implements `download.py`: it checks the DB/blob for an existing
+  download and skips, else fetches the mesh and records it via an `INSERT ... ON CONFLICT (uid)`
+  upsert. Its run-twice idempotency test runs against a real Postgres (testcontainers), per the
+  Postgres-not-SQLite rationale in [Database](#database).
 
 ## Database
 

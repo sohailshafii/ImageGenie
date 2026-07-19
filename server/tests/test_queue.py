@@ -1,8 +1,9 @@
 import json
 
 import pytest
-from app import queue
 from google.cloud import pubsub_v1
+
+from app import queue
 
 
 def test_decode_message_round_trip() -> None:
