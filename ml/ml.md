@@ -116,7 +116,9 @@ Resolves the class-list [open decision](../CLAUDE.md#open-decisions).
 ### Sketchfab weak labeling (pass 2, FR-3)
 
 `ml/weak_label.py` (`make weaklabel [SHARDS=N]`) assigns a class per object from raw Sketchfab metadata,
-built up in stages so each is measurable:
+built up in stages so each is measurable. It writes `weak_label_coverage.json` (the by-reason/per-class
+tally) and `weak_labels.csv` (`uid, class, reason` for every labeled object) — the latter is the
+**ingestion input**: the pipeline seeds download jobs from these uids (`server/app/seed.py`).
 
 - **Stage 1 — category gate (done).** `taxonomy.SKETCHFAB_CATEGORY_TO_CLASSES` maps the 18 top-level
   Sketchfab categories to the candidate roster classes under each. Single-candidate categories
