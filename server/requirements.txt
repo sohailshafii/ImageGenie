@@ -6,4 +6,5 @@ SQLAlchemy==2.0.51
 psycopg[binary]==3.3.4
 pydantic-settings==2.14.2
 google-cloud-pubsub==2.39.0
+google-cloud-storage==2.19.0
 objaverse==0.1.7
