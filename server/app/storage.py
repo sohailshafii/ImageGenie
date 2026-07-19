@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .config import Settings
+
 
 @runtime_checkable
 class Storage(Protocol):
@@ -75,3 +77,10 @@ class GcsStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._bucket.blob(key).download_as_bytes()
+
+
+def build_storage(settings: Settings) -> Storage:
+    """Return the storage backend chosen by config: LocalStorage or GcsStorage."""
+    if settings.storage_backend == "gcs":
+        return GcsStorage(settings.raw_bucket)
+    return LocalStorage(settings.storage_root)

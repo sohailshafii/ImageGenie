@@ -5,7 +5,7 @@ description = "3D model classification pipeline"
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-dev = ["ruff==0.6.9", "pytest==9.1.1", "testcontainers==4.14.2"]
+dev = ["ruff==0.6.9", "pytest==9.1.1", "testcontainers==4.14.2", "httpx==0.28.1"]
 
 [tool.setuptools]
 # No importable package yet — pipeline entrypoints are run as scripts
