@@ -42,7 +42,8 @@ CAMERA_RADIUS = 2.2
 CAMERA_ELEVATION = 0.8
 # Render shape, not colour: a neutral matte material so surface *form* (not the
 # model's own textures/vertex colours, which vary arbitrarily) is what the CNN sees.
-MATERIAL_BASE_COLOR = [0.72, 0.72, 0.75, 1.0]
+# Mid-grey (not near-white) keeps the model from washing out against the light bg.
+MATERIAL_BASE_COLOR = [0.55, 0.55, 0.58, 1.0]
 
 
 def _normalized_key(uid: str) -> str:
@@ -137,8 +138,8 @@ def _render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]
 
     # Key + fill lights aimed off the view axis (see _light_offset), attached to the
     # camera so shading reveals form and stays consistent across every orbit angle.
-    key_light = pyrender.DirectionalLight(color=np.ones(3), intensity=4.0)
-    fill_light = pyrender.DirectionalLight(color=np.ones(3), intensity=1.5)
+    key_light = pyrender.DirectionalLight(color=np.ones(3), intensity=3.0)
+    fill_light = pyrender.DirectionalLight(color=np.ones(3), intensity=1.0)
     key_offset = _light_offset(yaw_degrees=-35.0, pitch_degrees=-25.0)  # upper-left
     fill_offset = _light_offset(yaw_degrees=40.0, pitch_degrees=10.0)  # softer, right
     key_node = scene.add(key_light, pose=poses[0] @ key_offset)
