@@ -25,7 +25,7 @@ from ..consumer import consume
 from ..db import init_db, session_scope
 from ..models import DownloadStatus, Model
 from ..queue import ensure_subscription
-from ..storage import LocalStorage
+from ..storage import build_storage
 
 logger = logging.getLogger(__name__)
 STAGE = "download"
@@ -38,7 +38,7 @@ def _raw_key(uid: str) -> str:
 def process(job: dict) -> str:
     """Download one model. Returns ``"downloaded"`` or ``"skipped"``."""
     uid = job["uid"]
-    storage = LocalStorage(get_settings().storage_root)
+    storage = build_storage(get_settings())
     raw_key = _raw_key(uid)
 
     # Idempotency check: skip if the DB says downloaded and the blob is present.

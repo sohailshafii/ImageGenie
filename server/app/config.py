@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://imagegenie:imagegenie@localhost:5432/imagegenie"
     )
-    # Root directory for LocalStorage blobs in the skeleton (server.md#object-storage).
+    # Blob storage: "local" (LocalStorage over storage_root, skeleton) or "gcs"
+    # (GcsStorage over raw_bucket, cloud). See server.md#object-storage.
+    storage_backend: str = "local"
     storage_root: Path = Path("data/storage")
+    raw_bucket: str = "imagegenie-pipeline-raw"
 
     # Pub/Sub — emulator locally (set PUBSUB_EMULATOR_HOST), managed in prod
     # (server.md#queue). One topic + subscription per stage; skeleton has one.

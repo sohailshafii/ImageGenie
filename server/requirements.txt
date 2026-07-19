@@ -8,3 +8,6 @@ pydantic-settings==2.14.2
 google-cloud-pubsub==2.39.0
 google-cloud-storage==2.19.0
 objaverse==0.1.7
+# Cloud Run push receiver (server/app/web.py).
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
