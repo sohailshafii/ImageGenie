@@ -53,3 +53,25 @@ class LocalStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._path(key).read_bytes()
+
+
+class GcsStorage:
+    """GCS-backed `Storage` — keys map to objects in a bucket (cloud backend).
+
+    The `google-cloud-storage` import is deferred to construction so LocalStorage
+    users (and the test suite) don't need the dependency at import time.
+    """
+
+    def __init__(self, bucket_name: str) -> None:
+        from google.cloud import storage
+
+        self._bucket = storage.Client().bucket(bucket_name)
+
+    def exists(self, key: str) -> bool:
+        return self._bucket.blob(key).exists()
+
+    def put_bytes(self, key: str, data: bytes) -> None:
+        self._bucket.blob(key).upload_from_string(data)
+
+    def get_bytes(self, key: str) -> bytes:
+        return self._bucket.blob(key).download_as_bytes()
