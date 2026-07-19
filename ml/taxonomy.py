@@ -173,4 +173,18 @@ CLASS_TO_KEYWORDS: dict[str, list[str]] = {
     "plant": ["plant", "tree", "flower", "leaf", "cactus", "palm", "fern",
               "bonsai", "succulent", "shrub", "bush", "foliage", "sunflower",
               "rose", "tulip", "houseplant", "ivy", "bamboo", "grass"],
+    # Structures only. Excludes generic/element words (monument, fountain) that
+    # pull in statues (-> figure); those must stay unconfirmed rather than wrong.
+    "building": ["building", "house", "tower", "castle", "church", "cathedral",
+                 "temple", "mosque", "bridge", "skyscraper", "barn", "cabin",
+                 "cottage", "hut", "lighthouse", "windmill", "fortress", "palace",
+                 "mansion", "warehouse", "factory", "dome", "fort", "shed",
+                 "stadium", "pyramid", "villa", "apartment", "hall"],
 }
+
+
+# Classes that must NOT be auto-labeled from a single category alone — a keyword
+# must confirm, or the object is left ambiguous. `building`'s only category source
+# is Sketchfab's `architecture`, a grab-bag that also holds benches, statues, and
+# streetlights (see ml.md#sketchfab-weak-labeling), so require a building keyword.
+CONFIRM_REQUIRED_CLASSES: set[str] = {"building"}

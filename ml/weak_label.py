@@ -30,7 +30,11 @@ from pathlib import Path
 
 import objaverse
 from io_utils import write_json
-from taxonomy import CLASS_TO_KEYWORDS, SKETCHFAB_CATEGORY_TO_CLASSES
+from taxonomy import (
+    CLASS_TO_KEYWORDS,
+    CONFIRM_REQUIRED_CLASSES,
+    SKETCHFAB_CATEGORY_TO_CLASSES,
+)
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
@@ -82,15 +86,20 @@ def resolve_by_keywords(annotation: dict, candidates_set: set[str]) -> str | Non
 def label_object(annotation: dict) -> tuple[str | None, str]:
     """Weak-label one object. Returns (class_or_None, reason).
 
-    Single-candidate category -> its class; multi-candidate -> keyword resolution
-    (reason "keyword"), or "ambiguous" if keywords pick no clear winner; no
-    mapped category -> "out-of-scope".
+    Single-candidate category -> its class directly, unless that class is
+    confirm-required (its category is a noisy grab-bag) in which case a keyword
+    must confirm it. Multi-candidate -> keyword resolution (reason "keyword"), or
+    "ambiguous" if keywords pick no clear winner; no mapped category ->
+    "out-of-scope".
     """
     candidates_set = category_candidates(annotation)
     if not candidates_set:
         return None, "out-of-scope"
     if len(candidates_set) == 1:
-        return next(iter(candidates_set)), "category"
+        only_class = next(iter(candidates_set))
+        if only_class not in CONFIRM_REQUIRED_CLASSES:
+            return only_class, "category"
+        # confirm-required: fall through to require a keyword match
     resolved_class = resolve_by_keywords(annotation, candidates_set)
     if resolved_class is not None:
         return resolved_class, "keyword"

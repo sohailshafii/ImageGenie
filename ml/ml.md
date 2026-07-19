@@ -150,9 +150,15 @@ built up in stages so each is measurable:
   added `food`/`plant` keyword lists so produce (apple, pumpkin, mushroom) resolves to food, flora to
   plant. Result (4 shards): `food → plant` **8 → 1**; plant precision **0.42 → 0.86**; food recall
   **0.26 → 0.47** (produce recovered) at ~no precision cost; other classes unchanged.
-- **Still to tune:** `architecture → building` (make it keyword-confirmed so benches/streetlights/
-  statues stop auto-labeling as building). Out-of-scope rescue by high-precision keywords is a separate,
-  later step.
+- **Tuning — building confirm-required (done).** `architecture` is a grab-bag (benches, statues,
+  streetlights), so `building` is now in `taxonomy.CONFIRM_REQUIRED_CLASSES`: a class there is never
+  auto-committed from its category alone — a keyword must confirm it (else the object is left
+  ambiguous). Added building keywords. Result (4 shards): building-column FPs **~8 → 1**, building
+  precision **0.38 → 0.75**; recall **0.21 → 0.12** (the accepted cost — real buildings without a
+  keyword abstain). Building stays a weak, low-recall class (LVIS is object-sparse for structures);
+  it leans on manual labeling (FR-4).
+- **Later:** out-of-scope rescue by high-precision keywords (lift the 60% coverage floor) is a
+  separate step.
 
 ## Dataset Splits
 
