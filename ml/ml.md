@@ -166,6 +166,11 @@ built up in stages so each is measurable:
   (kept conservative for the gateless rescue — no `mouse`→animal, `drone`→aircraft) made those two
   rescuable as well: electronics recall 0.33→0.58, weapon 0.50→0.72, lifting coverage to **56%** at
   ~0.94 blended precision. All 12 classes now rescuable.
+- **Stable headline (`make evalweak SHARDS=20`, 1,851 gold objects):** gold coverage **57%**, blended
+  precision **0.91**, recall **0.52**. Per-class precision is 0.78–1.00 except **figure (0.62)** — the
+  figure↔animal boundary is genuinely fuzzy (teddy bears/creatures bleed both ways) and stays the
+  weakest class; recall spans 0.22–0.73. (The per-tuning deltas above were measured at 4 shards, so
+  small-sample; these 20-shard numbers are the reproducible reference.)
 
 ## Dataset Splits
 
