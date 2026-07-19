@@ -60,3 +60,9 @@ make compose-down
 
 **Code only.** Labeled data and trained models are **not** redistributed — you run the pipeline
 yourself. This respects Objaverse/Sketchfab licensing.
+
+## License
+
+The **code** in this repository is licensed under the [MIT License](LICENSE). This covers the source
+only — it grants no rights to Objaverse/Sketchfab 3D models, any data produced by the pipeline, or
+trained models, none of which are distributed here (see the distribution policy above).
