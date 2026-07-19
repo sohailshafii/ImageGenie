@@ -30,8 +30,13 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 - ✅ **Weak labeling (FR-3)** — category gate → keyword resolution → out-of-scope rescue; 57% gold
   coverage at ~0.91 precision, graded against the curated LVIS gold set
 - ✅ **Milestone 2** — pipeline skeleton (queue + download worker), verified end-to-end in Docker
-- 🚧 **Milestone 3** — cloud deployment (Terraform: APIs + budget alerts live; storage/queue/DB/Cloud
-  Run in progress)
+- ✅ **Milestone 3** — cloud deployment (Terraform: APIs, budget alerts, storage, Pub/Sub, Cloud SQL,
+  Cloud Run); pipeline runs end-to-end on GCP
+- 🚧 **Milestone 4** — full ingestion. Preprocessing stages (convert → normalize → render, multi-view
+  renders via trimesh + pyrender) built and tested locally; the 20–50k-model scale-up run is pending
+- ⬜ **Milestone 5** — labeling frontend (three.js viewer + confirm/correct UI over weak labels)
+- ⬜ **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU)
+- ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
 
 ## Layout
 
@@ -51,8 +56,8 @@ make setup          # venv + ml/server/dev deps
 make test           # test suite (Postgres via testcontainers)
 make weaklabel      # Sketchfab weak labeling over sampled shards
 make evalweak       # grade weak labels vs the LVIS gold set
-make compose-up     # local pipeline skeleton (Postgres + Pub/Sub emulator + worker)
-make compose-seed COUNT=100
+make compose-up     # local pipeline (Postgres + Pub/Sub emulator + all stage workers)
+make compose-seed COUNT=100   # seeds download jobs that flow through every stage
 make compose-down
 ```
 

@@ -11,3 +11,11 @@ objaverse==0.1.7
 # Cloud Run push receiver (server/app/web.py).
 fastapi==0.139.2
 uvicorn[standard]==0.51.0
+# Preprocessing stages (convert/normalize/render) — mesh IO + offscreen render.
+# numpy pinned <2 for pyrender 0.1.x compat; pyrender renders headless via OSMesa
+# (system libs installed in the Dockerfile). trimesh loads GLB + exports PLY.
+numpy==1.26.4
+trimesh==4.4.9
+pyrender==0.1.45
+Pillow==10.4.0
+PyOpenGL==3.1.0  # pinned exactly by pyrender 0.1.45

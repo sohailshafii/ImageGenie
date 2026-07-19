@@ -28,10 +28,17 @@ class Settings(BaseSettings):
     raw_bucket: str = "imagegenie-pipeline-raw"
 
     # Pub/Sub — emulator locally (set PUBSUB_EMULATOR_HOST), managed in prod
-    # (server.md#queue). One topic + subscription per stage; skeleton has one.
+    # (server.md#queue). One topic + subscription per stage boundary; each stage
+    # publishes the next stage's job (download → convert → normalize → render).
     pubsub_project: str = "imagegenie-local"
     download_topic: str = "download-jobs"
     download_subscription: str = "download-worker"
+    convert_topic: str = "convert-jobs"
+    convert_subscription: str = "convert-worker"
+    normalize_topic: str = "normalize-jobs"
+    normalize_subscription: str = "normalize-worker"
+    render_topic: str = "render-jobs"
+    render_subscription: str = "render-worker"
 
 
 @lru_cache
