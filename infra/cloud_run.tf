@@ -46,6 +46,10 @@ resource "google_cloud_run_v2_service" "download" {
       command = ["sh", "-c", "uvicorn app.web:app --host 0.0.0.0 --port $${PORT:-8080}"]
 
       env {
+        name  = "IMAGEGENIE_STAGE"
+        value = "download"
+      }
+      env {
         name  = "IMAGEGENIE_STORAGE_BACKEND"
         value = "gcs"
       }

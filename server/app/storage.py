@@ -79,8 +79,34 @@ class GcsStorage:
         return self._bucket.blob(key).download_as_bytes()
 
 
+class RoutedGcsStorage:
+    """Routes keys across the two GCS buckets by prefix (server.md#object-storage).
+
+    ``raw/*`` keys live in the raw bucket (Nearline-tiered, written once); everything
+    else (``processed/*``) lives in the processed bucket (Standard, read every epoch).
+    Callers still address blobs by key alone — the split is invisible to worker code,
+    exactly as with the single-bucket `LocalStorage` used locally.
+    """
+
+    def __init__(self, raw_bucket: str, processed_bucket: str) -> None:
+        self._raw = GcsStorage(raw_bucket)
+        self._processed = GcsStorage(processed_bucket)
+
+    def _backend(self, key: str) -> GcsStorage:
+        return self._raw if key.startswith("raw/") else self._processed
+
+    def exists(self, key: str) -> bool:
+        return self._backend(key).exists(key)
+
+    def put_bytes(self, key: str, data: bytes) -> None:
+        self._backend(key).put_bytes(key, data)
+
+    def get_bytes(self, key: str) -> bytes:
+        return self._backend(key).get_bytes(key)
+
+
 def build_storage(settings: Settings) -> Storage:
-    """Return the storage backend chosen by config: LocalStorage or GcsStorage."""
+    """Return the storage backend chosen by config: LocalStorage or routed GCS."""
     if settings.storage_backend == "gcs":
-        return GcsStorage(settings.raw_bucket)
+        return RoutedGcsStorage(settings.raw_bucket, settings.processed_bucket)
     return LocalStorage(settings.storage_root)
