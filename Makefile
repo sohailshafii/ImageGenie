@@ -12,6 +12,10 @@ SHARDS ?= 1
 COUNT  ?= 100
 COMPOSE := docker compose -f server/docker-compose.yml
 
+GCP_PROJECT  ?= imagegenie-pipeline
+GCP_REGION   ?= us-central1
+WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:latest
+
 # Run a script through the venv Python ($(BIN)/python, which has the deps — not
 # $(PYTHON), the system interpreter used only to bootstrap the venv in `setup`).
 # The venv Python appears twice on purpose: `python -m certifi` prints the path
@@ -21,7 +25,7 @@ COMPOSE := docker compose -f server/docker-compose.yml
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -62,6 +66,11 @@ compose-seed: ## publish COUNT download jobs into the running skeleton (default 
 
 compose-down: ## stop the skeleton and remove its volumes
 	$(COMPOSE) down -v
+
+deploy-image: ## build (linux/amd64) + push the worker image to Artifact Registry
+	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
+	docker build --platform linux/amd64 -t $(WORKER_IMAGE) server/
+	docker push $(WORKER_IMAGE)
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache
