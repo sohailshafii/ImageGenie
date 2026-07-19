@@ -18,4 +18,8 @@ numpy==1.26.4
 trimesh==4.4.9
 pyrender==0.1.45
 Pillow==10.4.0
-PyOpenGL==3.1.0  # pinned exactly by pyrender 0.1.45
+# pyrender's OSMesa backend imports OSMesaCreateContextAttribs, which upstream
+# PyOpenGL (incl. 3.1.0, the version pyrender hard-pins) never exposed. The pyrender
+# author's fork adds it and self-reports as 3.1.0, satisfying that pin. Installed
+# from git (needs `git` at build time — see the Dockerfile) for headless rendering.
+PyOpenGL @ git+https://github.com/mmatl/pyopengl.git
