@@ -13,6 +13,7 @@ locals {
     "cloudbilling.googleapis.com",         # billing operations
     "billingbudgets.googleapis.com",       # budget + alerts
     "iam.googleapis.com",                  # service accounts / IAM
+    "secretmanager.googleapis.com",        # DB connection secret
   ]
 }
 
