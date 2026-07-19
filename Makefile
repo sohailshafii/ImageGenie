@@ -21,7 +21,7 @@ COMPOSE := docker compose -f server/docker-compose.yml
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup lint test explore clean help compose-up compose-seed compose-down
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -31,6 +31,10 @@ setup: ## create the virtualenv and install ml + server + dev deps
 	$(PYTHON) -m venv $(VENV)
 	$(BIN)/pip install --upgrade pip
 	$(BIN)/pip install -r requirements.txt -r server/requirements.txt -e ".[dev]"
+
+cloud-tools: ## install cloud-deploy CLIs (terraform, gcloud) — macOS/Homebrew, idempotent
+	brew install hashicorp/tap/terraform
+	brew install --cask google-cloud-sdk
 
 lint: ## ruff-check the codebase
 	$(BIN)/ruff check .

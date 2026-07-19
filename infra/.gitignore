@@ -1,0 +1,7 @@
+# Terraform working files + state (state can hold secrets, e.g. DB passwords).
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+# Real values (names the billing account); commit terraform.tfvars.example instead.
+terraform.tfvars
