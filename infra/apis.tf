@@ -5,14 +5,14 @@
 locals {
   services = [
     "cloudresourcemanager.googleapis.com", # project/API management (bootstrap)
-    "run.googleapis.com",             # Cloud Run (workers)
-    "pubsub.googleapis.com",          # queue
-    "sqladmin.googleapis.com",        # Cloud SQL (Postgres)
-    "storage.googleapis.com",         # GCS buckets
-    "artifactregistry.googleapis.com", # worker image registry
-    "cloudbilling.googleapis.com",    # billing operations
-    "billingbudgets.googleapis.com",  # budget + alerts
-    "iam.googleapis.com",             # service accounts / IAM
+    "run.googleapis.com",                  # Cloud Run (workers)
+    "pubsub.googleapis.com",               # queue
+    "sqladmin.googleapis.com",             # Cloud SQL (Postgres)
+    "storage.googleapis.com",              # GCS buckets
+    "artifactregistry.googleapis.com",     # worker image registry
+    "cloudbilling.googleapis.com",         # billing operations
+    "billingbudgets.googleapis.com",       # budget + alerts
+    "iam.googleapis.com",                  # service accounts / IAM
   ]
 }
 
