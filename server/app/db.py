@@ -27,6 +27,17 @@ def get_engine() -> Engine:
     return create_engine(get_settings().database_url, future=True)
 
 
+def init_db() -> None:
+    """Create all tables if absent (idempotent) — skeleton bootstrap.
+
+    Prod would use migrations; the skeleton just materializes the schema so the
+    seed/worker can run against a fresh Postgres.
+    """
+    from . import models  # noqa: F401 — import registers the tables on Base.metadata
+
+    Base.metadata.create_all(get_engine())
+
+
 @contextmanager
 def session_scope() -> Iterator[Session]:
     """Transactional session scope: commit on success, roll back on error."""
