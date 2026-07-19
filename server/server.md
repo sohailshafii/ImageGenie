@@ -141,6 +141,11 @@ fees and erase the savings, so only raw is cold-stored.
 **Lifecycle rule** on `imagegenie-raw`: transition to Nearline once preprocessed and delete models
 excluded from the dataset outright (cost guardrail) — keeps the ~$5–15/mo storage line in check.
 
+**Client abstraction.** Workers reach storage through a thin `Storage` protocol
+(`server/app/storage.py`) addressed by **key** (e.g. `raw/<uid>.glb`), never touching buckets/paths
+directly. The milestone-2 skeleton uses `LocalStorage` over a local directory; a `GcsStorage` with the
+same interface swaps in for cloud, so worker code is unchanged between local and GCS.
+
 ### Training GPU
 
 The milestone-6 multi-view CNN (a pretrained ResNet fine-tuned on renders) trains as a **Vertex AI
