@@ -33,7 +33,8 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 - ✅ **Milestone 3** — cloud deployment (Terraform: APIs, budget alerts, storage, Pub/Sub, Cloud SQL,
   Cloud Run); pipeline runs end-to-end on GCP
 - 🚧 **Milestone 4** — full ingestion. Preprocessing stages (convert → normalize → render, multi-view
-  renders via trimesh + pyrender) built and tested locally; the 20–50k-model scale-up run is pending
+  renders via trimesh + pyrender) built and verified end-to-end in Docker; remaining: cloud deploy of
+  the three stages and the 20–50k-model scale-up run
 - ⬜ **Milestone 5** — labeling frontend (three.js viewer + confirm/correct UI over weak labels)
 - ⬜ **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU)
 - ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
