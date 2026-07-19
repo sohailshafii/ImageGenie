@@ -40,6 +40,9 @@ RESOLUTION = 224
 # at pyrender's default ~45° vertical FOV, and the ring is tilted up for a 3/4 view.
 CAMERA_RADIUS = 2.2
 CAMERA_ELEVATION = 0.8
+# Render shape, not colour: a neutral matte material so surface *form* (not the
+# model's own textures/vertex colours, which vary arbitrarily) is what the CNN sees.
+MATERIAL_BASE_COLOR = [0.72, 0.72, 0.75, 1.0]
 
 
 def _normalized_key(uid: str) -> str:
@@ -73,6 +76,32 @@ def _look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     return pose
 
 
+def _light_offset(yaw_degrees: float, pitch_degrees: float) -> np.ndarray:
+    """Rotation applied to the camera pose to aim a light off the view axis.
+
+    A light sharing the camera's pose points straight down the view direction —
+    head-on lighting that flattens the model to a silhouette. Composing the camera
+    pose with this yaw+pitch rotation aims the light from the side/above instead,
+    so shading reveals surface form. Attaching it to the *camera* keeps the lighting
+    identical across all orbit angles (consistent per-view shading for the CNN).
+    """
+    yaw = math.radians(yaw_degrees)
+    pitch = math.radians(pitch_degrees)
+    rotate_yaw = np.array([
+        [math.cos(yaw), 0.0, math.sin(yaw), 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [-math.sin(yaw), 0.0, math.cos(yaw), 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    rotate_pitch = np.array([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, math.cos(pitch), -math.sin(pitch), 0.0],
+        [0.0, math.sin(pitch), math.cos(pitch), 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    return rotate_yaw @ rotate_pitch
+
+
 def _camera_poses(num_views: int) -> list[np.ndarray]:
     """`num_views` camera-to-world poses evenly spaced on a tilted ring at origin."""
     target = np.zeros(3)
@@ -98,19 +127,30 @@ def _render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]
     import pyrender
     from PIL import Image
 
-    scene = pyrender.Scene(bg_color=[1.0, 1.0, 1.0, 0.0], ambient_light=[0.4, 0.4, 0.4])
-    scene.add(pyrender.Mesh.from_trimesh(mesh, smooth=False))
+    material = pyrender.MetallicRoughnessMaterial(
+        metallicFactor=0.0, roughnessFactor=0.85, baseColorFactor=MATERIAL_BASE_COLOR
+    )
+    scene = pyrender.Scene(bg_color=[1.0, 1.0, 1.0, 0.0], ambient_light=[0.3, 0.3, 0.3])
+    scene.add(pyrender.Mesh.from_trimesh(mesh, material=material, smooth=False))
     camera = pyrender.PerspectiveCamera(yfov=np.pi / 4.0)
-    light = pyrender.DirectionalLight(color=np.ones(3), intensity=3.0)
     camera_node = scene.add(camera, pose=poses[0])
-    light_node = scene.add(light, pose=poses[0])
+
+    # Key + fill lights aimed off the view axis (see _light_offset), attached to the
+    # camera so shading reveals form and stays consistent across every orbit angle.
+    key_light = pyrender.DirectionalLight(color=np.ones(3), intensity=4.0)
+    fill_light = pyrender.DirectionalLight(color=np.ones(3), intensity=1.5)
+    key_offset = _light_offset(yaw_degrees=-35.0, pitch_degrees=-25.0)  # upper-left
+    fill_offset = _light_offset(yaw_degrees=40.0, pitch_degrees=10.0)  # softer, right
+    key_node = scene.add(key_light, pose=poses[0] @ key_offset)
+    fill_node = scene.add(fill_light, pose=poses[0] @ fill_offset)
 
     renderer = pyrender.OffscreenRenderer(resolution, resolution)
     try:
         images = []
         for pose in poses:
             scene.set_pose(camera_node, pose)
-            scene.set_pose(light_node, pose)
+            scene.set_pose(key_node, pose @ key_offset)
+            scene.set_pose(fill_node, pose @ fill_offset)
             color, _ = renderer.render(scene)
             buffer = io.BytesIO()
             Image.fromarray(color).save(buffer, format="PNG")
