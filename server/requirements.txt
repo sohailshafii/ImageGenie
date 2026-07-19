@@ -1,0 +1,6 @@
+# Backend (server) runtime deps — installed into the worker/API container image.
+# SQLAlchemy + psycopg for the Postgres metadata DB; pydantic-settings for
+# env-var config. Pub/Sub client and objaverse are added as those stages land.
+SQLAlchemy==2.0.51
+psycopg[binary]==3.3.4
+pydantic-settings==2.14.2

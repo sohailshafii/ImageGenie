@@ -208,6 +208,10 @@ Requirements (resolves the DB TODO):
     each other. SQLite serializes every write behind a single database-level lock (one writer at a
     time), which both hides concurrency bugs in dev and would bottleneck at real worker fan-out.
     Postgres-everywhere keeps dev concurrency faithful to the cloud fan-out we scale to.
+- **Implementation.** SQLAlchemy 2.0 ORM in `server/app/models.py` on a shared `Base`
+  (`server/app/db.py`), with the connection string and other settings read from `IMAGEGENIE_`-prefixed
+  env vars (`server/app/config.py`). Milestone 2 defines `model` first (the download stage);
+  `artifact`/`label`/`training_run`/`user` land with their stages.
 
 ## API Layer
 
