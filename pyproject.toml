@@ -5,13 +5,18 @@ description = "3D model classification pipeline"
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-dev = ["ruff==0.6.9"]
+dev = ["ruff==0.6.9", "pytest==9.1.1"]
 
 [tool.setuptools]
 # No importable package yet — pipeline entrypoints are run as scripts
 # (`python ml/explore_metadata.py`). Empty so `pip install .[dev]` doesn't trip
 # setuptools' flat-layout auto-discovery over ml/ server/ web/ data/.
 py-modules = []
+
+[tool.pytest.ini_options]
+# Server tests import the `app` package; put server/ on the path.
+pythonpath = ["server"]
+testpaths = ["server/tests"]
 
 [tool.ruff]
 line-length = 100

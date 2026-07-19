@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # Root directory for LocalStorage blobs in the skeleton (server.md#object-storage).
     storage_root: Path = Path("data/storage")
 
+    # Pub/Sub — emulator locally (set PUBSUB_EMULATOR_HOST), managed in prod
+    # (server.md#queue). One topic + subscription per stage; skeleton has one.
+    pubsub_project: str = "imagegenie-local"
+    download_topic: str = "download-jobs"
+    download_subscription: str = "download-worker"
+
 
 @lru_cache
 def get_settings() -> Settings:

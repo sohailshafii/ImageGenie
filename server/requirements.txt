@@ -1,6 +1,8 @@
 # Backend (server) runtime deps — installed into the worker/API container image.
 # SQLAlchemy + psycopg for the Postgres metadata DB; pydantic-settings for
-# env-var config. Pub/Sub client and objaverse are added as those stages land.
+# env-var config; google-cloud-pubsub for the queue. objaverse added with the
+# download worker.
 SQLAlchemy==2.0.51
 psycopg[binary]==3.3.4
 pydantic-settings==2.14.2
+google-cloud-pubsub==2.39.0

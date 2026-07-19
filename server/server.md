@@ -93,6 +93,11 @@ Workers use **push** subscriptions (Pub/Sub delivers each message as an HTTP req
 service), which pairs with scale-to-zero. Pull subscriptions were rejected: they need an
 always-running puller, undercutting scale-to-zero.
 
+> **Skeleton exception (milestone 2).** The local download worker uses a **pull** subscription. The
+> objection to pull is purely scale-to-zero cost, which doesn't apply locally, and the download stage
+> is a batch consumer anyway (a Cloud Run *job* in prod, not a push service). Prod preprocessing stages
+> keep push.
+
 **At-least-once delivery.** Pub/Sub guarantees every message is delivered *one or more* times — never
 zero, occasionally twice. A worker must **acknowledge ("ack")** a message when done; if it fails to
 ack within the deadline (crash, timeout), Pub/Sub **redelivers**. A model can therefore be processed
