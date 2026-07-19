@@ -22,10 +22,16 @@ class Settings(BaseSettings):
         "postgresql+psycopg://imagegenie:imagegenie@localhost:5432/imagegenie"
     )
     # Blob storage: "local" (LocalStorage over storage_root, skeleton) or "gcs"
-    # (GcsStorage over raw_bucket, cloud). See server.md#object-storage.
+    # (routes raw/* → raw_bucket, processed/* → processed_bucket, cloud). See
+    # server.md#object-storage.
     storage_backend: str = "local"
     storage_root: Path = Path("data/storage")
     raw_bucket: str = "imagegenie-pipeline-raw"
+    processed_bucket: str = "imagegenie-pipeline-processed"
+
+    # Which stage handler this push service runs (server.md#compute) — the deployed
+    # Cloud Run service sets IMAGEGENIE_STAGE; web.py dispatches on it.
+    stage: str = "download"
 
     # Pub/Sub — emulator locally (set PUBSUB_EMULATOR_HOST), managed in prod
     # (server.md#queue). One topic + subscription per stage boundary; each stage

@@ -64,7 +64,10 @@ stage rather than forcing one pattern:
 
 The same container image runs in either flavor, so the local Docker skeleton (milestone 2) exercises
 identical code against the Pub/Sub emulator. The 60-min Cloud Run *service* request timeout is ample
-for per-model preprocessing.
+for per-model preprocessing. All four stages run the **one** image and push receiver
+(`app.web:app`); `IMAGEGENIE_STAGE` selects which stage's `process` handles the message, so a single
+service definition (fanned out with Terraform `for_each` in `infra/preprocessing.tf`) serves each
+stage — each with its own topic/subscription/DLQ and its `STAGE` env, download included.
 
 ### Queue
 
@@ -148,8 +151,10 @@ excluded from the dataset outright (cost guardrail) — keeps the ~$5–15/mo st
 
 **Client abstraction.** Workers reach storage through a thin `Storage` protocol
 (`server/app/storage.py`) addressed by **key** (e.g. `raw/<uid>.glb`), never touching buckets/paths
-directly. The milestone-2 skeleton uses `LocalStorage` over a local directory; a `GcsStorage` with the
-same interface swaps in for cloud, so worker code is unchanged between local and GCS.
+directly. The milestone-2 skeleton uses `LocalStorage` over a local directory (one root, key prefixes
+distinguish raw/processed); in cloud `RoutedGcsStorage` routes by key prefix — `raw/*` → the raw
+bucket, everything else (`processed/*`) → the processed bucket — so the two-bucket split is invisible
+to worker code, which is unchanged between local and GCS.
 
 ### Training GPU
 
