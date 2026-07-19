@@ -17,14 +17,13 @@ import logging
 from pathlib import Path
 
 import objaverse
-from google.cloud import pubsub_v1
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..config import get_settings
-from ..consumer import consume
-from ..db import init_db, session_scope
+from ..consumer import run_stage
+from ..db import session_scope
 from ..models import DownloadStatus, Model
-from ..queue import ensure_subscription
+from ..queue import publish_next
 from ..storage import build_storage
 
 logger = logging.getLogger(__name__)
@@ -36,9 +35,15 @@ def _raw_key(uid: str) -> str:
 
 
 def process(job: dict) -> str:
-    """Download one model. Returns ``"downloaded"`` or ``"skipped"``."""
+    """Download one model. Returns ``"downloaded"`` or ``"skipped"``.
+
+    Hands the model to the convert stage on either outcome, so a re-seeded or
+    redelivered job for an already-downloaded model still drives the pipeline
+    forward (convert is idempotent and skips if its output already exists).
+    """
     uid = job["uid"]
-    storage = build_storage(get_settings())
+    settings = get_settings()
+    storage = build_storage(settings)
     raw_key = _raw_key(uid)
 
     # Idempotency check: skip if the DB says downloaded and the blob is present.
@@ -51,6 +56,7 @@ def process(job: dict) -> str:
         )
     if already_done:
         logger.info("skip already-downloaded", extra={"uid": uid, "stage": STAGE})
+        publish_next(settings.convert_topic, uid)
         return "skipped"
 
     # Fetch the mesh — objaverse downloads to its cache and returns the local path.
@@ -77,20 +83,14 @@ def process(job: dict) -> str:
         session.execute(statement)
 
     logger.info("downloaded", extra={"uid": uid, "stage": STAGE, "content_hash": content_hash})
+    publish_next(settings.convert_topic, uid)
     return "downloaded"
 
 
 def main() -> None:
     """Run the worker: bootstrap the DB/subscription, then consume jobs forever."""
-    init_db()
     settings = get_settings()
-    publisher = pubsub_v1.PublisherClient()
-    subscriber = pubsub_v1.SubscriberClient()
-    ensure_subscription(
-        subscriber, publisher, settings.download_subscription, settings.download_topic
-    )
-    logger.info("download worker consuming %s", settings.download_subscription)
-    consume(settings.download_subscription, process)
+    run_stage(settings.download_subscription, settings.download_topic, process)
 
 
 if __name__ == "__main__":

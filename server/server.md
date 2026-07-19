@@ -176,10 +176,23 @@ VM was rejected: cheaper per-hour but requires manual teardown, reintroducing th
   error recorded in the DB, not silently dropped.
 - Queue technology is **Pub/Sub** (managed) — see [Queue](#queue) for topology and delivery semantics.
 - **Implementation.** Each worker is a module with a single `process(job)` entrypoint under
-  `server/app/workers/`. Milestone 2 implements `download.py`: it checks the DB/blob for an existing
-  download and skips, else fetches the mesh and records it via an `INSERT ... ON CONFLICT (uid)`
-  upsert. Its run-twice idempotency test runs against a real Postgres (testcontainers), per the
-  Postgres-not-SQLite rationale in [Database](#database).
+  `server/app/workers/`, and a `main()` that calls the shared `run_stage()` (bootstrap DB +
+  subscription, then consume). Each stage hands the model to the next by publishing `{"uid"}` to the
+  next topic (`publish_next`), so the chain is `download → convert → normalize → render`:
+  - `download.py` — fetch the mesh, upsert the `model` row (`INSERT ... ON CONFLICT (uid)`).
+  - `convert.py` — flatten the raw GLB to a single mesh and re-export it as canonical **PLY**
+    (`processed/converted/<uid>.ply`).
+  - `normalize.py` — center on the bounding-box center and scale the largest extent to 1
+    (`processed/normalized/<uid>.ply`).
+  - `render.py` — render 12 views (224²) around the object with **trimesh + pyrender** offscreen
+    (OSMesa in the container), writing `processed/renders/<uid>/view_NN.png` (terminal stage).
+
+  The preprocessing stages share `workers/mesh.py` (load/concatenate/export) and `workers/artifacts.py`
+  (the `(model_uid, stage)` idempotency gate + upsert). Every stage does an `artifact` upsert, so every
+  stage's run-twice idempotency test runs against a real Postgres (testcontainers), per the
+  Postgres-not-SQLite rationale in [Database](#database). Separately, render's other concern — the
+  pyrender/OSMesa offscreen render — can't run in the host test environment, so its test mocks the GL
+  call (`_render_views`) and asserts only the pure view-set + camera-pose math.
 
 ## Database
 
@@ -220,8 +233,9 @@ Requirements (resolves the DB TODO):
     Postgres-everywhere keeps dev concurrency faithful to the cloud fan-out we scale to.
 - **Implementation.** SQLAlchemy 2.0 ORM in `server/app/models.py` on a shared `Base`
   (`server/app/db.py`), with the connection string and other settings read from `IMAGEGENIE_`-prefixed
-  env vars (`server/app/config.py`). Milestone 2 defines `model` first (the download stage);
-  `artifact`/`label`/`training_run`/`user` land with their stages.
+  env vars (`server/app/config.py`). Milestone 2 defined `model` (the download stage); milestone 4
+  adds `artifact` — one row per (model, stage) output with a unique `(model_uid, stage)` constraint
+  backing the idempotent upsert. `label`/`training_run`/`user` land with their stages.
 
 ## API Layer
 
@@ -264,25 +278,27 @@ lose work nor hammer dependencies:
 - **REST API side.** The FastAPI layer applies per-user rate limiting and returns proper status codes;
   the frontend retries transient 5xx with the same backoff-and-jitter policy.
 
-## Running the Skeleton (milestone 2)
+## Running the Pipeline Locally (milestones 2 + 4)
 
-The local skeleton is one `download` worker fed by a queue, wired in
-`server/docker-compose.yml` (Postgres + Pub/Sub emulator + worker) and driven by
-Makefile targets:
+The local pipeline is one worker per stage fed by per-stage queues, wired in
+`server/docker-compose.yml` (Postgres + Pub/Sub emulator + a `download`, `convert`,
+`normalize`, and `render` service, all on the same image) and driven by Makefile
+targets:
 
 ```
-make compose-up               # build + start Postgres, Pub/Sub emulator, worker
+make compose-up               # build + start Postgres, Pub/Sub emulator, all stage workers
 make compose-seed COUNT=100   # publish N download jobs (producer)
 make compose-down             # stop + remove volumes
 make test                     # unit + integration tests (Postgres via testcontainers)
 ```
 
-Flow: `seed` (producer) publishes `{"uid"}` jobs to the `download-jobs` topic → the
-worker (consumer, pull subscription) fetches each mesh via objaverse into the
-`storage` volume and upserts a `model` row. Idempotent, so re-seeding the same uids
-re-processes nothing. The worker image is the same one that runs on Cloud Run; only
-the env (managed Pub/Sub, Cloud SQL, GCS) changes. Verified end-to-end: seed → download
-→ blobs stored → rows in Postgres.
+Flow: `seed` (producer) publishes `{"uid"}` jobs to `download-jobs` → each stage
+consumes its subscription (pull, locally), writes its blob(s) to the `storage`
+volume, upserts its DB row (`model` for download, `artifact` for the rest), and
+publishes the next stage's job — `download → convert → normalize → render`. Every
+stage is idempotent, so re-seeding the same uids re-processes nothing. The image is
+the same one that runs on Cloud Run; only the env (managed Pub/Sub, Cloud SQL, GCS)
+and delivery mode (push in prod) change.
 
 ## Coding Standards (backend)
 

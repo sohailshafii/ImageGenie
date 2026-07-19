@@ -144,6 +144,9 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
 - **Stage, don't commit.** Every change is staged (`git add`) so it can be reviewed as a diff.
   Do **not** commit until the user has reviewed the staged diff and explicitly approved. No
   auto-commits — this applies to code and docs alike.
+- **Keep commits small.** Prefer small, single-concern commits over one large diff. Break a
+  milestone into a sequence of focused commits (e.g. schema, then one commit per worker stage,
+  then docs) so each is an easily-reviewable, coherent unit.
 
 ## Coding Conventions (all languages)
 

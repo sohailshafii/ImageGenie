@@ -15,7 +15,8 @@ from collections.abc import Callable
 from google.cloud import pubsub_v1
 from google.cloud.pubsub_v1.subscriber.message import Message
 
-from .queue import decode_message, subscription_path
+from .db import init_db
+from .queue import decode_message, ensure_subscription, subscription_path
 
 logger = logging.getLogger(__name__)
 
@@ -45,3 +46,19 @@ def consume(subscription_id: str, handler: Handler) -> None:
         except KeyboardInterrupt:
             streaming_future.cancel()
             streaming_future.result()
+
+
+def run_stage(subscription_id: str, topic_id: str, handler: Handler) -> None:
+    """Bootstrap DB + subscription, then consume `subscription_id` forever.
+
+    The shared entrypoint every worker's ``main()`` calls: materialize the schema
+    (idempotent), ensure the stage's topic + pull subscription exist, and stream
+    jobs to `handler`. Locally this is a pull consumer (server.md#queue skeleton
+    exception); prod preprocessing stages instead receive Pub/Sub push over HTTP.
+    """
+    init_db()
+    publisher = pubsub_v1.PublisherClient()
+    subscriber = pubsub_v1.SubscriberClient()
+    ensure_subscription(subscriber, publisher, subscription_id, topic_id)
+    logger.info("worker consuming %s", subscription_id)
+    consume(subscription_id, handler)

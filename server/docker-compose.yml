@@ -1,7 +1,8 @@
-# Local pipeline skeleton (milestone 2): Postgres + Pub/Sub emulator + the
-# download worker. `make compose-up` builds and starts it; `make compose-seed`
-# publishes jobs; `make compose-down` tears it down. Exercises the same worker
-# code that runs on Cloud Run against managed Pub/Sub + Cloud SQL.
+# Local pipeline (milestones 2 + 4): Postgres + Pub/Sub emulator + one worker per
+# stage (download → convert → normalize → render). `make compose-up` builds and
+# starts it; `make compose-seed` publishes download jobs that then flow through
+# every stage; `make compose-down` tears it down. Exercises the same worker code
+# that runs on Cloud Run against managed Pub/Sub + Cloud SQL.
 
 services:
   postgres:
@@ -21,6 +22,8 @@ services:
     environment:
       PUBSUB_PROJECT1: imagegenie-local  # emulator serves this project on :8681
 
+  # download → convert → normalize → render: one service per stage, all sharing
+  # the same image (CMD picks the worker), the storage volume, DB, and emulator.
   worker:
     build: .
     restart: on-failure  # retry until the emulator/DB are ready
@@ -28,13 +31,37 @@ services:
       PUBSUB_EMULATOR_HOST: pubsub:8681
       IMAGEGENIE_DATABASE_URL: postgresql+psycopg://imagegenie:imagegenie@postgres:5432/imagegenie
       IMAGEGENIE_STORAGE_ROOT: /data/storage
-    volumes:
+    volumes: &worker-volumes
       - storage:/data/storage
-    depends_on:
+    depends_on: &worker-deps
       postgres:
         condition: service_healthy
       pubsub:
         condition: service_started
+
+  convert:
+    build: .
+    restart: on-failure
+    command: python -m app.workers.convert
+    environment: *worker-env
+    volumes: *worker-volumes
+    depends_on: *worker-deps
+
+  normalize:
+    build: .
+    restart: on-failure
+    command: python -m app.workers.normalize
+    environment: *worker-env
+    volumes: *worker-volumes
+    depends_on: *worker-deps
+
+  render:
+    build: .
+    restart: on-failure
+    command: python -m app.workers.render
+    environment: *worker-env
+    volumes: *worker-volumes
+    depends_on: *worker-deps
 
   # Producer — run on demand via `make compose-seed` (profile keeps it off `up`).
   seed:
