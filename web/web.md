@@ -48,6 +48,14 @@ Resolves the login TODO.
   - **Admin** — everything a user can do, plus correct annotations and upload data.
 - Enforce authorization on the **server** (API layer), not just by hiding UI — the frontend
   role checks are for UX, the backend checks are the security boundary (NFR-7).
+- **Account flows (modeled on the ChatApp reference):** signup is **invite-only** — an admin mints an
+  email-bound invite, and signup is gated to invited emails; a new account is **unverified** until the
+  emailed confirmation link is clicked, with a **resend confirmation** path; login surfaces the
+  `unverified` state. Endpoints respond generically (no account enumeration).
+- **Implemented (milestone 5, over a mock client):** login, invite-gated signup, email verification +
+  resend, and the admin invite UI — see `web/src/api/` (typed client + in-memory `mockDb`),
+  `web/src/auth/` (context + route guards), and `web/src/pages/`. The mock swaps for the real FastAPI
+  client without touching components.
 
 ## Data Upload
 
