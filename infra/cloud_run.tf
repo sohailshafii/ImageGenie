@@ -41,8 +41,8 @@ resource "google_cloud_run_v2_service" "download" {
     max_instance_request_concurrency = 1
 
     scaling {
-      min_instance_count = 0 # scale to zero
-      max_instance_count = 8
+      min_instance_count = 0  # scale to zero
+      max_instance_count = 25 # bulk-ingestion throughput (concurrency 1 → 25 parallel downloads)
     }
 
     containers {

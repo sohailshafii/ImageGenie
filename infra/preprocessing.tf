@@ -63,8 +63,8 @@ resource "google_cloud_run_v2_service" "stage" {
     max_instance_request_concurrency = 1
 
     scaling {
-      min_instance_count = 0 # scale to zero
-      max_instance_count = 5
+      min_instance_count = 0  # scale to zero
+      max_instance_count = 15 # keep pace with the download stage during bulk ingestion
     }
 
     containers {
