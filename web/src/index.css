@@ -587,6 +587,21 @@ select:focus {
   background: var(--accent-soft);
 }
 
+/* ── 3D model viewer ───────────────────────────────────────────────────────── */
+.model-viewer {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  touch-action: none; /* let OrbitControls own touch gestures */
+}
+
+.model-viewer canvas {
+  display: block;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
