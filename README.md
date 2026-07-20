@@ -32,10 +32,13 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 - ✅ **Milestone 2** — pipeline skeleton (queue + download worker), verified end-to-end in Docker
 - ✅ **Milestone 3** — cloud deployment (Terraform: APIs, budget alerts, storage, Pub/Sub, Cloud SQL,
   Cloud Run); pipeline runs end-to-end on GCP
-- 🚧 **Milestone 4** — full ingestion. Preprocessing stages (convert → normalize → render, multi-view
-  renders via trimesh + pyrender) built and verified end-to-end in Docker; remaining: cloud deploy of
-  the three stages and the 20–50k-model scale-up run
-- ⬜ **Milestone 5** — labeling frontend (three.js viewer + confirm/correct UI over weak labels)
+- ✅ **Milestone 4** — full ingestion. Convert → normalize → render stages deployed to Cloud Run
+  (scale-to-zero, per-stage Pub/Sub push + DLQ); ran the labeled 12-class set (32k seeded) with
+  resilience tuning (2–4 GiB, one-model-per-instance, in-worker retry + backoff) and a DLQ-replay tool
+  to recover transient mirror failures
+- 🚧 **Milestone 5** — labeling frontend (React + TS + Vite). Auth (login / invite / verify + resend),
+  a browse grid with inline confirm/correct, and an admin dead-letter view — over a typed mock API;
+  remaining: the three.js detail viewer and the FastAPI backend
 - ⬜ **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU)
 - ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
 
