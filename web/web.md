@@ -60,8 +60,12 @@ Resolves the upload TODO.
 
 ## Coding Standards (frontend)
 
-- **Stack:** decide with the first frontend work; default candidate is a component framework
-  (React) + three.js for rendering. Record the choice here once made.
+- **Stack (chosen):** **React + TypeScript + Vite**, three.js for 3D rendering. TypeScript for typed
+  model/label data and three.js APIs; Vite for fast dev/build. Lives in `web/`.
+- **Auth is a UX layer, not the boundary.** The frontend gates views behind login and hides
+  admin-only actions by role, but this is for UX only — the server API is the security boundary
+  (NFR-7). Until the FastAPI backend exists, the frontend runs against a typed **mock API** (a single
+  swappable client module), so its login/roles are simulated; real enforcement lands with the backend.
 - **Rendering:** all 3D viewing through a single reusable viewer component wrapping three.js —
   browse thumbnails and the detail viewer share it. Dispose of GPU resources on unmount.
 - **API access:** one typed client module for the FastAPI backend; no fetch calls scattered
