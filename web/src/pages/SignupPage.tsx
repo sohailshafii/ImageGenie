@@ -38,53 +38,72 @@ export function SignupPage() {
 
   if (done) {
     return (
-      <section style={{ maxWidth: 360 }}>
-        <h1>Check your email</h1>
-        <p>
-          We sent a confirmation link to <strong>{email}</strong>. Click it to activate your
-          account.
-        </p>
-        <p>
-          Didn’t get it?{' '}
-          <Link to={`/verify-email/resend?email=${encodeURIComponent(email)}`}>Resend it</Link>
-        </p>
-      </section>
+      <div className="auth-layout">
+        <section className="card">
+          <p className="brand">
+            <span className="brand-mark">🧞</span> ImageGenie
+          </p>
+          <h1>Check your email</h1>
+          <p className="form-success">
+            We sent a confirmation link to <strong>{email}</strong>. Click it to activate your
+            account.
+          </p>
+          <p className="form-note">
+            Didn’t get it?{' '}
+            <Link to={`/verify-email/resend?email=${encodeURIComponent(email)}`}>Resend it</Link>
+          </p>
+        </section>
+      </div>
     );
   }
 
   return (
-    <section style={{ maxWidth: 360 }}>
-      <h1>Create your account</h1>
-      <form onSubmit={onSubmit}>
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-            minLength={8}
-            required
-          />
-        </label>
-        <button type="submit" disabled={pending}>
-          {pending ? 'Creating…' : 'Create account'}
-        </button>
-      </form>
-      {error && <p role="alert">{error}</p>}
-      <p>
-        Already have an account? <Link to="/login">Sign in</Link>
-      </p>
-    </section>
+    <div className="auth-layout">
+      <section className="card">
+        <p className="brand">
+          <span className="brand-mark">🧞</span> ImageGenie
+        </p>
+        <h1>Create your account</h1>
+        <p className="lead">Signup is invite-only.</p>
+
+        <form className="form" onSubmit={onSubmit}>
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+          </div>
+          <button className="btn-primary" type="submit" disabled={pending}>
+            {pending ? 'Creating…' : 'Create account'}
+          </button>
+        </form>
+
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <p className="form-note">
+          Already have an account? <Link to="/login">Sign in</Link>
+        </p>
+      </section>
+    </div>
   );
 }

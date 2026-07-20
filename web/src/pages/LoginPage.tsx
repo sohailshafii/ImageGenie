@@ -42,47 +42,60 @@ export function LoginPage() {
   }
 
   return (
-    <section style={{ maxWidth: 360 }}>
-      <h1>Sign in</h1>
-      <form onSubmit={onSubmit}>
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
-        <button type="submit" disabled={pending}>
-          {pending ? 'Signing in…' : 'Sign in'}
-        </button>
-      </form>
-
-      {error && <p role="alert">{error}</p>}
-      {unverified && (
-        <p role="alert">
-          Your email isn’t confirmed yet.{' '}
-          <Link to={`/verify-email/resend?email=${encodeURIComponent(email)}`}>
-            Resend confirmation
-          </Link>
+    <div className="auth-layout">
+      <section className="card">
+        <p className="brand">
+          <span className="brand-mark">🧞</span> ImageGenie
         </p>
-      )}
+        <h1>Sign in</h1>
+        <p className="lead">Label 3D models for the classifier.</p>
 
-      <p>
-        Have an invite? <Link to="/signup">Create your account</Link>
-      </p>
-    </section>
+        <form className="form" onSubmit={onSubmit}>
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <button className="btn-primary" type="submit" disabled={pending}>
+            {pending ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        {unverified && (
+          <p className="form-error" role="alert">
+            Your email isn’t confirmed yet.{' '}
+            <Link to={`/verify-email/resend?email=${encodeURIComponent(email)}`}>
+              Resend confirmation
+            </Link>
+          </p>
+        )}
+
+        <p className="form-note">
+          Have an invite? <Link to="/signup">Create your account</Link>
+        </p>
+      </section>
+    </div>
   );
 }
