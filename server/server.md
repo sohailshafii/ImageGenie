@@ -69,6 +69,13 @@ for per-model preprocessing. All four stages run the **one** image and push rece
 service definition (fanned out with Terraform `for_each` in `infra/preprocessing.tf`) serves each
 stage — each with its own topic/subscription/DLQ and its `STAGE` env, download included.
 
+**One model per instance.** Each service runs at `max_instance_request_concurrency = 1` with 2Gi RAM.
+A pilot ingestion showed why: objaverse's downloader and trimesh/pyrender are memory-heavy and not
+safe to run many-to-an-instance — concurrent big meshes OOM'd the 512Mi default, and the OOM-kills
+truncated objaverse's on-disk cache mid-write (corrupt files on retry). One request per instance fixes
+both and bounds each instance to ~1 DB connection; throughput scales by adding instances, not
+in-instance concurrency. Cloud SQL's `max_connections` is raised to 100 to cover the fan-out.
+
 ### Queue
 
 Stages are connected by **Pub/Sub**, resolving the queue-technology
