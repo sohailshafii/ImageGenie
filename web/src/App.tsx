@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { HomePage } from './pages/HomePage';
+import { InvitePage } from './pages/InvitePage';
 import { LoginPage } from './pages/LoginPage';
 import { ResendVerificationPage } from './pages/ResendVerificationPage';
 import { SignupPage } from './pages/SignupPage';
@@ -21,6 +22,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <HomePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/invite"
+        element={
+          <ProtectedRoute requireAdmin>
+            <InvitePage />
           </ProtectedRoute>
         }
       />
