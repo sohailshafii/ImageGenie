@@ -367,6 +367,167 @@ a {
   color: var(--text-muted);
 }
 
+/* Shared select styling (filters, inline class picker). */
+select {
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ── Browse view ───────────────────────────────────────────────────────────── */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.filters {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.filters label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 1rem;
+}
+
+.model-grid[aria-busy='true'] {
+  opacity: 0.6;
+}
+
+.model-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.12s ease;
+}
+
+.model-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.model-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  font-size: 2.75rem;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.model-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem 0.75rem 0.8rem;
+}
+
+.model-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-label-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.model-class-select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.85rem;
+}
+
+.model-class {
+  font-weight: 600;
+}
+
+.btn-confirm {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.model-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.source-badge {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+}
+
+.source-badge.is-weak {
+  color: var(--text-muted);
+  background: var(--surface-hover);
+}
+
+.source-badge.is-manual {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.model-confidence {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 1.75rem 0 0.5rem;
+}
+
+.pager-status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

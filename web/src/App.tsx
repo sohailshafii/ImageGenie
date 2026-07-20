@@ -1,6 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
-import { HomePage } from './pages/HomePage';
+import { BrowsePage } from './pages/BrowsePage';
 import { InvitePage } from './pages/InvitePage';
 import { LoginPage } from './pages/LoginPage';
 import { ResendVerificationPage } from './pages/ResendVerificationPage';
@@ -21,7 +21,7 @@ export default function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <HomePage />
+            <BrowsePage />
           </ProtectedRoute>
         }
       />

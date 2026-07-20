@@ -42,3 +42,53 @@ export interface Invite {
   expiresAt: string; // ISO 8601
   accepted: boolean;
 }
+
+// ── Model catalog (labeling) ────────────────────────────────────────────────
+/** The locked 12-class roster (ml/taxonomy.py). */
+export const CLASS_NAMES = [
+  'animal',
+  'food',
+  'car',
+  'chair',
+  'weapon',
+  'electronics',
+  'figure',
+  'lamp',
+  'aircraft',
+  'building',
+  'table',
+  'plant',
+] as const;
+
+export type ClassName = (typeof CLASS_NAMES)[number];
+
+/** Whether a label came from the weak-labeling rules or a human correction. */
+export type LabelSource = 'weak' | 'manual';
+
+/** A model in the browse grid: its current label plus metadata to aid labeling. */
+export interface ModelSummary {
+  uid: string;
+  title: string;
+  tags: string[];
+  className: ClassName;
+  source: LabelSource;
+  confidence: number; // 0..1 (weak labels only; manual = 1)
+}
+
+export interface ModelPage {
+  items: ModelSummary[];
+  total: number;
+  page: number; // 1-based
+  pageSize: number;
+}
+
+/** A preprocessing stage — used to attribute a dead-lettered failure. */
+export type PipelineStage = 'download' | 'convert' | 'normalize' | 'render';
+
+/** A model that failed a stage and landed in that stage's dead-letter queue. */
+export interface DeadLetter {
+  uid: string;
+  stage: PipelineStage;
+  error: string;
+  failedAt: string; // ISO 8601
+}
