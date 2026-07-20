@@ -8,11 +8,12 @@
 locals {
   preprocessing_stages = toset(["convert", "normalize", "render"])
 
-  # Render rasterizes in software (OSMesa/llvmpipe) and loads whole meshes, so it
-  # gets more CPU/RAM than the lighter mesh-IO stages.
+  # All stages load whole meshes into memory (some Objaverse meshes are hundreds of
+  # MB), so each gets 2Gi; render also rasterizes in software (OSMesa/llvmpipe) and
+  # gets more CPU.
   stage_resources = {
-    convert   = { cpu = "1", memory = "1Gi" }
-    normalize = { cpu = "1", memory = "1Gi" }
+    convert   = { cpu = "1", memory = "2Gi" }
+    normalize = { cpu = "1", memory = "2Gi" }
     render    = { cpu = "2", memory = "2Gi" }
   }
 }
@@ -55,6 +56,11 @@ resource "google_cloud_run_v2_service" "stage" {
   template {
     service_account = google_service_account.worker.email
     timeout         = "600s" # a single model's preprocessing can take a while
+
+    # One model per instance: trimesh/pyrender aren't safe to run many to an
+    # instance (concurrent loads/renders OOM the container), and it bounds DB
+    # connections to ~1 per instance. Scale throughput with instances instead.
+    max_instance_request_concurrency = 1
 
     scaling {
       min_instance_count = 0 # scale to zero

@@ -34,9 +34,15 @@ resource "google_cloud_run_v2_service" "download" {
   template {
     service_account = google_service_account.worker.email
 
+    # One mesh download per instance: objaverse's downloader isn't safe to run many
+    # to an instance (concurrent big downloads OOM the container, which truncates its
+    # on-disk cache mid-write → corrupt files on retry). Scale throughput with
+    # instances, not in-instance concurrency; this also bounds DB connections to ~1.
+    max_instance_request_concurrency = 1
+
     scaling {
       min_instance_count = 0 # scale to zero
-      max_instance_count = 3
+      max_instance_count = 8
     }
 
     containers {
@@ -44,6 +50,15 @@ resource "google_cloud_run_v2_service" "download" {
       # Override the image's default (local pull worker) with the push receiver.
       # $$ escapes so the shell (not Terraform) expands Cloud Run's $PORT.
       command = ["sh", "-c", "uvicorn app.web:app --host 0.0.0.0 --port $${PORT:-8080}"]
+
+      # Objaverse meshes can be hundreds of MB; the default 512Mi OOMs on the larger
+      # ones (download → read bytes → hash). 2Gi clears them.
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "2Gi"
+        }
+      }
 
       env {
         name  = "IMAGEGENIE_STAGE"

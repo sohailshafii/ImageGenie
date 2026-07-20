@@ -23,6 +23,14 @@ resource "google_sql_database_instance" "main" {
     disk_type         = "PD_HDD" # a metadata DB is light; HDD is cheaper
     disk_autoresize   = false    # cap growth to bound cost
 
+    # db-f1-micro defaults to ~25 connections. With one connection per
+    # concurrency-1 worker instance across all stages (see the Cloud Run services),
+    # the fan-out during ingestion can exceed that; 100 gives headroom.
+    database_flags {
+      name  = "max_connections"
+      value = "100"
+    }
+
     backup_configuration {
       enabled = false # metadata is reproducible by re-running the pipeline
     }
