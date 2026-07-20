@@ -1,0 +1,377 @@
+/* Design tokens + shared component styles for the labeling frontend. Adapted from
+   the ChatApp reference stylesheet: a token layer (colors/shape/elevation) that
+   both themes drive, with reusable .page/.card/.form/.field/.btn classes so pages
+   stay markup-light. Dark theme resolves from the OS via prefers-color-scheme. */
+:root {
+  color-scheme: light;
+
+  /* Brand / accent */
+  --accent: #5b5bd6;
+  --accent-strong: #4a48c4;
+  --accent-soft: #ecedfb;
+  --accent-contrast: #ffffff;
+  --link: #4a48c4;
+  --focus-ring: rgba(91, 91, 214, 0.3);
+
+  /* Surfaces */
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f4f5f9;
+  --surface-hover: #eceef5;
+
+  /* Text */
+  --text: #1b1d28;
+  --text-muted: #5c6175;
+
+  /* Lines */
+  --border: #e4e6ef;
+  --border-strong: #cfd2e0;
+
+  /* Semantic */
+  --danger: #d11a45;
+  --success: #1a7f4b;
+
+  /* Shape */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(18, 18, 40, 0.06);
+  --shadow-md: 0 4px 14px rgba(18, 18, 40, 0.1);
+  --shadow-lg: 0 12px 32px rgba(18, 18, 40, 0.16);
+
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-sunken);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --accent: #5b5bd6;
+    --accent-strong: #6f6ee6;
+    --accent-soft: #21223a;
+    --link: #a9a9f6;
+    --focus-ring: rgba(124, 124, 240, 0.5);
+
+    --surface: #14151c;
+    --surface-raised: #1c1d27;
+    --surface-sunken: #0f1016;
+    --surface-hover: #23252f;
+
+    --text: #e8e9f1;
+    --text-muted: #9b9eb2;
+
+    --border: #2a2c39;
+    --border-strong: #3b3e4f;
+
+    --danger: #f4577a;
+    --success: #4ade80;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: var(--link);
+}
+
+/* Keyboard-visible focus for accessibility (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* ── Auth screens: a centered card on the sunken app background ─────────────── */
+.auth-layout {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.card {
+  width: 100%;
+  max-width: 26rem;
+  padding: 2rem 2rem 1.75rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+  font-weight: 800;
+  font-size: 1.9rem;
+  letter-spacing: -0.02em;
+}
+
+.brand-mark {
+  font-size: 2.1rem;
+  line-height: 1;
+}
+
+.card h1 {
+  margin: 0.25rem 0 0.35rem;
+  font-size: 1.25rem;
+}
+
+.card .lead {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+}
+
+/* ── Forms ─────────────────────────────────────────────────────────────────── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.field input {
+  padding: 0.55rem 0.7rem;
+  font-size: 1rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.form-error {
+  margin: 0.75rem 0 0;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.form-success {
+  margin: 0.75rem 0 0;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.form-note {
+  margin: 1rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.btn-primary {
+  width: 100%;
+  padding: 0.62rem 1.1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn-secondary {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+/* ── Authenticated app shell ───────────────────────────────────────────────── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.app-content {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+}
+
+.app-user a {
+  font-weight: 600;
+  color: var(--link);
+  text-decoration: none;
+}
+
+.app-user a:hover {
+  text-decoration: underline;
+}
+
+.pill {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+
+/* Content pages (Invite, and later browse/detail) */
+.page-lead {
+  max-width: 40rem;
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+}
+
+.form-inline {
+  max-width: 26rem;
+}
+
+.section-title {
+  margin: 2rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.invite-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 30rem;
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.invite-email {
+  font-weight: 600;
+}
+
+.invite-expiry {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

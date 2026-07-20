@@ -48,6 +48,14 @@ Resolves the login TODO.
   - **Admin** — everything a user can do, plus correct annotations and upload data.
 - Enforce authorization on the **server** (API layer), not just by hiding UI — the frontend
   role checks are for UX, the backend checks are the security boundary (NFR-7).
+- **Account flows (modeled on the ChatApp reference):** signup is **invite-only** — an admin mints an
+  email-bound invite, and signup is gated to invited emails; a new account is **unverified** until the
+  emailed confirmation link is clicked, with a **resend confirmation** path; login surfaces the
+  `unverified` state. Endpoints respond generically (no account enumeration).
+- **Implemented (milestone 5, over a mock client):** login, invite-gated signup, email verification +
+  resend, and the admin invite UI — see `web/src/api/` (typed client + in-memory `mockDb`),
+  `web/src/auth/` (context + route guards), and `web/src/pages/`. The mock swaps for the real FastAPI
+  client without touching components.
 
 ## Data Upload
 
@@ -60,8 +68,12 @@ Resolves the upload TODO.
 
 ## Coding Standards (frontend)
 
-- **Stack:** decide with the first frontend work; default candidate is a component framework
-  (React) + three.js for rendering. Record the choice here once made.
+- **Stack (chosen):** **React + TypeScript + Vite**, three.js for 3D rendering. TypeScript for typed
+  model/label data and three.js APIs; Vite for fast dev/build. Lives in `web/`.
+- **Auth is a UX layer, not the boundary.** The frontend gates views behind login and hides
+  admin-only actions by role, but this is for UX only — the server API is the security boundary
+  (NFR-7). Until the FastAPI backend exists, the frontend runs against a typed **mock API** (a single
+  swappable client module), so its login/roles are simulated; real enforcement lands with the backend.
 - **Rendering:** all 3D viewing through a single reusable viewer component wrapping three.js —
   browse thumbnails and the detail viewer share it. Dispose of GPU resources on unmount.
 - **API access:** one typed client module for the FastAPI backend; no fetch calls scattered
