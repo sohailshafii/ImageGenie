@@ -42,7 +42,7 @@ resource "google_cloud_run_v2_service" "download" {
 
     scaling {
       min_instance_count = 0  # scale to zero
-      max_instance_count = 25 # bulk-ingestion throughput (concurrency 1 → 25 parallel downloads)
+      max_instance_count = 10 # gentler on the Objaverse/HF mirror (25 got us throttled)
     }
 
     containers {
@@ -51,12 +51,13 @@ resource "google_cloud_run_v2_service" "download" {
       # $$ escapes so the shell (not Terraform) expands Cloud Run's $PORT.
       command = ["sh", "-c", "uvicorn app.web:app --host 0.0.0.0 --port $${PORT:-8080}"]
 
-      # Objaverse meshes can be hundreds of MB; the default 512Mi OOMs on the larger
-      # ones (download → read bytes → hash). 2Gi clears them.
+      # Objaverse meshes can be hundreds of MB; download reads the whole file into
+      # memory + hashes it. 2Gi still OOM'd on the largest models during the 32k run,
+      # so 4Gi (retry can't help an OOM — the instance is killed).
       resources {
         limits = {
           cpu    = "1"
-          memory = "2Gi"
+          memory = "4Gi"
         }
       }
 

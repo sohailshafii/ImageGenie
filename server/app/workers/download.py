@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
+import time
 from pathlib import Path
 
 import objaverse
@@ -29,9 +31,36 @@ from ..storage import build_storage
 logger = logging.getLogger(__name__)
 STAGE = "download"
 
+# Fetching from the Objaverse/HF mirror fails transiently under load — read/SSL
+# timeouts, dropped connections, occasional 5xx. Retry in-process with exponential
+# backoff + full jitter (server.md#request-resilience) so a transient blip doesn't
+# burn a Pub/Sub delivery attempt and dead-letter a perfectly good model. Genuine
+# failures (missing object, OOM) still exhaust attempts and dead-letter.
+_MAX_FETCH_ATTEMPTS = 4
+_BASE_BACKOFF_SECONDS = 2.0
+
 
 def _raw_key(uid: str) -> str:
     return f"raw/{uid}.glb"
+
+
+def _fetch_mesh(uid: str) -> bytes:
+    """Download `uid`'s mesh bytes, retrying transient failures with backoff+jitter."""
+    for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
+        try:
+            local_path = objaverse.load_objects([uid])[uid]
+            return Path(local_path).read_bytes()
+        except Exception as error:  # noqa: BLE001 — mirror errors are transient; DLQ is the backstop
+            if attempt == _MAX_FETCH_ATTEMPTS:
+                raise
+            backoff = _BASE_BACKOFF_SECONDS * 2 ** (attempt - 1)
+            delay = backoff + random.uniform(0.0, backoff)  # full jitter
+            logger.warning(
+                "download fetch failed; retrying",
+                extra={"uid": uid, "stage": STAGE, "attempt": attempt, "error": str(error)},
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable")  # loop either returns or raises
 
 
 def process(job: dict) -> str:
@@ -59,9 +88,8 @@ def process(job: dict) -> str:
         publish_next(settings.convert_topic, uid)
         return "skipped"
 
-    # Fetch the mesh — objaverse downloads to its cache and returns the local path.
-    local_path = objaverse.load_objects([uid])[uid]
-    data = Path(local_path).read_bytes()
+    # Fetch the mesh (retries transient mirror failures with backoff+jitter).
+    data = _fetch_mesh(uid)
     content_hash = hashlib.sha256(data).hexdigest()
     storage.put_bytes(raw_key, data)
 
