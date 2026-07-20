@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { BrowsePage } from './pages/BrowsePage';
+import { DeadLettersPage } from './pages/DeadLettersPage';
 import { InvitePage } from './pages/InvitePage';
 import { LoginPage } from './pages/LoginPage';
 import { ResendVerificationPage } from './pages/ResendVerificationPage';
@@ -30,6 +31,14 @@ export default function App() {
         element={
           <ProtectedRoute requireAdmin>
             <InvitePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dead-letters"
+        element={
+          <ProtectedRoute requireAdmin>
+            <DeadLettersPage />
           </ProtectedRoute>
         }
       />

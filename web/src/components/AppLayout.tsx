@@ -15,6 +15,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <span aria-hidden="true">🧞</span> ImageGenie
         </Link>
         <nav className="app-user">
+          {user?.role === 'admin' && <Link to="/dead-letters">Failed</Link>}
           {user?.role === 'admin' && <Link to="/invite">Invite</Link>}
           <span>
             {user?.email} <span className="pill">{user?.role}</span>
