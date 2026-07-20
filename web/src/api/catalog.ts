@@ -101,6 +101,14 @@ export async function listModels(params: {
   };
 }
 
+/** GET /models/{uid} — a single model (for the detail view). */
+export async function getModel(uid: string): Promise<ModelSummary> {
+  await delay();
+  const model = catalog.find((candidate) => candidate.uid === uid);
+  if (!model) throw new ApiError('validation_error', 'unknown model');
+  return model;
+}
+
 /**
  * PUT /models/{uid}/label — admin-only. Set the model's class as a **manual**
  * label (confirm = keep the class, correct = change it); confidence becomes 1.
