@@ -22,21 +22,30 @@ export function VerifyEmailPage() {
   }, [token]);
 
   return (
-    <section style={{ maxWidth: 360 }}>
-      <h1>Email confirmation</h1>
-      {status === 'verifying' && <p>Confirming your email…</p>}
-      {status === 'verified' && (
-        <p>
-          Your email is confirmed. <Link to="/login">Sign in</Link>
+    <div className="auth-layout">
+      <section className="card">
+        <p className="brand">
+          <span className="brand-mark">🧞</span> ImageGenie
         </p>
-      )}
-      {status === 'missing' && <p role="alert">This link is missing its token.</p>}
-      {status === 'invalid' && (
-        <p role="alert">
-          This confirmation link is invalid or expired.{' '}
-          <Link to="/verify-email/resend">Request a new one</Link>
-        </p>
-      )}
-    </section>
+        <h1>Email confirmation</h1>
+        {status === 'verifying' && <p className="lead">Confirming your email…</p>}
+        {status === 'verified' && (
+          <p className="form-success">
+            Your email is confirmed. <Link to="/login">Sign in</Link>
+          </p>
+        )}
+        {status === 'missing' && (
+          <p className="form-error" role="alert">
+            This link is missing its token.
+          </p>
+        )}
+        {status === 'invalid' && (
+          <p className="form-error" role="alert">
+            This confirmation link is invalid or expired.{' '}
+            <Link to="/verify-email/resend">Request a new one</Link>
+          </p>
+        )}
+      </section>
+    </div>
   );
 }

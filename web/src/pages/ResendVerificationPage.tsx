@@ -23,30 +23,41 @@ export function ResendVerificationPage() {
   }
 
   return (
-    <section style={{ maxWidth: 360 }}>
-      <h1>Resend confirmation</h1>
-      {sent ? (
-        <p>
-          If <strong>{email}</strong> has an unconfirmed account, a new confirmation link is on its
-          way. <Link to="/login">Back to sign in</Link>
+    <div className="auth-layout">
+      <section className="card">
+        <p className="brand">
+          <span className="brand-mark">🧞</span> ImageGenie
         </p>
-      ) : (
-        <form onSubmit={onSubmit}>
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
-          <button type="submit" disabled={pending}>
-            {pending ? 'Sending…' : 'Resend confirmation'}
-          </button>
-        </form>
-      )}
-    </section>
+        <h1>Resend confirmation</h1>
+        {sent ? (
+          <>
+            <p className="form-success">
+              If <strong>{email}</strong> has an unconfirmed account, a new confirmation link is on
+              its way.
+            </p>
+            <p className="form-note">
+              <Link to="/login">Back to sign in</Link>
+            </p>
+          </>
+        ) : (
+          <form className="form" onSubmit={onSubmit}>
+            <div className="field">
+              <label htmlFor="email">Email</label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                required
+              />
+            </div>
+            <button className="btn-primary" type="submit" disabled={pending}>
+              {pending ? 'Sending…' : 'Resend confirmation'}
+            </button>
+          </form>
+        )}
+      </section>
+    </div>
   );
 }

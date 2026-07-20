@@ -6,19 +6,26 @@ export function HomePage() {
   const { user, logout } = useAuth();
 
   return (
-    <section>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>ImageGenie — Labeling</h1>
-        <div>
+    <>
+      <header className="app-header">
+        <span className="app-logo">
+          <span aria-hidden="true">🧞</span> ImageGenie
+        </span>
+        <div className="app-user">
           <span>
-            {user?.email} ({user?.role})
-          </span>{' '}
-          <button type="button" onClick={() => void logout()}>
+            {user?.email} <span className="pill">{user?.role}</span>
+          </span>
+          <button className="btn-secondary" type="button" onClick={() => void logout()}>
             Sign out
           </button>
         </div>
       </header>
-      <p>Browse and detail views land in the next chunks.</p>
-    </section>
+      <div className="app-content">
+        <h1>Labeling</h1>
+        <p style={{ color: 'var(--text-muted)' }}>
+          Browse and detail views land in the next chunks.
+        </p>
+      </div>
+    </>
   );
 }

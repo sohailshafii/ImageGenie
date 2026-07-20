@@ -8,24 +8,22 @@ import { VerifyEmailPage } from './pages/VerifyEmailPage';
 
 export default function App() {
   return (
-    <main>
-      <Routes>
-        {/* Public auth routes */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/verify-email" element={<VerifyEmailPage />} />
-        <Route path="/verify-email/resend" element={<ResendVerificationPage />} />
+    <Routes>
+      {/* Public auth routes */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/verify-email/resend" element={<ResendVerificationPage />} />
 
-        {/* Everything else requires a session (web.md: login-gated) */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <HomePage />
-            </ProtectedRoute>
-          }
-        />
-      </Routes>
-    </main>
+      {/* Everything else requires a session (web.md: login-gated) */}
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <HomePage />
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
   );
 }
