@@ -139,23 +139,22 @@ def test_expired_invite_is_refused(anon_client: TestClient) -> None:
 
 
 # ── Email verification ──────────────────────────────────────────────────────
-def _signup_and_capture_token(client: TestClient, caplog) -> str:
-    """Sign up and pull the token out of the logged verification link.
+def _token_from(email) -> str:
+    """Pull the one-time token out of a captured verification email."""
+    return email.text.split("token=")[1].split()[0]
 
-    There is no mail transport yet, so the endpoint logs the link; this reads it
-    the way a developer would. Replace when real email lands.
-    """
+
+def _signup_and_capture_token(client: TestClient, mail_outbox) -> str:
+    """Sign up and read the token straight out of the sent verification email."""
     _open_invite()
-    with caplog.at_level("INFO", logger="app.api"):
-        client.post("/auth/signup", json={"email": INVITED_EMAIL, "password": NEW_PASSWORD})
-    line = next(record for record in caplog.records if "verification link" in record.getMessage())
-    return line.getMessage().split("token=")[1]
+    client.post("/auth/signup", json={"email": INVITED_EMAIL, "password": NEW_PASSWORD})
+    return _token_from(mail_outbox[-1])
 
 
 def test_verification_marks_the_account_and_enables_login(
-    anon_client: TestClient, caplog
+    anon_client: TestClient, mail_outbox
 ) -> None:
-    token = _signup_and_capture_token(anon_client, caplog)
+    token = _signup_and_capture_token(anon_client, mail_outbox)
 
     assert anon_client.post("/auth/verify-email", json={"token": token}).status_code == 204
     assert anon_client.post(
@@ -163,8 +162,8 @@ def test_verification_marks_the_account_and_enables_login(
     ).status_code == 200
 
 
-def test_verification_token_is_single_use(anon_client: TestClient, caplog) -> None:
-    token = _signup_and_capture_token(anon_client, caplog)
+def test_verification_token_is_single_use(anon_client: TestClient, mail_outbox) -> None:
+    token = _signup_and_capture_token(anon_client, mail_outbox)
     assert anon_client.post("/auth/verify-email", json={"token": token}).status_code == 204
     replay = anon_client.post("/auth/verify-email", json={"token": token})
     assert replay.status_code == 400
@@ -178,11 +177,11 @@ def test_unknown_verification_token_is_refused(anon_client: TestClient) -> None:
 
 
 def test_expired_verification_token_is_refused_and_consumed(
-    anon_client: TestClient, caplog
+    anon_client: TestClient, mail_outbox
 ) -> None:
     from datetime import UTC, datetime, timedelta
 
-    token = _signup_and_capture_token(anon_client, caplog)
+    token = _signup_and_capture_token(anon_client, mail_outbox)
     with db.session_scope() as session:
         record = session.get(EmailVerification, hash_token(token))
         record.expires_at = datetime.now(UTC) - timedelta(seconds=1)
@@ -195,9 +194,9 @@ def test_expired_verification_token_is_refused_and_consumed(
 
 
 def test_tokens_are_stored_hashed_never_in_the_clear(
-    anon_client: TestClient, caplog
+    anon_client: TestClient, mail_outbox
 ) -> None:
-    token = _signup_and_capture_token(anon_client, caplog)
+    token = _signup_and_capture_token(anon_client, mail_outbox)
     with db.session_scope() as session:
         stored = session.scalars(select(EmailVerification)).all()
         assert len(stored) == 1
@@ -205,16 +204,12 @@ def test_tokens_are_stored_hashed_never_in_the_clear(
         assert stored[0].token_hash == hash_token(token)
 
 
-def test_resend_replaces_the_previous_token(anon_client: TestClient, caplog) -> None:
-    first = _signup_and_capture_token(anon_client, caplog)
-    caplog.clear()
-    with caplog.at_level("INFO", logger="app.api"):
-        assert anon_client.post(
-            "/auth/verify-email/resend", json={"email": INVITED_EMAIL}
-        ).status_code == 204
-    second = next(
-        record for record in caplog.records if "verification link" in record.getMessage()
-    ).getMessage().split("token=")[1]
+def test_resend_replaces_the_previous_token(anon_client: TestClient, mail_outbox) -> None:
+    first = _signup_and_capture_token(anon_client, mail_outbox)
+    assert anon_client.post(
+        "/auth/verify-email/resend", json={"email": INVITED_EMAIL}
+    ).status_code == 204
+    second = _token_from(mail_outbox[-1])
 
     assert second != first
     assert anon_client.post("/auth/verify-email", json={"token": first}).status_code == 400
@@ -274,8 +269,8 @@ def test_anonymous_cannot_invite(anon_client: TestClient) -> None:
     assert anon_client.post("/auth/invites", json={"email": "x@y.dev"}).status_code == 403
 
 
-def test_normal_user_cannot_invite(anon_client: TestClient, caplog) -> None:
-    token = _signup_and_capture_token(anon_client, caplog)
+def test_normal_user_cannot_invite(anon_client: TestClient, mail_outbox) -> None:
+    token = _signup_and_capture_token(anon_client, mail_outbox)
     anon_client.post("/auth/verify-email", json={"token": token})
     anon_client.post("/auth/login", json={"email": INVITED_EMAIL, "password": NEW_PASSWORD})
     anon_client.headers[CSRF_HEADER] = anon_client.cookies[CSRF_COOKIE]

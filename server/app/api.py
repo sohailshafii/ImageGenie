@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .db import init_db, session_scope
+from .mail import send_invite_email, send_verification_email
 from .models import (
     EmailVerification,
     Invite,
@@ -315,12 +316,16 @@ def _rate_limit(limiter: FixedWindowRateLimiter, key: str, rule: RateLimitRule) 
         raise _too_many_requests(limiter.retry_after(key))
 
 
-def _issue_verification(session: Session, user: User) -> None:
-    """Replace any outstanding verification token for `user` and 'send' a new one.
+def _issue_verification(session: Session, user: User, background: BackgroundTasks) -> None:
+    """Replace any outstanding verification token for `user` and email a new one.
 
     Replacing rather than appending keeps exactly one live token per account, so
     a resend invalidates the previous link and the table can't be grown by
     repeatedly asking for one.
+
+    The send is queued as a background task, so a slow mail provider doesn't hold
+    the response open — and, because tasks run only after a successful response,
+    a rolled-back signup never emails a link for an account that doesn't exist.
     """
     session.execute(delete(EmailVerification).where(EmailVerification.user_id == user.id))
     token = generate_token()
@@ -331,14 +336,11 @@ def _issue_verification(session: Session, user: User) -> None:
             expires_at=datetime.now(UTC) + VERIFICATION_TTL,
         )
     )
-    # TODO(email): no mail transport yet — log the link so the flow is usable in
-    # dev. This MUST become a real send before any non-local deployment; until
-    # then a verification link is visible to anyone who can read the logs.
-    logger.info("verification link for %s: /verify-email?token=%s", user.email, token)
+    background.add_task(send_verification_email, user.email, token)
 
 
 @app.post("/auth/signup", status_code=204)
-def signup(body: SignupIn, request: Request) -> Response:
+def signup(body: SignupIn, request: Request, background: BackgroundTasks) -> Response:
     """Create an unverified account. **Invite-gated** — FR-8 keeps signup closed.
 
     Error ordering is deliberate: the invite is checked *first*, so a caller with
@@ -369,7 +371,7 @@ def signup(body: SignupIn, request: Request) -> Response:
         session.add(user)
         session.flush()  # assign user.id before the verification row FKs it
         invite.accepted = True
-        _issue_verification(session, user)
+        _issue_verification(session, user, background)
     return Response(status_code=204)
 
 
@@ -403,7 +405,9 @@ def verify_email(body: VerifyEmailIn, request: Request) -> Response:
 
 
 @app.post("/auth/verify-email/resend", status_code=204)
-def resend_verification(body: ResendIn, request: Request) -> Response:
+def resend_verification(
+    body: ResendIn, request: Request, background: BackgroundTasks
+) -> Response:
     """Re-issue a verification link.
 
     Always 204, whatever the address: a status that varied would turn this into
@@ -415,12 +419,14 @@ def resend_verification(body: ResendIn, request: Request) -> Response:
     with session_scope() as session:
         user = session.scalar(select(User).where(User.email == email))
         if user is not None and not user.verified:
-            _issue_verification(session, user)
+            _issue_verification(session, user, background)
     return Response(status_code=204)
 
 
 @app.post("/auth/invites", response_model=InviteOut, status_code=201)
-def create_invite(body: InviteIn, admin: AdminUser) -> InviteOut:
+def create_invite(
+    body: InviteIn, admin: AdminUser, background: BackgroundTasks
+) -> InviteOut:
     """Mint an email-bound signup invite. Admin-only (FR-8).
 
     Idempotent per email — re-inviting refreshes the existing invite rather than
@@ -440,8 +446,7 @@ def create_invite(body: InviteIn, admin: AdminUser) -> InviteOut:
         invite.expires_at = expires_at
         invite.accepted = False  # re-inviting reopens a spent invite
         invite.invited_by = admin.email
-        # TODO(email): see _issue_verification — no transport yet.
-        logger.info("invite for %s by %s: /signup?email=%s", email, admin.email, email)
+    background.add_task(send_invite_email, email, admin.email)
     return InviteOut(email=email, expires_at=expires_at, accepted=False)
 
 

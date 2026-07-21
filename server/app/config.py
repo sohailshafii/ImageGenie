@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     # sets it.
     trust_proxy_headers: bool = False
 
+    # Transactional email via Resend (server.md#email). The key is OPTIONAL: with
+    # it unset the app logs verification/invite links instead of sending them, so
+    # local dev needs no credentials — but the link then lands in the logs, so
+    # every deployed environment must set IMAGEGENIE_RESEND_API_KEY.
+    resend_api_key: str | None = None
+    # Resend's sandbox sender delivers only to the Resend account owner's own
+    # address. Real delivery needs a verified domain with SPF/DKIM.
+    mail_from: str = "onboarding@resend.dev"
+    # Origin used to build links in emails — the frontend, not the API.
+    app_base_url: str = "http://localhost:5173"
+
     # Which stage handler this push service runs (server.md#compute) — the deployed
     # Cloud Run service sets IMAGEGENIE_STAGE; web.py dispatches on it.
     stage: str = "download"
