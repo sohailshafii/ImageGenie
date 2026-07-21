@@ -8,7 +8,6 @@ export type Role = 'user' | 'admin';
 
 /** The authenticated account, as returned by the session (`getMe`). */
 export interface AuthUser {
-  id: string;
   email: string;
   role: Role;
 }
@@ -24,7 +23,10 @@ export type ApiErrorCode =
   | 'rate_limited'
   | 'validation_error'
   | 'unauthorized' // no valid session
-  | 'forbidden'; // authenticated but lacking the role (e.g. non-admin inviting)
+  | 'forbidden' // authenticated but lacking the role (e.g. non-admin inviting)
+  | 'csrf_failure' // missing/mismatched CSRF token (server.md#csrf)
+  | 'network_error' // the request never reached the server
+  | 'server_error'; // an unrecognized non-2xx response
 
 export interface LoginRequest {
   email: string;
@@ -65,14 +67,21 @@ export type ClassName = (typeof CLASS_NAMES)[number];
 /** Whether a label came from the weak-labeling rules or a human correction. */
 export type LabelSource = 'weak' | 'manual';
 
-/** A model in the browse grid: its current label plus metadata to aid labeling. */
+/**
+ * A model in the browse grid: its current label plus metadata to aid labeling.
+ *
+ * The label fields are **nullable**: a model has no label until weak labeling or
+ * a human assigns one, and the API reports that honestly rather than inventing a
+ * class. The UI renders those as "unlabeled" — which is also the state every
+ * model is in until the weak-label backfill runs.
+ */
 export interface ModelSummary {
   uid: string;
   title: string;
   tags: string[];
-  className: ClassName;
-  source: LabelSource;
-  confidence: number; // 0..1 (weak labels only; manual = 1)
+  className: ClassName | null;
+  source: LabelSource | null;
+  confidence: number | null; // 0..1, weak labels only; null once manual
 }
 
 export interface ModelPage {

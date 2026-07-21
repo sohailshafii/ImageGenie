@@ -52,10 +52,29 @@ Resolves the login TODO.
   email-bound invite, and signup is gated to invited emails; a new account is **unverified** until the
   emailed confirmation link is clicked, with a **resend confirmation** path; login surfaces the
   `unverified` state. Endpoints respond generically (no account enumeration).
-- **Implemented (milestone 5, over a mock client):** login, invite-gated signup, email verification +
-  resend, and the admin invite UI — see `web/src/api/` (typed client + in-memory `mockDb`),
-  `web/src/auth/` (context + route guards), and `web/src/pages/`. The mock swaps for the real FastAPI
-  client without touching components.
+- **Implemented (milestone 5), now against the real FastAPI backend:** login, invite-gated signup,
+  email verification + resend, and the admin invite UI — see `web/src/api/` (typed client),
+  `web/src/auth/` (context + route guards), and `web/src/pages/`. The in-memory mock has been
+  removed; swapping it out needed no component changes, which was the point of the single-client rule.
+- **How the client talks to the API** (`web/src/api/client.ts`) — one `fetch` wrapper owns the three
+  cross-cutting concerns so no caller repeats them:
+  - `credentials: 'same-origin'`, so the httpOnly session cookie rides along. Nothing in the app
+    reads or stores a token.
+  - The **CSRF header** (`X-CSRF-Token`) on any method outside `GET`/`HEAD`/`OPTIONS`, copied from
+    the readable `imagegenie_csrf` cookie (see [server.md](../server/server.md#csrf)).
+  - Mapping a non-2xx body to a typed `ApiError` code, falling back to the status when the body
+    isn't a code it recognizes — so an unexpected response can never surface as a bogus code.
+- **Same-origin is a requirement, not a convenience.** The dev server proxies `/api` to the backend
+  (`vite.config.ts`) specifically so the browser sees one origin: the cookies are `SameSite=Lax` and
+  the CSRF defense rests on the same-origin policy, so a cross-origin setup would need CORS and would
+  weaken exactly that. Production must serve the SPA and API behind one host for the same reason.
+- **Labels are nullable in the UI.** A model has no label until weak labeling or a human assigns one,
+  and the API reports that rather than inventing a class. The grid and detail view render it as
+  "unlabeled" with a "— pick a class —" placeholder, and hide Confirm (there is nothing to confirm).
+  This is the state *every* model is in until the weak-label backfill runs.
+- **One mock remains:** the dead-letter list (`catalog.ts`). The backend has no DLQ endpoints yet —
+  `app/replay_dlq.py` is a CLI tool — so `DeadLettersPage` still renders fixed sample rows. The
+  function signatures are already the ones the real calls will use.
 
 ### Content-Security-Policy (TODO — not yet configured)
 

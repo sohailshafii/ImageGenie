@@ -68,11 +68,16 @@ export function DetailPage() {
                 <div className="model-label-row">
                   <select
                     className="model-class-select"
-                    value={model.className}
+                    value={model.className ?? ''}
                     disabled={saving}
                     aria-label="Class"
                     onChange={(e) => onSetLabel(e.target.value as ClassName)}
                   >
+                    {model.className === null && (
+                      <option value="" disabled>
+                        — pick a class —
+                      </option>
+                    )}
                     {CLASS_NAMES.map((className) => (
                       <option key={className} value={className}>
                         {className}
@@ -84,22 +89,24 @@ export function DetailPage() {
                       type="button"
                       className="btn-secondary btn-confirm"
                       disabled={saving}
-                      onClick={() => onSetLabel(model.className)}
+                      onClick={() => onSetLabel(model.className as ClassName)}
                     >
                       Confirm
                     </button>
                   )}
                 </div>
               ) : (
-                <span className="model-class">{model.className}</span>
+                <span className="model-class">{model.className ?? 'unlabeled'}</span>
               )}
             </div>
 
             <div className="detail-field">
               <span className="detail-label">Source</span>
               <span>
-                <span className={`source-badge is-${model.source}`}>{model.source}</span>
-                {model.source === 'weak' && (
+                <span className={`source-badge is-${model.source ?? 'none'}`}>
+                  {model.source ?? 'unlabeled'}
+                </span>
+                {model.confidence !== null && (
                   <span className="model-confidence"> · {Math.round(model.confidence * 100)}%</span>
                 )}
               </span>
