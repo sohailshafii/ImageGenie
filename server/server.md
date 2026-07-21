@@ -321,10 +321,34 @@ can the account log in.
   `session_scope` rolls the block back and would leave a spent token replayable.
 - **Invites never grant admin.** Signup always creates a `user`; promotion is a deliberate manual
   step.
-- **Not yet done — email delivery.** There is no mail transport, so both flows *log* the link
-  (`_issue_verification`, `create_invite`). That is usable in dev and **must** become a real send
-  before any non-local deployment: until then, a verification link is visible to anyone who can read
-  the logs.
+### Email
+
+**Provider → Resend** (`server/app/mail.py`), reached over plain HTTP rather than its SDK — the API
+is a single POST, and a dependency wrapping one request isn't worth carrying. Configured by
+`IMAGEGENIE_RESEND_API_KEY`, `IMAGEGENIE_MAIL_FROM`, and `IMAGEGENIE_APP_BASE_URL` (the *frontend*
+origin, since the links point at the SPA).
+
+- **Sending never breaks a flow.** By the time we send, the account already exists — failing the
+  request would strand a created account behind an error. Delivery failures are logged and swallowed;
+  the user can request a resend.
+- **Queued as a FastAPI background task**, so a slow provider doesn't hold the response open. Tasks
+  run only after a successful response, so a rolled-back signup never emails a link for an account
+  that doesn't exist.
+- **A 10s timeout on the send**, per [Request Resilience](#request-resilience) — a hung provider must
+  not stall a worker. There is no retry: a failed send is dropped and recovered by the user hitting
+  resend.
+- **No API key → log the link instead of sending**, so local dev needs no credentials. This writes a
+  token-bearing link into the logs and is therefore strictly a development affordance: **every
+  deployed environment must set `IMAGEGENIE_RESEND_API_KEY`.**
+- **The transport is swappable** (`set_mail_sender`) and tests use that seam, so subjects, bodies, and
+  generated links are actually asserted. Testing only the no-key path would leave the builder — the
+  part that can silently generate a broken link — uncovered.
+- **Interpolated values are HTML-escaped** at the boundary, even though addresses are validated
+  upstream.
+- ⚠️ **Deliverability is unconfigured.** The default `onboarding@resend.dev` is Resend's sandbox
+  sender, which delivers **only to the Resend account owner's own address**. Real delivery to invited
+  labelers needs a domain we own with SPF/DKIM/DMARC set up and verified in Resend. Until that's
+  done, invites only work for the project owner.
 
 ### CSRF
 

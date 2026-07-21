@@ -57,6 +57,29 @@ Resolves the login TODO.
   `web/src/auth/` (context + route guards), and `web/src/pages/`. The mock swaps for the real FastAPI
   client without touching components.
 
+### Content-Security-Policy (TODO — not yet configured)
+
+The API's [CSRF defense](../server/server.md#csrf) rests on the same-origin policy: an attacker who
+can run script on our origin can read the CSRF cookie and forge any request. **A strict CSP is the
+complementary control, and it is not in place.**
+
+It belongs here rather than in the API: CSP is enforced on the **HTML document** response, so it is
+set wherever the built SPA is served — the API only returns JSON. (A `default-src 'none'` on API
+responses is cheap defense-in-depth, but it is not the real control.)
+
+The app is well-positioned for a strict policy — `web/index.html` loads an external module script
+with no inline `<script>`, and there is no `eval` or `dangerouslySetInnerHTML` anywhere in `web/src`.
+Three things to settle when it lands:
+
+- **Dev and prod need different policies.** Vite's dev server injects an inline HMR script and uses
+  `eval`; the production build does neither. The strict policy targets the built output.
+- **`style-src` is the friction point** — it governs `style` *attributes* too, so the one remaining
+  `style={{…}}` prop breaks under `style-src 'self'`. Rewrite it as a class (cheapest at one
+  occurrence) rather than weakening the policy with `'unsafe-inline'`.
+- three.js is unaffected either way; shaders are not JavaScript.
+
+Most valuable **before** the SPA is first deployed, not after.
+
 ## Data Upload
 
 Resolves the upload TODO.

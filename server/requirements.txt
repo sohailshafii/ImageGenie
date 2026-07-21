@@ -13,6 +13,8 @@ objaverse==0.1.7
 fastapi==0.139.2
 uvicorn[standard]==0.51.0
 bcrypt==4.2.1
+# Transactional email: Resend is one POST, so httpx rather than its SDK (app/mail.py).
+httpx==0.28.1
 # Preprocessing stages (convert/normalize/render) — mesh IO + offscreen render.
 # numpy pinned <2 for pyrender 0.1.x compat; pyrender renders headless via OSMesa
 # (system libs installed in the Dockerfile). trimesh loads GLB + exports PLY.
