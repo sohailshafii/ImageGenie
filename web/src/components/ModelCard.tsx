@@ -31,11 +31,13 @@ export function ModelCard({
   onSetLabel: (uid: string, className: ClassName) => void;
 }) {
   const isManual = model.source === 'manual';
+  // No label yet — the model predates weak labeling, or the backfill hasn't run.
+  const isUnlabeled = model.className === null;
 
   return (
     <article className="model-card">
       <Link to={`/models/${model.uid}`} className="model-thumb" aria-label={`Open ${model.title}`}>
-        <span aria-hidden="true">{CLASS_EMOJI[model.className]}</span>
+        <span aria-hidden="true">{model.className ? CLASS_EMOJI[model.className] : '❓'}</span>
       </Link>
 
       <div className="model-body">
@@ -47,11 +49,16 @@ export function ModelCard({
           {canEdit ? (
             <select
               className="model-class-select"
-              value={model.className}
+              value={model.className ?? ''}
               disabled={saving}
               aria-label={`Class for ${model.title}`}
               onChange={(e) => onSetLabel(model.uid, e.target.value as ClassName)}
             >
+              {isUnlabeled && (
+                <option value="" disabled>
+                  — pick a class —
+                </option>
+              )}
               {CLASS_NAMES.map((className) => (
                 <option key={className} value={className}>
                   {className}
@@ -59,15 +66,15 @@ export function ModelCard({
               ))}
             </select>
           ) : (
-            <span className="model-class">{model.className}</span>
+            <span className="model-class">{model.className ?? 'unlabeled'}</span>
           )}
 
-          {canEdit && !isManual && (
+          {canEdit && !isManual && !isUnlabeled && (
             <button
               type="button"
               className="btn-secondary btn-confirm"
               disabled={saving}
-              onClick={() => onSetLabel(model.uid, model.className)}
+              onClick={() => onSetLabel(model.uid, model.className as ClassName)}
             >
               Confirm
             </button>
@@ -75,8 +82,12 @@ export function ModelCard({
         </div>
 
         <div className="model-meta">
-          <span className={`source-badge is-${model.source}`}>{model.source}</span>
-          {!isManual && <span className="model-confidence">{Math.round(model.confidence * 100)}%</span>}
+          <span className={`source-badge is-${model.source ?? 'none'}`}>
+            {model.source ?? 'unlabeled'}
+          </span>
+          {model.confidence !== null && (
+            <span className="model-confidence">{Math.round(model.confidence * 100)}%</span>
+          )}
         </div>
       </div>
     </article>
