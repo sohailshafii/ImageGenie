@@ -330,6 +330,45 @@ remains the primary control and the token is the belt-and-braces layer for fetch
   wrapper that attaches the header for any method outside `GET`/`HEAD`/`OPTIONS`
   (see [web.md](../web/web.md#auth--roles)).
 
+### Rate limiting
+
+Implemented in `server/app/ratelimit.py`. Two primitives, because they answer different threats:
+
+| Surface | Key | Limit |
+|---------|-----|-------|
+| `POST /auth/login` | IP | 20 / 10 min (volumetric) |
+| `POST /auth/login` | account | exponential backoff — 3 free, then 1s→15 min doubling |
+| `PUT /models/{uid}/label` | user id | 600 / 10 min |
+
+- **Login is the endpoint that matters**, and not only for guessing: bcrypt is expensive *by design*,
+  so an unthrottled login is a CPU-exhaustion lever as much as a credential-grinding one. Both checks
+  therefore run **before** the DB read and before hashing — while locked out the server does no work.
+- **Backoff, not a volumetric cap, for the per-account limit.** A volumetric cap counts successes too
+  and never escalates. Backoff keys on *failures*: an honest user who mistypes clears the streak by
+  logging in, while an attacker grinding one account waits geometrically longer. The lockout arms on
+  the failure that crosses the grace window, so it takes effect on the *next* attempt.
+- **The per-IP cap covers what backoff can't.** Backoff is per-account, so an attacker sweeping many
+  usernames never trips it; the volumetric per-IP cap bounds that sweep.
+- **A correct password on an unverified account is not a failure** and must not feed the ladder — it
+  isn't a guess.
+- **Label writes are a runaway guard, not an abuse control.** Admins are trusted; the cap exists
+  because every `PUT` inserts a `label` row, so a looping frontend would grow the table without
+  bound. Set far above human labeling speed so it cannot interrupt a real session.
+- **429 always carries `Retry-After`** so clients wait rather than hammer.
+- **Fixed window, deliberately.** Its known weakness — a burst straddling a boundary can briefly
+  reach 2x the cap — is irrelevant for volumetric caps set this generously; the case where precision
+  would matter is login, which uses backoff instead.
+- **Per-IP keying trusts `X-Forwarded-For` only when told to** (`IMAGEGENIE_TRUST_PROXY_HEADERS`,
+  default off). Believing the header when the app is *not* behind a proxy lets a caller rotate it per
+  request and walk around every per-IP cap. Cloud Run deployment must turn it on.
+
+**Known limit — the counters are per-process and in-memory.** That is correct today because the API
+is not yet deployed (only workers are in Terraform), so it runs as a single instance. Deploying it
+with `max_instance_count > 1` silently multiplies every cap by the instance count and splits the
+backoff state. Before that ships, either pin the API to one instance or move the counters into a
+shared store. There is no Redis in this project and adding one costs standing spend against the $100
+budget (NFR-1), so pinning is the cheaper answer unless the API needs to scale.
+
 ## Request Resilience
 
 Every HTTP request — outbound to the Objaverse API, Pub/Sub push into worker services, and the
@@ -349,7 +388,7 @@ lose work nor hammer dependencies:
   to the [dead-letter topic](#queue), with the error recorded in the DB — no infinite retry loops.
 - **Retries are safe because handlers are idempotent** (NFR-2): a retried download / convert / render
   produces no duplicate work.
-- **REST API side.** The FastAPI layer applies per-user rate limiting and returns proper status codes;
+- **REST API side.** The FastAPI layer applies [rate limiting](#rate-limiting) and returns proper status codes;
   the frontend retries transient 5xx with the same backoff-and-jitter policy.
 
 ## Running the Pipeline Locally (milestones 2 + 4)

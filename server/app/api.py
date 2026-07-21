@@ -12,6 +12,7 @@ user may read, only admins may write labels (FR-8). Run under an ASGI server:
 
 from __future__ import annotations
 
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -24,6 +25,7 @@ from sqlalchemy import func, select
 from .config import get_settings
 from .db import init_db, session_scope
 from .models import Label, LabelSource, Model, User
+from .ratelimit import BackoffRule, FixedWindowRateLimiter, LoginBackoff, RateLimitRule
 from .security import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -116,6 +118,46 @@ def _set_auth_cookies(response: Response, session_token: str) -> None:
     )
 
 
+# ── Rate limiting (server.md#rate-limiting) ─────────────────────────────────
+# Per-IP volumetric cap on login: bounds one host sweeping many accounts. The
+# per-account escalation is LOGIN_BACKOFF's job, not this one's.
+LOGIN_PER_IP = RateLimitRule(max_hits=20, window_seconds=10 * 60)
+# 3 free attempts (typos), then lock 1s, 2s, 4s … doubling to 15 minutes.
+LOGIN_BACKOFF_RULE = BackoffRule(free_retries=3, base_seconds=1.0, max_seconds=15 * 60)
+# Label writes are admin-only and admins are trusted, so this is not an abuse
+# control — it is a runaway guard. Every PUT inserts a `label` row, so a looping
+# frontend would otherwise grow the table without bound. Set well above human
+# labeling speed (1/s sustained) so it can't interrupt a real labeling session.
+LABEL_WRITE_PER_USER = RateLimitRule(max_hits=600, window_seconds=10 * 60)
+
+login_limiter = FixedWindowRateLimiter()
+label_limiter = FixedWindowRateLimiter()
+login_backoff = LoginBackoff(LOGIN_BACKOFF_RULE)
+
+
+def _client_ip(request: Request) -> str:
+    """The caller's IP for rate-limit keying.
+
+    Only consults `X-Forwarded-For` when configured to trust it — believing the
+    header unconditionally would let a caller rotate the header per request and
+    walk straight around every per-IP cap.
+    """
+    if get_settings().trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()  # left-most = original client
+    return request.client.host if request.client else "unknown"
+
+
+def _too_many_requests(retry_after_seconds: float) -> HTTPException:
+    """429 carrying `Retry-After`, so the client waits rather than hammering."""
+    return HTTPException(
+        status_code=429,
+        detail="rate_limited",
+        headers={"Retry-After": str(max(1, math.ceil(retry_after_seconds)))},
+    )
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -169,13 +211,30 @@ LOGIN_REQUIRED = [Depends(current_user)]
 
 
 @app.post("/auth/login", response_model=MeOut)
-def login(body: LoginIn, response: Response) -> MeOut:
+def login(body: LoginIn, request: Request, response: Response) -> MeOut:
+    email = body.email.strip().lower()  # normalized so the backoff key is stable
+    ip_key = f"login:ip:{_client_ip(request)}"
+    account_key = f"login:account:{email}"
+
+    if not login_limiter.check(ip_key, LOGIN_PER_IP):
+        raise _too_many_requests(login_limiter.retry_after(ip_key))
+    # Checked before the DB read and before bcrypt: while locked out we do no
+    # work, which is the point — bcrypt is expensive by design, so an unthrottled
+    # login endpoint is a CPU-exhaustion lever as much as a guessing one.
+    locked_for = login_backoff.retry_after(account_key)
+    if locked_for > 0:
+        raise _too_many_requests(locked_for)
+
     with session_scope() as session:
-        user = session.scalar(select(User).where(User.email == body.email.strip().lower()))
+        user = session.scalar(select(User).where(User.email == email))
         if user is None or not verify_password(body.password, user.password_hash):
+            login_backoff.record_failure(account_key)
             raise HTTPException(status_code=401, detail="invalid_credentials")
         if not user.verified:
+            # Correct password — the account just isn't verified. Not a guess, so
+            # it must not feed the backoff ladder.
             raise HTTPException(status_code=403, detail="unverified")
+        login_backoff.record_success(account_key)
         token = create_session(session, user)
         me = MeOut(email=user.email, role=user.role.value)
     _set_auth_cookies(response, token)
@@ -272,6 +331,9 @@ def set_label(uid: str, body: LabelIn, admin: AdminUser) -> ModelSummaryOut:
 
     Admin-only (FR-8); the correction is attributed to the calling admin.
     """
+    write_key = f"label:user:{admin.id}"
+    if not label_limiter.check(write_key, LABEL_WRITE_PER_USER):
+        raise _too_many_requests(label_limiter.retry_after(write_key))
     with session_scope() as session:
         if session.get(Model, uid) is None:
             raise HTTPException(status_code=404, detail="unknown model")
