@@ -11,13 +11,22 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from .db import init_db, session_scope
-from .models import Label, LabelSource, Model
+from .models import Label, LabelSource, Model, User
+from .security import (
+    SESSION_COOKIE,
+    SESSION_TTL,
+    create_session,
+    delete_session,
+    resolve_session,
+    verify_password,
+)
 
 PAGE_SIZE_MAX = 100
 
@@ -60,6 +69,82 @@ app = FastAPI(lifespan=lifespan, title="ImageGenie API")
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ── Auth (session core) ─────────────────────────────────────────────────────
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class MeOut(BaseModel):
+    email: str
+    role: str
+
+
+class AuthUser(BaseModel):
+    id: int
+    email: str
+    role: str
+
+
+def current_user(request: Request) -> AuthUser:
+    """Resolve the httpOnly session cookie to the caller, or 401. Route dependency."""
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    with session_scope() as session:
+        user = resolve_session(session, token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="unauthorized")
+        # Capture fields while the session is open (attributes expire on commit).
+        return AuthUser(id=user.id, email=user.email, role=user.role.value)
+
+
+# Annotated dependency (modern FastAPI idiom) — avoids a call in an arg default.
+CurrentUser = Annotated[AuthUser, Depends(current_user)]
+
+
+def require_admin(user: CurrentUser) -> AuthUser:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+    return user
+
+
+@app.post("/auth/login", response_model=MeOut)
+def login(body: LoginIn, response: Response) -> MeOut:
+    with session_scope() as session:
+        user = session.scalar(select(User).where(User.email == body.email.strip().lower()))
+        if user is None or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="invalid_credentials")
+        if not user.verified:
+            raise HTTPException(status_code=403, detail="unverified")
+        token = create_session(session, user)
+        me = MeOut(email=user.email, role=user.role.value)
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=int(SESSION_TTL.total_seconds()),
+    )
+    return me
+
+
+@app.get("/auth/me", response_model=MeOut)
+def me(user: CurrentUser) -> MeOut:
+    return MeOut(email=user.email, role=user.role)
+
+
+@app.post("/auth/logout")
+def logout(request: Request) -> Response:
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        with session_scope() as session:
+            delete_session(session, token)
+    response = Response(status_code=204)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 def _latest_labels():

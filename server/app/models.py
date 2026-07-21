@@ -11,7 +11,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -136,3 +136,21 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column()
     verified: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class LoginSession(Base):
+    """A login session — the opaque token held in an httpOnly cookie maps here.
+
+    Server-side sessions (not a stateless JWT) so logout can revoke immediately
+    (web.md#auth--roles). ``expires_at`` is set by the app at creation. Named
+    ``LoginSession`` to avoid colliding with SQLAlchemy's ``Session``.
+    """
+
+    __tablename__ = "session"
+
+    token: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # timezone-aware so the app's aware expiry round-trips (naive would mismatch
+    # datetime.now(timezone.utc) at comparison time).
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
