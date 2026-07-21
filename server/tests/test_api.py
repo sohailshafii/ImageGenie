@@ -4,7 +4,7 @@ from sqlalchemy import Engine, select, text
 
 from app import api, db
 from app.models import DownloadStatus, Label, LabelSource, Model, User, UserRole
-from app.security import hash_password
+from app.security import CSRF_COOKIE, CSRF_HEADER, hash_password
 
 ADMIN_EMAIL = "admin@imagegenie.dev"
 VIEWER_EMAIL = "viewer@imagegenie.dev"
@@ -48,9 +48,14 @@ def anon_client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClien
 
 
 def _login(client: TestClient, email: str) -> TestClient:
-    """Log `client` in — it carries the session cookie forward on later calls."""
+    """Log `client` in — it carries the session cookie forward on later calls.
+
+    Also echoes the CSRF cookie into the header on every later request, which is
+    what the browser client does for unsafe methods (server.md#csrf).
+    """
     response = client.post("/auth/login", json={"email": email, "password": PASSWORD})
     assert response.status_code == 200
+    client.headers[CSRF_HEADER] = client.cookies[CSRF_COOKIE]
     return client
 
 
@@ -114,14 +119,21 @@ def test_correction_is_attributed_to_the_calling_admin(client: TestClient) -> No
         assert label.annotator == ADMIN_EMAIL
 
 
-@pytest.mark.parametrize(
-    ("method", "path"),
-    [("get", "/models"), ("get", "/models/m2"), ("put", "/models/m2/label")],
-)
-def test_endpoints_require_login(anon_client: TestClient, method: str, path: str) -> None:
-    # .request() rather than .get()/.put() — httpx's .get() takes no json body.
-    response = anon_client.request(method, path, json={"class_name": "weapon"})
-    assert response.status_code == 401
+@pytest.mark.parametrize("path", ["/models", "/models/m2"])
+def test_reads_require_login(anon_client: TestClient, path: str) -> None:
+    assert anon_client.get(path).status_code == 401
+
+
+def test_anonymous_write_is_refused(anon_client: TestClient) -> None:
+    """403, not 401: the CSRF middleware runs ahead of the auth dependency.
+
+    Not a UX regression for an expired session — the CSRF cookie shares the
+    session's max-age, and a server-side revocation leaves the cookie in place,
+    so that path still matches CSRF and falls through to a 401.
+    """
+    response = anon_client.put("/models/m2/label", json={"class_name": "weapon"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "csrf_failure"
 
 
 def test_viewer_can_read(viewer_client: TestClient) -> None:

@@ -292,7 +292,43 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 - **Corrections are attributed.** `PUT /label` writes `label.annotator = <calling admin's email>`,
   so weak-vs-corrected analysis can tell who changed what.
 - Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
-  (FR-9). Per-user rate limiting (see [Request Resilience](#request-resilience)) is not yet applied.
+  (FR-9).
+
+### CSRF
+
+Cookie authentication means the browser attaches credentials to *any* request it makes to the API,
+including one triggered by another site. Two layers stop that:
+
+1. **`SameSite=Lax`** on the session cookie — blocks the classic cross-site form POST outright.
+2. **A double-submit token** — login mints a random token (`secrets.token_urlsafe(32)`) and sets it
+   as a *second*, deliberately **non-httpOnly** cookie (`imagegenie_csrf`, same attributes and TTL as
+   the session). The client reads it and echoes it in an `X-CSRF-Token` header on every unsafe
+   request; the server compares the two with `hmac.compare_digest`. Security rests on the same-origin
+   policy: a cross-site page can make the browser *send* the cookie but can neither read its value
+   nor set the header.
+
+The token holds **no server-side state** — nothing to store, expire, or replicate — so `SameSite`
+remains the primary control and the token is the belt-and-braces layer for fetch-issued requests.
+
+- **Enforced as middleware, not a per-route dependency**, so it **fails closed**: `GET`/`HEAD`/
+  `OPTIONS` are exempt as safe methods, and the only exempt path is `POST /auth/login` (it runs
+  before a session exists and is what mints the token). A new state-changing endpoint — upload, DLQ
+  replay — is protected the day it is added; skipping the check requires deliberately editing
+  `CSRF_EXEMPT_PATHS`.
+- **Logout is not exempt.** It is a state change, and a cross-site forced logout is exactly the
+  nuisance this protects against.
+- **The CSRF layer answers before auth**, so an anonymous write gets `403 csrf_failure` rather than
+  `401`. Not a UX regression for an expired session: the two cookies share a TTL, and a server-side
+  revocation leaves the CSRF cookie in place, so that path still matches and falls through to a 401.
+- **`Secure` is config-driven** (`IMAGEGENIE_COOKIE_SECURE`, default off) so local dev works over
+  plain http. **Every deployed environment must set it true.**
+- **No CORS middleware, deliberately.** The API and the frontend are same-origin; adding permissive
+  CORS would undercut both layers above.
+- **Not yet done — CSP.** Because this scheme rests on the same-origin policy, an XSS defeats it. A
+  strict Content-Security-Policy is the complementary control and is not yet configured.
+- **Frontend still to wire.** `web/src/api/` is currently a mock; the real client needs one fetch
+  wrapper that attaches the header for any method outside `GET`/`HEAD`/`OPTIONS`
+  (see [web.md](../web/web.md#auth--roles)).
 
 ## Request Resilience
 

@@ -17,16 +17,22 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from .config import get_settings
 from .db import init_db, session_scope
 from .models import Label, LabelSource, Model, User
 from .security import (
+    CSRF_COOKIE,
+    CSRF_HEADER,
     SESSION_COOKIE,
     SESSION_TTL,
     create_session,
+    csrf_tokens_match,
     delete_session,
+    generate_csrf_token,
     resolve_session,
     verify_password,
 )
@@ -64,6 +70,50 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan, title="ImageGenie API")
+
+# ── CSRF (server.md#csrf) ───────────────────────────────────────────────────
+# Methods that don't change state, so they need no token.
+CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Paths exempt from the double-submit check. Only login: it runs *before* a
+# session exists and is what mints the token in the first place. Logout is
+# deliberately NOT exempt — it's a state change, and a cross-site forced logout
+# is exactly the nuisance CSRF protection exists to stop.
+CSRF_EXEMPT_PATHS = frozenset({"/auth/login"})
+
+
+@app.middleware("http")
+async def enforce_csrf(request: Request, call_next):
+    """Reject unsafe requests whose CSRF header doesn't match the cookie.
+
+    Middleware rather than a per-route dependency so it **fails closed**: a new
+    state-changing endpoint is protected the day it's added, and skipping the
+    check has to be a deliberate edit to `CSRF_EXEMPT_PATHS`.
+    """
+    if (
+        request.method not in CSRF_SAFE_METHODS
+        and request.url.path not in CSRF_EXEMPT_PATHS
+        and not csrf_tokens_match(
+            request.cookies.get(CSRF_COOKIE), request.headers.get(CSRF_HEADER)
+        )
+    ):
+        return JSONResponse(status_code=403, content={"detail": "csrf_failure"})
+    return await call_next(request)
+
+
+def _set_auth_cookies(response: Response, session_token: str) -> None:
+    """Set the session + CSRF cookie pair with matching attributes."""
+    secure = get_settings().cookie_secure
+    max_age = int(SESSION_TTL.total_seconds())
+    # samesite=lax already blocks the cross-site form POST; the double-submit
+    # token is the second layer, covering fetch-issued requests.
+    response.set_cookie(
+        SESSION_COOKIE, session_token, httponly=True, secure=secure,
+        samesite="lax", max_age=max_age,
+    )
+    response.set_cookie(
+        CSRF_COOKIE, generate_csrf_token(), httponly=False, secure=secure,
+        samesite="lax", max_age=max_age,
+    )
 
 
 @app.get("/healthz")
@@ -128,13 +178,7 @@ def login(body: LoginIn, response: Response) -> MeOut:
             raise HTTPException(status_code=403, detail="unverified")
         token = create_session(session, user)
         me = MeOut(email=user.email, role=user.role.value)
-    response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        httponly=True,
-        samesite="lax",
-        max_age=int(SESSION_TTL.total_seconds()),
-    )
+    _set_auth_cookies(response, token)
     return me
 
 
@@ -151,6 +195,7 @@ def logout(request: Request) -> Response:
             delete_session(session, token)
     response = Response(status_code=204)
     response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(CSRF_COOKIE)  # clear the pair together
     return response
 
 
