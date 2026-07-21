@@ -298,6 +298,29 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 - Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
   (FR-9).
 
+### Weak-label backfill
+
+Weak labeling (FR-3) writes `data/exploration/weak_labels.csv`, but the labeling UI reads the DB —
+so without a load step every model shows as "unlabeled" and there is nothing to confirm or correct.
+`server/app/backfill_labels.py` (`make backfill-labels`, `DRYRUN=1` to preview) is that bridge. Run
+it after ingestion, and again whenever the weak-labeling rules are re-run.
+
+- **Confidence is the measured per-class precision** from `weak_label_eval.json`
+  ([ml.md](../ml/ml.md#evaluation)) — not an invented number. It is literally "how often is a weak
+  label of this class correct", graded against the LVIS gold set, which makes
+  lowest-confidence-first a meaningful review order: `figure` (0.62, the known figure/animal
+  boundary) surfaces ahead of `lamp` (1.00). That is the ordering the active-learning loop
+  (milestone 8) wants, so it is worth getting right at load time.
+- **Idempotent (NFR-2).** A model that already has a weak label is skipped, so reruns insert
+  nothing. Duplicate rows within the CSV also collapse to one.
+- **Manual corrections survive a rerun.** They are separate rows and the API resolves the *most
+  recent* label as current, so re-importing can't clobber human work — covered by a test, since
+  that's the failure that would be worst and quietest.
+- **Rows whose model isn't in the DB are skipped, not an error** — the CSV covers the whole labeled
+  set while the DB holds only what finished downloading. The run reports the count so the gap is
+  visible rather than assumed.
+- Loading a 32,777-row CSV against 8,000 downloaded models takes under a second.
+
 ### Signup, verification, and invites
 
 Account creation is **invite-only** — there is no open registration, which is what keeps FR-8's
