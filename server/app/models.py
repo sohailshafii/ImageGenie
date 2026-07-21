@@ -87,3 +87,52 @@ class Artifact(Base):
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
     )
+
+
+class LabelSource(str, enum.Enum):
+    """Where a label came from — the weak-labeling rules or a human correction."""
+
+    weak = "weak"
+    manual = "manual"
+
+
+class Label(Base):
+    """A class label for a model (server.md#database, ml.md#weak-label-policy).
+
+    Weak (rule-derived) and manual (human-corrected via the labeling UI) labels are
+    kept as **distinct rows** so weak-vs-corrected analysis stays possible — the
+    frontend's "current" label for a model is its most recent one.
+    """
+
+    __tablename__ = "label"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    model_uid: Mapped[str] = mapped_column(ForeignKey("model.uid"), index=True)
+    class_name: Mapped[str] = mapped_column()  # one of the 12-class roster (ml/taxonomy.py)
+    source: Mapped[LabelSource] = mapped_column()
+    confidence: Mapped[float | None] = mapped_column(default=None)  # weak labels only
+    annotator: Mapped[str | None] = mapped_column(default=None)  # user email, for manual
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class UserRole(str, enum.Enum):
+    """Access role — ``user`` can view, ``admin`` can also correct + upload (FR-8)."""
+
+    user = "user"
+    admin = "admin"
+
+
+class User(Base):
+    """An authenticated account (server.md#database, web.md#auth--roles).
+
+    Table is ``app_user`` — ``user`` is a reserved word in PostgreSQL.
+    """
+
+    __tablename__ = "app_user"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(unique=True, index=True)
+    role: Mapped[UserRole] = mapped_column(default=UserRole.user)
+    password_hash: Mapped[str] = mapped_column()
+    verified: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
