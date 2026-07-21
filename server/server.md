@@ -268,6 +268,32 @@ frontend.**
   clients. Keep it off the public API surface: authenticate it as a Pub/Sub push endpoint and don't
   document it as client-facing.
 
+### Endpoints and access control
+
+Implemented in `server/app/api.py`. **Every endpoint except `/healthz` and `/auth/login` requires a
+session**; label writes additionally require the `admin` role (FR-8, NFR-7).
+
+| Endpoint | Access | Notes |
+|----------|--------|-------|
+| `GET /healthz` | public | liveness probe |
+| `POST /auth/login` | public | sets the session cookie; 401 bad credentials, 403 unverified |
+| `GET /auth/me` | logged in | the caller's email + role |
+| `POST /auth/logout` | public | revokes the session server-side; 204 |
+| `GET /models` | logged in | paginated; filter by `class_name` / `source` |
+| `GET /models/{uid}` | logged in | resolves the model's *current* label |
+| `PUT /models/{uid}/label` | **admin** | records a manual label, attributed to the calling admin |
+
+- **Sessions, not JWTs.** Login mints an opaque random token stored in the `session` table and
+  returned as an **httpOnly** cookie (`imagegenie_session`, 14-day TTL) that page JS can't read.
+  Server-side state is the point: logout revokes immediately, which a stateless JWT can't do.
+- **Roles are checked at the route.** `current_user` resolves the cookie (401 if absent/expired/
+  unknown); `require_admin` layers the role check on top (403). Read routes that don't need the
+  caller's identity declare the dependency rather than taking an unused parameter.
+- **Corrections are attributed.** `PUT /label` writes `label.annotator = <calling admin's email>`,
+  so weak-vs-corrected analysis can tell who changed what.
+- Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
+  (FR-9). Per-user rate limiting (see [Request Resilience](#request-resilience)) is not yet applied.
+
 ## Request Resilience
 
 Every HTTP request — outbound to the Objaverse API, Pub/Sub push into worker services, and the

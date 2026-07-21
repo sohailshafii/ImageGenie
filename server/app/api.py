@@ -1,10 +1,13 @@
 """Backend-for-frontend REST API (server.md#api-layer).
 
 The single FastAPI app the labeling frontend talks to. This module serves the
-**models + labels** endpoints; auth, dead-letters, and upload land in later
+**auth** and **models + labels** endpoints; dead-letters and upload land in later
 chunks. Read endpoints resolve each model's *current* label — the most recent
-`label` row, so a manual correction wins over the weak label. Run under an ASGI
-server: `uvicorn app.api:app`.
+`label` row, so a manual correction wins over the weak label.
+
+Every endpoint below `/healthz` and `/auth/login` requires a session: any logged-in
+user may read, only admins may write labels (FR-8). Run under an ASGI server:
+`uvicorn app.api:app`.
 """
 
 from __future__ import annotations
@@ -32,9 +35,6 @@ PAGE_SIZE_MAX = 100
 
 # TODO(metadata-backfill): title/tags come from Objaverse annotations, which the
 # download worker doesn't yet persist — placeholder until that backfill lands.
-# TODO(auth): PUT /label should be admin-gated + use the caller as annotator once
-# the auth chunk exists; hardcoded for now.
-_PLACEHOLDER_ANNOTATOR = "admin@imagegenie.dev"
 
 
 class ModelSummaryOut(BaseModel):
@@ -111,6 +111,13 @@ def require_admin(user: CurrentUser) -> AuthUser:
     return user
 
 
+AdminUser = Annotated[AuthUser, Depends(require_admin)]
+
+# Routes that only need the caller *authenticated* (not their identity) declare
+# this in `dependencies=` rather than taking an unused parameter.
+LOGIN_REQUIRED = [Depends(current_user)]
+
+
 @app.post("/auth/login", response_model=MeOut)
 def login(body: LoginIn, response: Response) -> MeOut:
     with session_scope() as session:
@@ -170,7 +177,7 @@ def _summary(uid: str, class_name, source, confidence) -> ModelSummaryOut:
     )
 
 
-@app.get("/models", response_model=ModelPageOut)
+@app.get("/models", response_model=ModelPageOut, dependencies=LOGIN_REQUIRED)
 def list_models(
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=PAGE_SIZE_MAX),
@@ -195,8 +202,8 @@ def list_models(
     return ModelPageOut(items=items, total=total, page=page, page_size=page_size)
 
 
-@app.get("/models/{uid}", response_model=ModelSummaryOut)
-def get_model(uid: str) -> ModelSummaryOut:
+def _load_summary(uid: str) -> ModelSummaryOut:
+    """Read one model's current label, or 404. Shared by the GET and PUT routes."""
     latest = _latest_labels()
     with session_scope() as session:
         row = session.execute(
@@ -209,9 +216,17 @@ def get_model(uid: str) -> ModelSummaryOut:
     return _summary(*row)
 
 
+@app.get("/models/{uid}", response_model=ModelSummaryOut, dependencies=LOGIN_REQUIRED)
+def get_model(uid: str) -> ModelSummaryOut:
+    return _load_summary(uid)
+
+
 @app.put("/models/{uid}/label", response_model=ModelSummaryOut)
-def set_label(uid: str, body: LabelIn) -> ModelSummaryOut:
-    """Record a **manual** label (confirm keeps the class, correct changes it)."""
+def set_label(uid: str, body: LabelIn, admin: AdminUser) -> ModelSummaryOut:
+    """Record a **manual** label (confirm keeps the class, correct changes it).
+
+    Admin-only (FR-8); the correction is attributed to the calling admin.
+    """
     with session_scope() as session:
         if session.get(Model, uid) is None:
             raise HTTPException(status_code=404, detail="unknown model")
@@ -221,7 +236,7 @@ def set_label(uid: str, body: LabelIn) -> ModelSummaryOut:
                 class_name=body.class_name,
                 source=LabelSource.manual,
                 confidence=None,
-                annotator=_PLACEHOLDER_ANNOTATOR,
+                annotator=admin.email,
             )
         )
-    return get_model(uid)
+    return _load_summary(uid)
