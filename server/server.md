@@ -276,9 +276,13 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | Endpoint | Access | Notes |
 |----------|--------|-------|
 | `GET /healthz` | public | liveness probe |
-| `POST /auth/login` | public | sets the session cookie; 401 bad credentials, 403 unverified |
+| `POST /auth/login` | public | sets the cookie pair; 401 bad credentials, 403 unverified |
+| `POST /auth/signup` | public | invite-gated; 400 short password, 403 no invite, 409 email taken |
+| `POST /auth/verify-email` | public | consumes a one-time token; 400 invalid/expired |
+| `POST /auth/verify-email/resend` | public | re-issues a link; **always 204** |
 | `GET /auth/me` | logged in | the caller's email + role |
 | `POST /auth/logout` | public | revokes the session server-side; 204 |
+| `POST /auth/invites` | **admin** | mints an email-bound invite; idempotent per email |
 | `GET /models` | logged in | paginated; filter by `class_name` / `source` |
 | `GET /models/{uid}` | logged in | resolves the model's *current* label |
 | `PUT /models/{uid}/label` | **admin** | records a manual label, attributed to the calling admin |
@@ -293,6 +297,34 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
   so weak-vs-corrected analysis can tell who changed what.
 - Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
   (FR-9).
+
+### Signup, verification, and invites
+
+Account creation is **invite-only** — there is no open registration, which is what keeps FR-8's
+"login required" meaningful on a public URL. An admin mints an email-bound `invite` row; signup
+consumes it and creates an *unverified* account; a one-time emailed token flips `verified`; only then
+can the account log in.
+
+- **Error ordering on signup is a privacy decision.** The invite is checked *first*, so a caller with
+  no invite for an address learns only `invite_required` and can't probe which addresses have
+  accounts. `email_taken` is reachable only once an invite exists for that address — i.e. by someone
+  who already knows an admin invited it.
+- **Resend always returns 204**, whatever the address. A status that varied with account existence
+  would be an enumeration oracle on an endpoint reachable without logging in.
+- **Verification tokens are stored as SHA-256 hashes**, never in the clear, so a leaked DB snapshot
+  doesn't hand out the right to verify accounts. Plain SHA-256 rather than bcrypt is correct here:
+  these are 256-bit random values, so there is nothing for a slow hash to defend against.
+- **One live token per account.** Issuing deletes any outstanding token, so a resend invalidates the
+  previous link and the table can't be grown by repeatedly asking for one.
+- **Tokens are consumed even when expired** — a one-time token must not survive its own use. Note the
+  ordering this forces: the failure is raised *after* the transaction commits, because raising inside
+  `session_scope` rolls the block back and would leave a spent token replayable.
+- **Invites never grant admin.** Signup always creates a `user`; promotion is a deliberate manual
+  step.
+- **Not yet done — email delivery.** There is no mail transport, so both flows *log* the link
+  (`_issue_verification`, `create_invite`). That is usable in dev and **must** become a real send
+  before any non-local deployment: until then, a verification link is visible to anyone who can read
+  the logs.
 
 ### CSRF
 
@@ -338,6 +370,10 @@ Implemented in `server/app/ratelimit.py`. Two primitives, because they answer di
 |---------|-----|-------|
 | `POST /auth/login` | IP | 20 / 10 min (volumetric) |
 | `POST /auth/login` | account | exponential backoff — 3 free, then 1s→15 min doubling |
+| `POST /auth/signup` | IP | 10 / 10 min |
+| `POST /auth/verify-email` | IP | 20 / 10 min |
+| `POST /auth/verify-email/resend` | IP **and** email | 5 / 10 min each |
+| `POST /auth/invites` | admin id | 50 / 10 min |
 | `PUT /models/{uid}/label` | user id | 600 / 10 min |
 
 - **Login is the endpoint that matters**, and not only for guessing: bcrypt is expensive *by design*,
@@ -354,6 +390,10 @@ Implemented in `server/app/ratelimit.py`. Two primitives, because they answer di
 - **Label writes are a runaway guard, not an abuse control.** Admins are trusted; the cap exists
   because every `PUT` inserts a `label` row, so a looping frontend would grow the table without
   bound. Set far above human labeling speed so it cannot interrupt a real session.
+- **Resend is capped on both dimensions** because it triggers an outbound email: per IP (one host
+  spraying) and per address (mailbox-bombing a single victim).
+- **No token endpoint is left uncapped.** Verification tokens are 256-bit random so guessing is
+  hopeless, but an unthrottled token endpoint is still a free oracle.
 - **429 always carries `Retry-After`** so clients wait rather than hammer.
 - **Fixed window, deliberately.** Its known weakness — a burst straddling a boundary can briefly
   reach 2x the cap — is irrelevant for volumetric caps set this generously; the case where precision

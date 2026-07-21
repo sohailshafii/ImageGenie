@@ -7,6 +7,7 @@ httpOnly cookie the browser JS can't read (server.md#api-layer, web.md#auth--rol
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,20 @@ def delete_session(session: Session, token: str) -> None:
     login = session.get(LoginSession, token)
     if login is not None:
         session.delete(login)
+
+
+VERIFICATION_TTL = timedelta(hours=24)
+INVITE_TTL = timedelta(days=14)
+
+
+def generate_token() -> str:
+    """Mint a high-entropy one-time token (email verification, invites)."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    """Hash a one-time token for storage — see EmailVerification's docstring."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def generate_csrf_token() -> str:

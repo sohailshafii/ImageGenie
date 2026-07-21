@@ -21,6 +21,7 @@ def reset_rate_limiters() -> None:
 
     api.login_limiter.reset()
     api.label_limiter.reset()
+    api.signup_limiter.reset()
     api.login_backoff.reset()
 
 
