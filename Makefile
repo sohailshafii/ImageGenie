@@ -25,7 +25,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -57,6 +57,11 @@ weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
 
 evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
 	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
+
+backfill-labels: ## load weak_labels.csv into the DB's label table (idempotent; DRYRUN=1 to preview)
+	cd server && ../$(BIN)/python -m app.backfill_labels \
+		--labels ../data/exploration/weak_labels.csv \
+		--eval ../data/exploration/weak_label_eval.json $(if $(DRYRUN),--dry-run,)
 
 compose-up: ## build + start the pipeline skeleton (Postgres, Pub/Sub emulator, worker)
 	$(COMPOSE) up -d --build
