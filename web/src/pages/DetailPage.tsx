@@ -1,0 +1,128 @@
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { getModel, setLabel } from '../api/catalog';
+import { isApiError } from '../api/errors';
+import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
+import { useAuth } from '../auth/AuthContext';
+import { AppLayout } from '../components/AppLayout';
+import { ModelViewer } from '../components/ModelViewer';
+
+// Detail view (web.md): a single model in the interactive three.js viewer, its
+// candidate label + confidence with confirm/correct (admin), and the store
+// metadata (title/tags) that aids the labeling decision.
+export function DetailPage() {
+  const { uid = '' } = useParams();
+  const { user } = useAuth();
+  const canEdit = user?.role === 'admin';
+
+  const [model, setModel] = useState<ModelSummary | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setStatus('loading');
+    getModel(uid)
+      .then((result) => {
+        if (!active) return;
+        setModel(result);
+        setStatus('ready');
+      })
+      .catch((caught) => {
+        if (!active) return;
+        setStatus(isApiError(caught, 'validation_error') ? 'not-found' : 'not-found');
+      });
+    return () => {
+      active = false;
+    };
+  }, [uid]);
+
+  async function onSetLabel(className: ClassName) {
+    setSaving(true);
+    try {
+      setModel(await setLabel(uid, className));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <AppLayout>
+      <p className="form-note" style={{ marginTop: 0 }}>
+        <Link to="/">← Back to browse</Link>
+      </p>
+
+      {status === 'loading' && <p className="page-lead">Loading model…</p>}
+      {status === 'not-found' && <p className="page-lead">That model wasn’t found.</p>}
+
+      {status === 'ready' && model && (
+        <div className="detail-layout">
+          <ModelViewer />
+
+          <aside className="detail-panel">
+            <h1>{model.title}</h1>
+
+            <div className="detail-field">
+              <span className="detail-label">Label</span>
+              {canEdit ? (
+                <div className="model-label-row">
+                  <select
+                    className="model-class-select"
+                    value={model.className}
+                    disabled={saving}
+                    aria-label="Class"
+                    onChange={(e) => onSetLabel(e.target.value as ClassName)}
+                  >
+                    {CLASS_NAMES.map((className) => (
+                      <option key={className} value={className}>
+                        {className}
+                      </option>
+                    ))}
+                  </select>
+                  {model.source === 'weak' && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-confirm"
+                      disabled={saving}
+                      onClick={() => onSetLabel(model.className)}
+                    >
+                      Confirm
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <span className="model-class">{model.className}</span>
+              )}
+            </div>
+
+            <div className="detail-field">
+              <span className="detail-label">Source</span>
+              <span>
+                <span className={`source-badge is-${model.source}`}>{model.source}</span>
+                {model.source === 'weak' && (
+                  <span className="model-confidence"> · {Math.round(model.confidence * 100)}%</span>
+                )}
+              </span>
+            </div>
+
+            <div className="detail-field">
+              <span className="detail-label">Tags</span>
+              <span className="detail-tags">
+                {model.tags.map((tag) => (
+                  <span key={tag} className="tag-chip">
+                    {tag}
+                  </span>
+                ))}
+              </span>
+            </div>
+
+            <div className="detail-field">
+              <span className="detail-label">Model id</span>
+              <span className="dlq-uid">{model.uid}</span>
+            </div>
+          </aside>
+        </div>
+      )}
+    </AppLayout>
+  );
+}

@@ -1,8 +1,15 @@
+import { lazy, Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { BrowsePage } from './pages/BrowsePage';
 import { DeadLettersPage } from './pages/DeadLettersPage';
 import { InvitePage } from './pages/InvitePage';
+
+// Code-split the detail view: it pulls in three.js (~600 KB), which no other
+// route needs, so it downloads only when a model is opened.
+const DetailPage = lazy(() =>
+  import('./pages/DetailPage').then((module) => ({ default: module.DetailPage })),
+);
 import { LoginPage } from './pages/LoginPage';
 import { ResendVerificationPage } from './pages/ResendVerificationPage';
 import { SignupPage } from './pages/SignupPage';
@@ -23,6 +30,16 @@ export default function App() {
         element={
           <ProtectedRoute>
             <BrowsePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/models/:uid"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<p style={{ padding: '1.5rem' }}>Loading viewer…</p>}>
+              <DetailPage />
+            </Suspense>
           </ProtectedRoute>
         }
       />

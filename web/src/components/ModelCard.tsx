@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
 
 // A single model in the browse grid: a rendered-preview placeholder, its label +
@@ -33,14 +34,14 @@ export function ModelCard({
 
   return (
     <article className="model-card">
-      <div className="model-thumb" aria-hidden="true">
-        <span>{CLASS_EMOJI[model.className]}</span>
-      </div>
+      <Link to={`/models/${model.uid}`} className="model-thumb" aria-label={`Open ${model.title}`}>
+        <span aria-hidden="true">{CLASS_EMOJI[model.className]}</span>
+      </Link>
 
       <div className="model-body">
-        <p className="model-title" title={model.title}>
+        <Link to={`/models/${model.uid}`} className="model-title" title={model.title}>
           {model.title}
-        </p>
+        </Link>
 
         <div className="model-label-row">
           {canEdit ? (
