@@ -138,6 +138,41 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class Invite(Base):
+    """An admin-minted, email-bound signup invitation (web.md#auth--roles).
+
+    Signup is invite-only, so this table is the gate on account creation. Keyed by
+    ``email`` so re-inviting the same address refreshes the existing invite rather
+    than accumulating rows — matching the frontend's idempotent-per-email contract.
+    """
+
+    __tablename__ = "invite"
+
+    email: Mapped[str] = mapped_column(primary_key=True)  # normalized lowercase
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted: Mapped[bool] = mapped_column(default=False)
+    invited_by: Mapped[str | None] = mapped_column(default=None)  # admin's email
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class EmailVerification(Base):
+    """A one-time email-verification token (web.md#auth--roles).
+
+    Stored as a **SHA-256 hash**, never in the clear: a token grants the right to
+    verify an account, so a leaked DB snapshot (or a stray log of a query result)
+    shouldn't hand that out. Plain SHA-256 rather than bcrypt is right here —
+    these are 256-bit random values, not guessable secrets, so there is nothing
+    for a slow hash to defend against.
+    """
+
+    __tablename__ = "email_verification"
+
+    token_hash: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class LoginSession(Base):
     """A login session — the opaque token held in an httpOnly cookie maps here.
 
