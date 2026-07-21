@@ -150,3 +150,66 @@ def test_login_is_csrf_exempt_and_reads_are_unaffected(client: TestClient) -> No
     # Safe methods never need the header.
     assert client.get("/auth/me").status_code == 200
     assert client.get("/healthz").status_code == 200
+
+
+# ── Login rate limiting (server.md#rate-limiting) ───────────────────────────
+def _failed_login(client: TestClient, email: str = "admin@imagegenie.dev"):
+    return client.post("/auth/login", json={"email": email, "password": "wrong"})
+
+
+def test_repeated_failures_lock_the_account_with_retry_after(client: TestClient) -> None:
+    # 3 free retries, and the 4th failure is what *arms* the lockout — it is still
+    # answered 401. The 5th attempt is the first one refused outright.
+    for _ in range(4):
+        assert _failed_login(client).status_code == 401
+
+    locked = _failed_login(client)
+    assert locked.status_code == 429
+    assert locked.json()["detail"] == "rate_limited"
+    assert int(locked.headers["Retry-After"]) >= 1
+
+    # The correct password is refused too while locked out — otherwise the
+    # lockout wouldn't bound guessing at all.
+    assert client.post(
+        "/auth/login", json={"email": "admin@imagegenie.dev", "password": "genie-admin"}
+    ).status_code == 429
+
+
+def test_lockout_is_per_account(client: TestClient) -> None:
+    for _ in range(5):
+        _failed_login(client, "admin@imagegenie.dev")
+    assert _failed_login(client, "admin@imagegenie.dev").status_code == 429
+    # A different account is untouched — one user can't lock out another.
+    assert _failed_login(client, "unverified@imagegenie.dev").status_code == 401
+
+
+def test_successful_login_clears_the_streak(client: TestClient) -> None:
+    for _ in range(3):
+        _failed_login(client)
+    assert client.post(
+        "/auth/login", json={"email": "admin@imagegenie.dev", "password": "genie-admin"}
+    ).status_code == 200
+    # Streak reset, so the next typo is back inside the grace window.
+    assert _failed_login(client).status_code == 401
+
+
+def test_unverified_login_does_not_feed_the_backoff(client: TestClient) -> None:
+    """Right password, unverified account — not a guess, so it must not escalate."""
+    for _ in range(6):
+        response = client.post(
+            "/auth/login", json={"email": "unverified@imagegenie.dev", "password": "secret1234"}
+        )
+        assert response.status_code == 403  # never becomes 429
+
+
+def test_per_ip_cap_bounds_a_sweep_across_accounts(client: TestClient) -> None:
+    """Backoff is per-account, so sweeping many usernames dodges it — the per-IP
+    volumetric cap is what bounds that."""
+    statuses = [
+        client.post(
+            "/auth/login", json={"email": f"user{index}@x.dev", "password": "x"}
+        ).status_code
+        for index in range(api.LOGIN_PER_IP.max_hits + 1)
+    ]
+    assert statuses[-1] == 429
+    assert statuses.count(401) == api.LOGIN_PER_IP.max_hits

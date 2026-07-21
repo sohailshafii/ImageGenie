@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # in cleartext.
     cookie_secure: bool = False
 
+    # Whether to believe X-Forwarded-For when keying per-IP rate limits
+    # (server.md#rate-limiting). Off by default: trusting the header when the app
+    # is NOT behind a proxy lets a caller spoof an IP per request and walk around
+    # every per-IP cap. Turn on only when a trusted proxy (Cloud Run's front end)
+    # sets it.
+    trust_proxy_headers: bool = False
+
     # Which stage handler this push service runs (server.md#compute) — the deployed
     # Cloud Run service sets IMAGEGENIE_STAGE; web.py dispatches on it.
     stage: str = "download"

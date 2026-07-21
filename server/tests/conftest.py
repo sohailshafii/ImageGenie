@@ -10,6 +10,20 @@ from app import (
 )
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiters() -> None:
+    """Clear the API's module-level limiters so windows don't leak across tests.
+
+    Without this, the per-IP login cap counts every test's logins against the
+    shared TestClient address and later tests start failing with 429s.
+    """
+    from app import api
+
+    api.login_limiter.reset()
+    api.label_limiter.reset()
+    api.login_backoff.reset()
+
+
 @pytest.fixture(scope="session")
 def pg_engine() -> Iterator[Engine]:
     """A real Postgres (via testcontainers) with the schema created.
