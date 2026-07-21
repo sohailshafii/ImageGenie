@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     raw_bucket: str = "imagegenie-pipeline-raw"
     processed_bucket: str = "imagegenie-pipeline-processed"
 
+    # Auth cookies (server.md#api-layer). `Secure` is off by default so local dev
+    # over plain http works; every deployed environment must set
+    # IMAGEGENIE_COOKIE_SECURE=true so the session cookie never crosses the wire
+    # in cleartext.
+    cookie_secure: bool = False
+
     # Which stage handler this push service runs (server.md#compute) — the deployed
     # Cloud Run service sets IMAGEGENIE_STAGE; web.py dispatches on it.
     stage: str = "download"
