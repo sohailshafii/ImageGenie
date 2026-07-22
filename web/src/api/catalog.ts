@@ -3,6 +3,7 @@ import type {
   ClassName,
   DeadLetter,
   LabelSource,
+  ModelArtifacts,
   ModelPage,
   ModelSummary,
   PipelineStage,
@@ -23,6 +24,13 @@ interface ModelSummaryResponse {
   class_name: string | null;
   source: string | null;
   confidence: number | null;
+  thumbnail: string | null;
+}
+
+interface ModelArtifactsResponse {
+  uid: string;
+  views: string[];
+  mesh: string | null;
 }
 
 interface ModelPageResponse {
@@ -40,7 +48,22 @@ function toModelSummary(model: ModelSummaryResponse): ModelSummary {
     className: (model.class_name as ClassName | null) ?? null,
     source: (model.source as LabelSource | null) ?? null,
     confidence: model.confidence,
+    thumbnail: model.thumbnail,
   };
+}
+
+/**
+ * GET /models/{uid}/artifacts — the model's rendered views and normalized mesh.
+ *
+ * Separate from the summary on purpose: this checks each blob exists, so it
+ * costs a round-trip per artifact and is only worth paying on the detail view.
+ * The grid uses `ModelSummary.thumbnail` instead.
+ */
+export async function getModelArtifacts(uid: string): Promise<ModelArtifacts> {
+  return request<ModelArtifactsResponse>(
+    'GET',
+    `/models/${encodeURIComponent(uid)}/artifacts`,
+  );
 }
 
 /** GET /models — a page of models, optionally filtered by class and/or source. */

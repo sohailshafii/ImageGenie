@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
 
@@ -33,11 +34,25 @@ export function ModelCard({
   const isManual = model.source === 'manual';
   // No label yet — the model predates weak labeling, or the backfill hasn't run.
   const isUnlabeled = model.className === null;
+  // Falls back to the class-emoji tile when the render isn't there.
+  const [previewFailed, setPreviewFailed] = useState(false);
 
   return (
     <article className="model-card">
       <Link to={`/models/${model.uid}`} className="model-thumb" aria-label={`Open ${model.title}`}>
-        <span aria-hidden="true">{model.className ? CLASS_EMOJI[model.className] : '❓'}</span>
+        {model.thumbnail && !previewFailed ? (
+          <img
+            src={model.thumbnail}
+            alt=""
+            className="model-thumb-image"
+            loading="lazy" // a page of cards shouldn't fetch every render at once
+            // The server emits the URL without checking the blob exists, so a
+            // 404 here means "not rendered yet", not an error worth surfacing.
+            onError={() => setPreviewFailed(true)}
+          />
+        ) : (
+          <span aria-hidden="true">{model.className ? CLASS_EMOJI[model.className] : '❓'}</span>
+        )}
       </Link>
 
       <div className="model-body">
