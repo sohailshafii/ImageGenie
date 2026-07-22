@@ -11,6 +11,7 @@ in for cloud without changing callers.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -34,6 +35,16 @@ class Storage(Protocol):
 
     def get_bytes(self, key: str) -> bytes:
         """Read the blob at `key`; raises if it does not exist."""
+        ...
+
+    def list_keys(self, prefix: str) -> Iterator[str]:
+        """Every key under `prefix`, in no guaranteed order.
+
+        Yields rather than returning a list: the render prefix alone holds ~141k
+        objects, and `app.reconcile_from_storage` streams the listing instead of
+        materialising it. Metadata only — no blob bodies are read, so this costs
+        no egress.
+        """
         ...
 
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
@@ -70,6 +81,24 @@ class LocalStorage:
     def get_bytes(self, key: str) -> bytes:
         return self._path(key).read_bytes()
 
+    def list_keys(self, prefix: str) -> Iterator[str]:
+        """Walk the filesystem under `prefix`, yielding keys relative to the root.
+
+        `prefix` is a key fragment, not necessarily a directory (``raw/a`` is a
+        legal prefix), so this walks the nearest enclosing directory and filters —
+        matching how object stores treat a prefix.
+        """
+        search_root = self._root / prefix
+        base = search_root if search_root.is_dir() else search_root.parent
+        if not base.is_dir():
+            return
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            key = path.relative_to(self._root).as_posix()
+            if key.startswith(prefix):
+                yield key
+
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         """None — a local file has no URL, so the API streams the bytes itself."""
         return None
@@ -95,6 +124,11 @@ class GcsStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._bucket.blob(key).download_as_bytes()
+
+    def list_keys(self, prefix: str) -> Iterator[str]:
+        """Stream object names under `prefix` (the client paginates internally)."""
+        for blob in self._bucket.list_blobs(prefix=prefix):
+            yield blob.name
 
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         """A V4 signed GET URL, so the browser reads GCS without proxying us.
@@ -143,6 +177,14 @@ class RoutedGcsStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._backend(key).get_bytes(key)
+
+    def list_keys(self, prefix: str) -> Iterator[str]:
+        """List from whichever bucket owns `prefix` — routing by the same rule.
+
+        A prefix always resolves to one bucket because the split is on the leading
+        ``raw/`` segment, so no listing ever needs to span both.
+        """
+        return self._backend(prefix).list_keys(prefix)
 
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         return self._backend(key).signed_url(key, ttl)
