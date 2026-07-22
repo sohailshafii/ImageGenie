@@ -47,6 +47,13 @@ class Model(Base):
     download_status: Mapped[DownloadStatus] = mapped_column(default=DownloadStatus.pending)
     content_hash: Mapped[str | None] = mapped_column(default=None)
     raw_key: Mapped[str | None] = mapped_column(default=None)
+    # Soft delete (FR-9, admin-only). Set to hide a model from the labeling UI
+    # without dropping its rows or blobs, so a mistaken delete is recoverable and
+    # `app.reconcile_from_storage` — which rebuilds from storage — doesn't
+    # resurrect it (the upsert leaves this column alone). Null = live.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
