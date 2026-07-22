@@ -386,12 +386,44 @@ make migration-status               # current revision + head
   The initial revision drops all five by hand; **any future revision adding an enum must do the
   same.**
 
-> **Adopting this on the existing Cloud SQL database.** It predates Alembic and has no
-> `alembic_version` table, so `upgrade head` would try to recreate what's already there. It also
-> predates the auth tables and the `model.title`/`tags` columns, and its exact state depends on which
-> worker image last ran `create_all`. So: inspect it (`\dt`, `\d model`), apply the delta by hand
-> once, then `alembic stamp head` to mark it current. After that migrations flow normally. **Do this
-> before deploying the API.**
+> **Adopting this on the existing Cloud SQL database.** The instance has been written to by the
+> workers since milestone 3, and its schema was materialized by `create_all`, which records nothing
+> about which revision the schema corresponds to. To Alembic a database with no `alembic_version`
+> table is indistinguishable from an empty one, so `upgrade head` starts at revision zero and runs
+> the initial migration — which aborts partway through on `CREATE TABLE model` ("already exists"),
+> after having created the earlier tables and still without a version row. Skipping the migration
+> isn't an option either, because the database genuinely lacks most of what the API needs.
+>
+> **Verified state (2026-07-22, via `cloud-sql-proxy` + `psql`):**
+>
+> | | |
+> |---|---|
+> | Tables | `model`, `artifact` only — no `alembic_version` |
+> | Missing | `app_user`, `invite`, `session`, `email_verification`, `label`, `dead_letter`; `model.title`, `model.tags` |
+> | Enums | `downloadstatus`, `artifactstage`, `artifactstatus` already exist |
+> | Data | 12,009 models (all `downloaded`); 35,469 artifacts — 11,858 converted / 11,826 normalized / 11,785 rendered |
+>
+> Two ways forward. **Both are viable; the blob store makes the destructive one cheap.**
+>
+> - **Adopt in place** — hand-apply the delta (six tables, two columns), then `alembic stamp head` to
+>   write the version row. Stamping must come *second*: stamp first and the missing tables never get
+>   created. Keeps `content_hash` and every row as-is. The cost is a hand-written delta that has to
+>   match head exactly, or later `--autogenerate` diffs come out wrong.
+> - **Drop and rebuild** — `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` then
+>   `alembic upgrade head`. This also clears the three enum types, which would otherwise collide.
+>   Yields a schema that matches head exactly, with no hand-written SQL to get wrong. **The row loss
+>   is recoverable without re-ingesting**, because every object key embeds its uid
+>   (`raw/{uid}.glb`, `processed/converted/{uid}.ply`, `processed/normalized/{uid}.ply`,
+>   `processed/renders/{uid}/`) — a reconciler that lists the buckets can rebuild `model` and
+>   `artifact` from GCS alone, and the existing metadata and weak-label backfills restore the rest.
+>   That reconciler does not exist yet and is the real cost of this option.
+>
+> **Do not drop anything before confirming the blobs are present** — the GCS listing is what makes
+> the rows recoverable, and it is the only copy. Verified the same day: 12,029 raw / 11,858 converted
+> / 11,826 normalized / 141,420 render PNGs. Converted and normalized match the artifact counts
+> exactly, and 141,420 ÷ 12 views = 11,785, exactly the rendered-artifact count — so every row in the
+> table above has its blobs behind it. (Raw carries 20 objects with no row, most likely the pilot
+> models from before the table was populated; harmless either way.)
 
 ### Metadata backfill
 
@@ -581,6 +613,51 @@ with `max_instance_count > 1` silently multiplies every cap by the instance coun
 backoff state. Before that ships, either pin the API to one instance or move the counters into a
 shared store. There is no Redis in this project and adding one costs standing spend against the $100
 budget (NFR-1), so pinning is the cheaper answer unless the API needs to scale.
+
+### Deploying the API to Cloud Run
+
+Not yet deployed — infra has workers only. It goes to **Cloud Run in the same project as the
+workers**, because the API talks to Cloud SQL and GCS constantly and hosting it elsewhere would mean
+exposing Cloud SQL publicly and paying cross-cloud egress on every read (see the Open Decision in
+[CLAUDE.md](../CLAUDE.md)). Cloud Run gives a free HTTPS `*.run.app` URL; a custom domain can come
+later.
+
+Four things will break the deploy if they aren't handled first. Each is a real gap in what exists
+today, not a theoretical risk.
+
+1. **The Cloud SQL schema has to be reconciled with Alembic before the API starts.** The database
+   was built by the workers' `create_all` and knows nothing about migrations — see the adoption note
+   under [Migrations](#migrations) for its verified state and the two ways forward. The API cannot
+   serve a single authenticated request until this is done: none of the auth tables exist.
+
+2. **Signed URLs need both an IAM binding and a code change.** Granting the runtime service account
+   `iam.serviceAccountTokenCreator` **on itself** is necessary but not sufficient. Cloud Run's
+   metadata-server credentials carry no private key, so signing must go through the IAM `SignBlob`
+   API — which `generate_signed_url` only does when it is passed `service_account_email` and
+   `access_token`. The call in `storage.py` passes neither, so on Cloud Run it will raise, get
+   swallowed by the `except`, and silently fall back to streaming every image through the API.
+   Nothing breaks visibly; the page just gets slower and the API pays the bandwidth. The warning log
+   is the only signal, so **check for it after the first deploy** — and fix the call, since the IAM
+   binding alone will not change the behaviour.
+
+3. **Pin the service to one instance.** Rate-limit counters are per-process and in-memory (see the
+   note above). `max_instance_count > 1` multiplies every cap by the instance count and splits login
+   backoff state across instances. Pinning is cheaper than the alternative — a shared store means
+   Redis, which is standing spend against NFR-1's $100.
+
+4. **The SPA ships inside the API deployment.** Mount `web/dist` with FastAPI `StaticFiles` (not
+   built yet — there is no `StaticFiles` mount in `server/app/` today). This is not a packaging
+   preference: the CSRF defense is same-origin double-submit, so splitting the SPA onto another
+   origin would force CORS and weaken exactly the thing CSRF relies on. Serving it from GCS instead
+   is also HTTP-only on a custom domain, and HTTPS there needs a GCP load balancer at ~$18/month
+   against a $100 budget. One origin is both the cheap answer and the secure one. See
+   [web.md](../web/web.md#auth--roles).
+
+Also set, in the same deploy: `IMAGEGENIE_COOKIE_SECURE=true` (defaults false for local http — over
+HTTPS the session cookie must be `Secure`), `IMAGEGENIE_TRUST_PROXY_HEADERS=true` (Cloud Run is a
+proxy; without it every request keys to the same front-end IP), and a real `IMAGEGENIE_MAIL_FROM`
+plus `IMAGEGENIE_RESEND_API_KEY` — with no key the app logs verification and invite links instead of
+sending them, so signup silently strands every user.
 
 ## Request Resilience
 
