@@ -25,7 +25,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata migrate migration migration-status
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage migrate migration migration-status
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -70,6 +70,9 @@ migration-status: ## show the current revision and any pending ones
 backfill-metadata: ## fetch Objaverse titles/tags for models missing them (LIMIT=N, DRYRUN=1)
 	cd server && ../$(BIN)/python -m app.backfill_metadata \
 		$(if $(LIMIT),--limit $(LIMIT),) $(if $(DRYRUN),--dry-run,)
+
+reconcile-storage: ## rebuild the model/artifact tables from object storage (DRYRUN=1 to preview)
+	cd server && ../$(BIN)/python -m app.reconcile_from_storage $(if $(DRYRUN),--dry-run,)
 
 backfill-labels: ## load weak_labels.csv into the DB's label table (idempotent; DRYRUN=1 to preview)
 	cd server && ../$(BIN)/python -m app.backfill_labels \

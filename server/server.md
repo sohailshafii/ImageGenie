@@ -414,9 +414,9 @@ make migration-status               # current revision + head
 >   Yields a schema that matches head exactly, with no hand-written SQL to get wrong. **The row loss
 >   is recoverable without re-ingesting**, because every object key embeds its uid
 >   (`raw/{uid}.glb`, `processed/converted/{uid}.ply`, `processed/normalized/{uid}.ply`,
->   `processed/renders/{uid}/`) — a reconciler that lists the buckets can rebuild `model` and
->   `artifact` from GCS alone, and the existing metadata and weak-label backfills restore the rest.
->   That reconciler does not exist yet and is the real cost of this option.
+>   `processed/renders/{uid}/`) — `make reconcile-storage` rebuilds `model` and `artifact` from a
+>   bucket listing alone (see [Rebuilding the tables from storage](#rebuilding-the-tables-from-storage)),
+>   and the metadata and weak-label backfills restore the rest.
 >
 > **Do not drop anything before confirming the blobs are present** — the GCS listing is what makes
 > the rows recoverable, and it is the only copy. Verified the same day: 12,029 raw / 11,858 converted
@@ -424,6 +424,43 @@ make migration-status               # current revision + head
 > exactly, and 141,420 ÷ 12 views = 11,785, exactly the rendered-artifact count — so every row in the
 > table above has its blobs behind it. (Raw carries 20 objects with no row, most likely the pilot
 > models from before the table was populated; harmless either way.)
+
+### Rebuilding the tables from storage
+
+Object storage is the durable record; `model` and `artifact` are an index over it. Every key carries
+its uid (`app/artifact_keys.py`, `uid_from_key`), so `server/app/reconcile_from_storage.py`
+(`make reconcile-storage`, `DRYRUN=1`) reconstructs both tables from a bucket listing — no
+re-downloading, no re-rendering. That is what makes dropping the schema a cheap way to adopt
+migrations, and it doubles as disaster recovery for the database generally.
+
+```
+make reconcile-storage DRYRUN=1     # scan and report, write nothing
+make reconcile-storage
+```
+
+- **Listing only — no blob bodies are read**, so a full pass over ~165k objects costs no egress.
+- **Idempotent (NFR-2):** rows are upserted, so a rerun is a no-op and an interrupted run is simply
+  restarted. Verified against real Postgres in `tests/test_reconcile_from_storage.py`, because the
+  guarantee is entirely `ON CONFLICT` semantics.
+- **An incomplete render set is not recorded.** A model with fewer than `NUM_VIEWS` PNGs is counted
+  and reported, not written as `done` — the stage-skip gate trusts the row, so recording a partial
+  set would permanently hide that model from a re-render and quietly train on missing views.
+- **A model whose raw mesh is gone still gets a row**, marked `pending` rather than `downloaded`.
+  Raw files are deleted for models excluded from the dataset (the cost guardrail in CLAUDE.md), and
+  the labeling UI reads the processed artifacts, not the source mesh.
+- **Unrecognised keys are counted, never imported** — a bucket may hold stray objects, and the run
+  reports them rather than inventing models from them.
+
+Two columns it cannot restore, both by design:
+
+- **`content_hash`** — the workers store a sha256 of the bytes; the object store keeps its own
+  md5/crc32c, a different digest. Recovering it would mean downloading every blob, which is real
+  egress against NFR-1. Nothing reads the hash for correctness (the stage-skip gate checks the row
+  status and the blob's presence), so a rebuilt table is functionally equivalent but not
+  byte-identical here. Existing hashes are coalesced, never overwritten with null.
+- **`title` / `tags`** — these come from the store's annotations, not the blobs. Run the metadata
+  backfill below afterwards; the reconciler leaves any already present untouched, so the two tools
+  compose in either order.
 
 ### Metadata backfill
 
