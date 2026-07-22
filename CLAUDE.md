@@ -141,12 +141,24 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
 
 ## Development Workflow
 
-- **Stage, don't commit.** Every change is staged (`git add`) so it can be reviewed as a diff.
-  Do **not** commit until the user has reviewed the staged diff and explicitly approved. No
-  auto-commits — this applies to code and docs alike.
+- **Stage, don't commit.** Every change is staged (`git add`) so it can be reviewed and accepted as
+  a diff. Do **not** run `git commit` until the user has reviewed the staged diff and explicitly
+  approved. No auto-commits — this applies to code and docs alike. After finishing a piece of work:
+  `git add -A`, show `git status` plus a summary of the diff, and **stop**.
+- **Approval is per commit and does not carry forward.** "Commit this" authorises *that* commit
+  only. Ask again for the next one — even mid-task, even when a broader "go ahead" was given for the
+  surrounding work, and even when the work is obviously going well. Do not batch up several commits
+  on the strength of one earlier approval.
 - **Keep commits small.** Prefer small, single-concern commits over one large diff. Break a
   milestone into a sequence of focused commits (e.g. schema, then one commit per worker stage,
   then docs) so each is an easily-reviewable, coherent unit.
+- **Keep the *working set* small too.** Don't accumulate a large body of unstaged work before
+  pausing. Stop at each natural boundary — a refactor that stands alone, one endpoint, one
+  component — stage it, and offer it as a commit before starting the next piece. A turn that ends
+  with a dozen changed files across several concerns is too big, even if each commit would be
+  small: the review happens on what's in front of the user, not on the eventual git history.
+- **Split before asking.** When a chunk of work does turn out to span concerns, propose the
+  specific commit breakdown (which files, which order) rather than offering it as one commit.
 
 ## Coding Conventions (all languages)
 
