@@ -82,6 +82,20 @@ export interface ModelSummary {
   className: ClassName | null;
   source: LabelSource | null;
   confidence: number | null; // 0..1, weak labels only; null once manual
+  /**
+   * First rendered view, for the grid. The server emits this without checking
+   * the blob exists (a 24-card page would otherwise cost 24 round-trips to
+   * object storage), so it can 404 for a model the pipeline hasn't rendered —
+   * treat a load error as "no preview", not as a bug.
+   */
+  thumbnail: string | null;
+}
+
+/** A model's rendered views and mesh, for the detail view. */
+export interface ModelArtifacts {
+  uid: string;
+  views: string[]; // in view order; empty until the render stage runs
+  mesh: string | null; // normalized PLY, or null if not yet normalized
 }
 
 export interface ModelPage {
