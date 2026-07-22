@@ -95,6 +95,52 @@ class Artifact(Base):
     )
 
 
+class PipelineStage(str, enum.Enum):
+    """A processing stage a job can fail in — includes download, unlike
+    ``ArtifactStage``, which only covers stages that produce an artifact."""
+
+    download = "download"
+    convert = "convert"
+    normalize = "normalize"
+    render = "render"
+
+
+class DeadLetter(Base):
+    """A job that failed a stage, with the error that caused it.
+
+    Recorded by the worker at nack time, because **that is the only place the
+    error text exists** — a Pub/Sub dead-letter message carries the original
+    payload and a delivery count, never the reason. Keeping it here also means
+    the admin view is a plain DB read rather than a destructive pull from the
+    DLQ subscription, and that failures outlive Pub/Sub's 7-day retention.
+
+    Unique on ``(model_uid, stage)``: a retried job that fails again updates the
+    row rather than adding another, so the list shows current state and not a
+    log of every attempt.
+    """
+
+    __tablename__ = "dead_letter"
+    __table_args__ = (
+        UniqueConstraint("model_uid", "stage", name="uq_dead_letter_model_stage"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    model_uid: Mapped[str] = mapped_column(index=True)  # no FK: a download can
+    # fail before the model row exists, and losing the record would be worse
+    stage: Mapped[PipelineStage] = mapped_column()
+    error: Mapped[str] = mapped_column()
+    # Pub/Sub's count for this message; at the subscription's max it stops being
+    # redelivered and goes to the dead-letter topic.
+    delivery_attempt: Mapped[int | None] = mapped_column(default=None)
+    failed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Set when an admin re-enqueues it; the row is kept so the history is visible.
+    replayed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+
 class LabelSource(str, enum.Enum):
     """Where a label came from — the weak-labeling rules or a human correction."""
 

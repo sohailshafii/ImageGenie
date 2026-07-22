@@ -323,6 +323,39 @@ writer and reader drifts silently, as a missing image rather than an error.
   on itself. Without it the code logs a warning and falls back to streaming — the page still works,
   which is why the log line matters; it's the only signal the binding is missing.
 
+### Dead letters
+
+Jobs that fail a stage are recorded in a `dead_letter` row **by the worker at nack time**
+(`server/app/web.py` → `app/dead_letters.py`), and the admin view reads that table.
+
+The alternative — having the API pull from the `*-jobs-dlq-sub` subscriptions — was rejected:
+
+- **The error text only exists at nack time.** A Pub/Sub dead-letter message carries the original
+  payload and a delivery count, never *why* the subscriber gave up. Reading the DLQ can tell you a
+  job failed but not what went wrong, which is the one thing an operator needs.
+- **Pulling to render a page consumes what it displays.** Messages would have to be nacked back, and
+  listing would be slow and non-deterministic.
+- **Records outlive Pub/Sub retention** (7 days by default), so a failure from an old ingestion run
+  is still visible.
+
+Details:
+
+- **Unique on `(model_uid, stage)`,** upserted. At-least-once delivery means the same job fails
+  repeatedly; the admin wants current state, not one row per attempt. Re-failing also clears
+  `replayed_at`, so a replayed job that fails again is outstanding once more.
+- **No FK to `model`** — a download can fail before the model row exists, and losing the record
+  would be worse than the missing referential integrity.
+- **Errors are truncated** to 2000 chars; a mesh library traceback can run to kilobytes.
+- **Retry republishes to the stage topic** and keeps the row, marked `replayed_at`, so an admin can
+  see they already tried. Safe to press freely: every stage is idempotent (NFR-2), so replaying a
+  job that already succeeded is a no-op.
+- **Admin-only** — operational detail, and retry re-enqueues real pipeline work.
+- **Recording never breaks the nack.** Its own failure is caught and logged; a DB hiccup must not
+  turn a retryable job into a lost one.
+- `app/replay_dlq.py` remains the bulk tool for draining a whole Pub/Sub DLQ back to its topic; this
+  table backs the per-item view. The two are complementary — the CLI is what recovered 13,189
+  messages after the milestone-4 run.
+
 ### Migrations
 
 **Alembic owns the schema** (`server/alembic/`). It replaces the skeleton's `create_all` bootstrap,

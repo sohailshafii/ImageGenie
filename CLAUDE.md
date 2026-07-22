@@ -138,6 +138,20 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
       Postgres in Docker locally (not SQLite) so dev shares prod's upsert + concurrency semantics —
       critical for the idempotency invariant (NFR-2) and parallel-worker scale (NFR-3). See
       [server/server.md](server/server.md#database).
+- [x] **Schema migrations → Alembic.** The skeleton's `create_all` could add a missing *table* but
+      never alter an existing one, so a new column silently never appeared and surfaced later as a
+      query error. Alembic now owns the schema; `create_all` is off unless
+      `IMAGEGENIE_AUTO_CREATE_SCHEMA` is set (local convenience), because both creating tables means
+      a migration can fail as "already exists". See [server/server.md](server/server.md#migrations).
+- [x] **API hosting → Cloud Run, same project as the workers.** The API talks to Cloud SQL and GCS
+      constantly, so proximity wins: hosting it elsewhere means exposing Cloud SQL publicly and
+      paying cross-cloud egress on every read. It is also already an increment on the existing
+      Terraform. **The SPA ships inside the API deployment** — the CSRF defense rests on one origin,
+      and splitting them would force CORS or a ~$18/month load balancer.
+      See [web/web.md](web/web.md#auth--roles).
+- [ ] **Transactional email sender → Resend**, reusing an already-verified domain. Wired and tested;
+      the remaining step is setting the real `IMAGEGENIE_MAIL_FROM`, since the default sandbox sender
+      only delivers to the Resend account owner. See [server/server.md](server/server.md#email).
 
 ## Development Workflow
 

@@ -103,9 +103,11 @@ Resolves the login TODO.
   and the API reports that rather than inventing a class. The grid and detail view render it as
   "unlabeled" with a "— pick a class —" placeholder, and hide Confirm (there is nothing to confirm).
   This is the state *every* model is in until the weak-label backfill runs.
-- **One mock remains:** the dead-letter list (`catalog.ts`). The backend has no DLQ endpoints yet —
-  `app/replay_dlq.py` is a CLI tool — so `DeadLettersPage` still renders fixed sample rows. The
-  function signatures are already the ones the real calls will use.
+- **No mocks remain.** The dead-letter list was the last one; it now reads
+  [the real endpoints](../server/server.md#dead-letters). `DeadLettersPage` shows outstanding
+  failures with the recorded error and Pub/Sub delivery attempt, and Retry re-enqueues the job on its
+  stage topic — safe to press freely, since every stage is idempotent (NFR-2). Retried rows are kept
+  server-side but drop out of the list, which shows what is still outstanding.
 
 ### Content-Security-Policy (TODO — not yet configured)
 

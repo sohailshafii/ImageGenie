@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from .artifact_keys import normalized_key, view_key, view_keys
 from .config import get_settings
 from .db import init_db, session_scope
+from .dead_letters import list_dead_letters, replay
 from .mail import send_invite_email, send_verification_email
 from .models import (
     EmailVerification,
@@ -92,6 +93,16 @@ class ModelPageOut(BaseModel):
 
 class LabelIn(BaseModel):
     class_name: str
+
+
+class DeadLetterOut(BaseModel):
+    id: int
+    uid: str
+    stage: str
+    error: str
+    delivery_attempt: int | None
+    failed_at: datetime
+    replayed_at: datetime | None
 
 
 class ModelSort(str, enum.Enum):
@@ -530,6 +541,42 @@ def _summary(storage, uid, title, tags, class_name, source, confidence) -> Model
 
 # Selected by both the list and detail queries, so the two can't drift apart.
 _SUMMARY_COLUMNS = (Model.uid, Model.title, Model.tags)
+
+
+@app.get("/dead-letters", response_model=list[DeadLetterOut])
+def list_failures(admin: AdminUser, include_replayed: bool = False) -> list[DeadLetterOut]:
+    """Jobs that failed a pipeline stage. Admin-only — it's operational detail.
+
+    A plain DB read: the rows were recorded by the workers at nack time, so this
+    never touches Pub/Sub (server.md#dead-letters).
+    """
+    with session_scope() as session:
+        return [
+            DeadLetterOut(
+                id=row.id,
+                uid=row.model_uid,
+                stage=row.stage.value,
+                error=row.error,
+                delivery_attempt=row.delivery_attempt,
+                failed_at=row.failed_at,
+                replayed_at=row.replayed_at,
+            )
+            for row in list_dead_letters(session, include_replayed)
+        ]
+
+
+@app.post("/dead-letters/{dead_letter_id}/retry", status_code=204)
+def retry_failure(dead_letter_id: int, admin: AdminUser) -> Response:
+    """Re-enqueue a failed job on its stage topic.
+
+    Safe to do freely: every stage is idempotent (NFR-2), so replaying a job that
+    turns out to have succeeded is a no-op rather than duplicate work.
+    """
+    with session_scope() as session:
+        if replay(session, dead_letter_id) is None:
+            raise HTTPException(status_code=404, detail="unknown dead letter")
+        logger.info("replayed dead letter %d by %s", dead_letter_id, admin.email)
+    return Response(status_code=204)
 
 
 @app.get("/models", response_model=ModelPageOut, dependencies=LOGIN_REQUIRED)

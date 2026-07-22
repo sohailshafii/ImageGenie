@@ -609,9 +609,16 @@ select:focus {
   color: var(--text-muted);
 }
 
-.dlq-error {
+/* Bounded on an inner element, not the cell: real errors are long (a full
+   ReadTimeout with the host, or a mesh traceback), and max-width on a <td> is
+   ignored by the auto table layout — the cell grows and pushes Retry off-screen.
+   Full text stays available via the title attribute.
+   `white-space` is set here explicitly because the cell inherits `nowrap` from
+   `.dlq-table td`, which outranks a bare `.dlq-error` on specificity. */
+.dlq-error-text {
+  max-width: 28rem;
   white-space: normal;
-  min-width: 16rem;
+  overflow-wrap: anywhere; /* URLs and paths have no spaces to break on */
 }
 
 .dlq-time {
@@ -729,4 +736,9 @@ select:focus {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.dlq-attempts {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
