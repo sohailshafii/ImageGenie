@@ -36,9 +36,14 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   (scale-to-zero, per-stage Pub/Sub push + DLQ); ran the labeled 12-class set (32k seeded) with
   resilience tuning (2–4 GiB, one-model-per-instance, in-worker retry + backoff) and a DLQ-replay tool
   to recover transient mirror failures
-- 🚧 **Milestone 5** — labeling frontend (React + TS + Vite). Auth (login / invite / verify + resend),
-  a browse grid with inline confirm/correct, and an admin dead-letter view — over a typed mock API;
-  remaining: the three.js detail viewer and the FastAPI backend
+- 🚧 **Milestone 5** — labeling frontend (React + TS + Vite) on a FastAPI backend-for-frontend.
+  Done: auth (login / invite-gated signup / verify + resend, session cookies, CSRF, rate limiting),
+  the models/labels API, a browse grid with inline confirm/correct, a three.js detail route, an admin
+  dead-letter view, and a weak-label backfill so the catalog is populated.
+  **Not yet usable for labeling:** the viewer still shows a placeholder mesh and grid thumbnails are
+  emoji, because no endpoint serves the pipeline's rendered views or meshes yet — that is the current
+  work. Also remaining: model title/tags (needs an Objaverse-metadata backfill), data upload (FR-9),
+  a real dead-letter API, and deploying the API itself (only the workers are in Terraform).
 - ⬜ **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU)
 - ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
 

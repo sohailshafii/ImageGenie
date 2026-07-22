@@ -298,6 +298,31 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 - Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
   (FR-9).
 
+### Serving artifacts
+
+The labeling UI needs the pipeline's output — without it the viewer shows a placeholder and the grid
+shows emoji, so nobody can actually label. Key layout lives in one place, `server/app/artifact_keys.py`,
+imported by both the workers that write and the API that reads: a key format duplicated between
+writer and reader drifts silently, as a missing image rather than an error.
+
+- **`GET /models/{uid}/artifacts`** → `{views: [...], mesh}` for the detail view. It checks each blob
+  exists, so a model part-way through the pipeline yields fewer views (or none) and the UI shows a
+  placeholder rather than broken images.
+- **`ModelSummaryOut.thumbnail`** carries the first view for the grid, and is deliberately emitted
+  **without** an existence check — a 24-card page would otherwise cost 24 round-trips to object
+  storage just to draw thumbnails. Signing is local and free; the client treats a 404 as "no
+  preview". This is the one place we knowingly return a URL that may not resolve.
+- **Signed URLs where possible.** The browser reads GCS directly rather than proxying 12 images per
+  card through the API, which would make it the bottleneck and pay egress twice. TTL is 15 minutes —
+  a signed URL is readable by whoever holds it, so it should outlive a page render and not much else.
+- **`GET /artifacts/{key}` streams as a fallback** for backends that can't sign (local dev). Login
+  required, since this is the dataset (NFR-7). Note the asymmetry: signed URLs are readable without a
+  session until they expire. That is the trade for not proxying, and the reason the TTL is short.
+- ⚠️ **Signing needs IAM on Cloud Run.** The metadata server's credentials have no private key, so
+  `generate_signed_url` requires the runtime service account to hold `iam.serviceAccountTokenCreator`
+  on itself. Without it the code logs a warning and falls back to streaming — the page still works,
+  which is why the log line matters; it's the only signal the binding is missing.
+
 ### Weak-label backfill
 
 Weak labeling (FR-3) writes `data/exploration/weak_labels.csv`, but the labeling UI reads the DB —
