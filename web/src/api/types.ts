@@ -115,10 +115,15 @@ export interface ModelPage {
 /** A preprocessing stage — used to attribute a dead-lettered failure. */
 export type PipelineStage = 'download' | 'convert' | 'normalize' | 'render';
 
-/** A model that failed a stage and landed in that stage's dead-letter queue. */
+/** A job that failed a pipeline stage, as recorded by the worker that nacked it. */
 export interface DeadLetter {
+  id: number;
   uid: string;
   stage: PipelineStage;
   error: string;
+  /** Pub/Sub's delivery count; null for failures recorded outside push delivery. */
+  deliveryAttempt: number | null;
   failedAt: string; // ISO 8601
+  /** Set once an admin re-enqueued it; such rows are hidden from the list. */
+  replayedAt: string | null;
 }

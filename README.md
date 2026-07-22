@@ -37,13 +37,15 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   resilience tuning (2–4 GiB, one-model-per-instance, in-worker retry + backoff) and a DLQ-replay tool
   to recover transient mirror failures
 - 🚧 **Milestone 5** — labeling frontend (React + TS + Vite) on a FastAPI backend-for-frontend.
-  Done: auth (login / invite-gated signup / verify + resend, session cookies, CSRF, rate limiting),
-  the models/labels API, a browse grid with inline confirm/correct, a three.js detail route, an admin
-  dead-letter view, and a weak-label backfill so the catalog is populated.
-  **Not yet usable for labeling:** the viewer still shows a placeholder mesh and grid thumbnails are
-  emoji, because no endpoint serves the pipeline's rendered views or meshes yet — that is the current
-  work. Also remaining: model title/tags (needs an Objaverse-metadata backfill), data upload (FR-9),
-  a real dead-letter API, and deploying the API itself (only the workers are in Terraform).
+  The labeling loop works end to end: sign in, browse real rendered previews, open a model in the
+  three.js viewer (its normalized mesh from the pipeline), and confirm or correct the label —
+  attributed to the admin who made the change. Also done: invite-gated signup with email
+  verification (Resend), session cookies with CSRF and rate limiting, the weak-label and
+  Objaverse-metadata backfills that populate the catalog, sort-by-least-confidence and a keyboard
+  sweep for fast review, an admin dead-letter view over recorded pipeline failures, and Alembic
+  migrations.
+  **Remaining:** admin data upload (FR-9), and deploying the API itself — only the workers are in
+  Terraform today.
 - ⬜ **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU)
 - ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
 
@@ -54,7 +56,7 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 | `ml/` | class list, weak labeling, evaluation ([ml/ml.md](ml/ml.md)) |
 | `server/` | pipeline workers, queue, storage, DB, API ([server/server.md](server/server.md)) |
 | `infra/` | Terraform for the GCP resources |
-| `web/` | labeling UI + dashboard (planned, [web/web.md](web/web.md)) |
+| `web/` | labeling UI ([web/web.md](web/web.md)); the training dashboard lands with milestone 6 |
 
 Design docs are the source of truth — see [CLAUDE.md](CLAUDE.md) for the project hub.
 
@@ -65,10 +67,30 @@ make setup          # venv + ml/server/dev deps
 make test           # test suite (Postgres via testcontainers)
 make weaklabel      # Sketchfab weak labeling over sampled shards
 make evalweak       # grade weak labels vs the LVIS gold set
-make compose-up     # local pipeline (Postgres + Pub/Sub emulator + all stage workers)
-make compose-seed COUNT=100   # seeds download jobs that flow through every stage
+```
+
+**The pipeline** — Postgres + Pub/Sub emulator + a worker per stage:
+
+```
+make compose-up
+make compose-seed COUNT=100   # download jobs that flow through every stage
 make compose-down
 ```
+
+**The labeling app** — needs a Postgres it can reach, then the API and the dev server:
+
+```
+make migrate                  # apply schema migrations (Alembic owns the schema)
+make backfill-labels          # load weak_labels.csv into the DB, so the catalog has labels
+make backfill-metadata        # fetch Objaverse titles/tags (downloads shard files on first run)
+
+cd server && ../.venv/bin/python -m uvicorn app.api:app --port 8000
+cd web && npm install && npm run dev      # http://localhost:5173
+```
+
+The dev server proxies `/api` and `/artifacts` to the API so the browser sees a single origin —
+the session cookies are `SameSite=Lax` and the CSRF defense depends on that
+([web/web.md](web/web.md#auth--roles)).
 
 ## Distribution policy
 

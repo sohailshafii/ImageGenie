@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
 import { listDeadLetters, retryDeadLetter } from '../api/catalog';
-import type { DeadLetter, PipelineStage } from '../api/types';
+import type { DeadLetter } from '../api/types';
 import { AppLayout } from '../components/AppLayout';
 
-// Admin-only "failed ingestion" surface: models that failed a preprocessing stage
-// and landed in that stage's dead-letter queue, with a per-row retry. Against the
-// mock this drops the row (assume re-run); the real backend reads the Pub/Sub DLQs
-// and a retry republishes the message to the stage topic (see server.md#queue).
-const retryKey = (uid: string, stage: PipelineStage) => `${uid}:${stage}`;
-
+// Admin-only "failed ingestion" surface: jobs that failed a preprocessing stage,
+// recorded by the worker that nacked them, with a per-row retry that republishes
+// to the stage topic (server.md#dead-letters). Retried rows are kept server-side
+// but drop out of this list, which shows what is still outstanding.
 export function DeadLettersPage() {
   const [items, setItems] = useState<DeadLetter[] | null>(null);
-  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -24,12 +22,10 @@ export function DeadLettersPage() {
   }, []);
 
   async function onRetry(item: DeadLetter) {
-    setRetrying(retryKey(item.uid, item.stage));
+    setRetrying(item.id);
     try {
-      await retryDeadLetter(item.uid, item.stage);
-      setItems((prev) =>
-        prev ? prev.filter((row) => !(row.uid === item.uid && row.stage === item.stage)) : prev,
-      );
+      await retryDeadLetter(item.id);
+      setItems((prev) => (prev ? prev.filter((row) => row.id !== item.id) : prev));
     } finally {
       setRetrying(null);
     }
@@ -62,21 +58,30 @@ export function DeadLettersPage() {
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={retryKey(item.uid, item.stage)}>
+                <tr key={item.id}>
                   <td className="dlq-uid">{item.uid.slice(0, 10)}…</td>
                   <td>
                     <span className={`stage-badge is-${item.stage}`}>{item.stage}</span>
                   </td>
-                  <td className="dlq-error">{item.error}</td>
+                  <td className="dlq-error">
+                    {/* Inner element because max-width on a <td> is ignored by
+                        the auto table layout — the cell would just grow. */}
+                    <div className="dlq-error-text" title={item.error}>
+                      {item.error}
+                      {item.deliveryAttempt !== null && (
+                        <span className="dlq-attempts"> · attempt {item.deliveryAttempt}</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="dlq-time">{new Date(item.failedAt).toLocaleString()}</td>
                   <td>
                     <button
                       type="button"
                       className="btn-secondary"
-                      disabled={retrying === retryKey(item.uid, item.stage)}
+                      disabled={retrying === item.id}
                       onClick={() => onRetry(item)}
                     >
-                      {retrying === retryKey(item.uid, item.stage) ? 'Retrying…' : 'Retry'}
+                      {retrying === item.id ? 'Retrying…' : 'Retry'}
                     </button>
                   </td>
                 </tr>

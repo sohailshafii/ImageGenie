@@ -112,56 +112,36 @@ export async function setLabel(uid: string, className: ClassName): Promise<Model
   );
 }
 
-// ── Dead letters: STILL MOCKED ──────────────────────────────────────────────
-// TODO(dlq-api): the backend has no dead-letter endpoints yet. Until it does,
-// this serves fixed sample rows so the admin page renders; nothing here reflects
-// the real DLQs. Replace both functions with `request(...)` calls when the
-// endpoints land — the signatures are already the ones they'll use.
-const MOCK_LATENCY_MS = 250;
-const delay = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, MOCK_LATENCY_MS));
-
-const deadLetters: DeadLetter[] = [
-  {
-    uid: 'a1b2c3d4e5f60001',
-    stage: 'download',
-    error: 'ReadTimeout fetching mesh',
-    failedAt: '2026-07-19T17:40:00Z',
-  },
-  {
-    uid: 'a1b2c3d4e5f60002',
-    stage: 'download',
-    error: 'SSLError on mirror connection',
-    failedAt: '2026-07-19T17:41:12Z',
-  },
-  {
-    uid: 'a1b2c3d4e5f60003',
-    stage: 'convert',
-    error: 'ValueError: mesh has no faces',
-    failedAt: '2026-07-19T17:38:05Z',
-  },
-  {
-    uid: 'a1b2c3d4e5f60004',
-    stage: 'download',
-    error: 'Memory limit exceeded (>2Gi)',
-    failedAt: '2026-07-19T17:45:33Z',
-  },
-  {
-    uid: 'a1b2c3d4e5f60005',
-    stage: 'render',
-    error: 'OSMesa context creation failed',
-    failedAt: '2026-07-19T17:44:20Z',
-  },
-];
-
-/** GET /dead-letters — admin-only. **Mock data** (see the TODO above). */
-export async function listDeadLetters(): Promise<DeadLetter[]> {
-  await delay();
-  return [...deadLetters];
+// ── Dead letters ────────────────────────────────────────────────────────────
+interface DeadLetterResponse {
+  id: number;
+  uid: string;
+  stage: PipelineStage;
+  error: string;
+  delivery_attempt: number | null;
+  failed_at: string;
+  replayed_at: string | null;
 }
 
-/** POST /dead-letters/{uid}/retry — admin-only. **Mock** (see the TODO above). */
-export async function retryDeadLetter(uid: string, stage: PipelineStage): Promise<void> {
-  await delay();
-  const index = deadLetters.findIndex((item) => item.uid === uid && item.stage === stage);
-  if (index !== -1) deadLetters.splice(index, 1);
+/** GET /dead-letters — admin-only. Outstanding failures, most recent first. */
+export async function listDeadLetters(): Promise<DeadLetter[]> {
+  const rows = await request<DeadLetterResponse[]>('GET', '/dead-letters');
+  return rows.map((row) => ({
+    id: row.id,
+    uid: row.uid,
+    stage: row.stage,
+    error: row.error,
+    deliveryAttempt: row.delivery_attempt,
+    failedAt: row.failed_at,
+    replayedAt: row.replayed_at,
+  }));
+}
+
+/**
+ * POST /dead-letters/{id}/retry — admin-only: re-enqueue the job on its stage
+ * topic. Safe to press freely; every stage is idempotent (NFR-2), so replaying
+ * something that already succeeded is a no-op rather than duplicate work.
+ */
+export async function retryDeadLetter(id: number): Promise<void> {
+  await request<void>('POST', `/dead-letters/${id}/retry`);
 }
