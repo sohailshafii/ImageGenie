@@ -31,6 +31,10 @@ services:
       PUBSUB_EMULATOR_HOST: pubsub:8681
       IMAGEGENIE_DATABASE_URL: postgresql+psycopg://imagegenie:imagegenie@postgres:5432/imagegenie
       IMAGEGENIE_STORAGE_ROOT: /data/storage
+      # Local stack only: let a worker materialize the schema on a fresh volume
+      # so `make compose-up` needs no separate migration step. Cloud leaves this
+      # off and runs `alembic upgrade head` at deploy (server.md#migrations).
+      IMAGEGENIE_AUTO_CREATE_SCHEMA: "true"
     volumes: &worker-volumes
       - storage:/data/storage
     depends_on: &worker-deps

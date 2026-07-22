@@ -25,7 +25,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata migrate migration migration-status
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -57,6 +57,15 @@ weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
 
 evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
 	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
+
+migrate: ## apply pending schema migrations (alembic upgrade head)
+	cd server && ../$(BIN)/alembic upgrade head
+
+migration: ## autogenerate a migration from model changes (MSG="what changed")
+	cd server && ../$(BIN)/alembic revision --autogenerate -m "$(MSG)"
+
+migration-status: ## show the current revision and any pending ones
+	cd server && ../$(BIN)/alembic current && ../$(BIN)/alembic heads
 
 backfill-metadata: ## fetch Objaverse titles/tags for models missing them (LIMIT=N, DRYRUN=1)
 	cd server && ../$(BIN)/python -m app.backfill_metadata \
