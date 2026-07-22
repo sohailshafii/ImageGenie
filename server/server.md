@@ -129,8 +129,23 @@ the [metadata DB](#database) stores only the object keys, never the blobs themse
 
 **Layout — two same-region buckets:**
 
-- `imagegenie-raw` — downloaded meshes.
+- `imagegenie-raw` — source meshes: `raw/<uid>.<ext>`.
 - `imagegenie-processed` — converted / normalized / rendered outputs, separated by prefix.
+
+**The source mesh's format is carried by its key**, not assumed. Ingestion only ever writes GLB
+(that is what Objaverse serves), but an [admin upload](../web/web.md#data-upload) may be STL or OBJ,
+so `convert` reads `model.raw_key` and derives the trimesh `file_type` from its extension
+(`app/artifact_keys.py`, `RAW_SUFFIX_TO_FILE_TYPE`) rather than hardcoding one. A row with no
+`raw_key` falls back to `.glb`, so rows written before uploads existed behave exactly as before.
+
+> **FBX is not supported**, despite FR-2 and FR-9 listing it. trimesh has no FBX loader — the format
+> is proprietary and undocumented — so it is rejected at upload with a clear error rather than
+> dead-lettering deep in the convert stage. Nothing in the corpus is affected: all 12,029 ingested
+> models are GLB, so the claim was never exercised. Adding it later means an `assimp` package in the
+> worker image, invoked as a subprocess rather than through `pyassimp` (whose bindings must match the
+> installed library version, and which would put a memory-unsafe parse in-process on the one path
+> that accepts untrusted files), plus one entry in `RAW_SUFFIX_TO_FILE_TYPE`. No other stage assumes
+> a format.
 
 Two buckets (not one) because raw and processed have different lifecycles: raw is deleted or
 cold-stored independently once a model is preprocessed or excluded, while processed stays hot for

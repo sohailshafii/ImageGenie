@@ -55,3 +55,59 @@ def test_convert_is_idempotent(convert_env: Path, monkeypatch: pytest.MonkeyPatc
     # Both runs hand the model to the normalize stage.
     normalize_topic = config.Settings().normalize_topic
     assert publish_calls == [(normalize_topic, uid), (normalize_topic, uid)]
+
+
+@pytest.mark.parametrize(
+    ("suffix", "export_type"), [(".stl", "stl"), (".obj", "obj")]
+)
+def test_convert_reads_the_format_from_the_stored_raw_key(
+    convert_env: Path, monkeypatch: pytest.MonkeyPatch, suffix: str, export_type: str
+) -> None:
+    """An uploaded STL/OBJ converts too — the stage must not assume GLB.
+
+    The format is carried by `model.raw_key`, which upload sets to the extension
+    it validated, so nothing downstream has to be told separately.
+    """
+    tmp_path = convert_env
+    uid = f"upload{export_type}"
+
+    with db.session_scope() as session:
+        session.add(
+            Model(
+                uid=uid,
+                download_status=DownloadStatus.downloaded,
+                raw_key=f"raw/{uid}{suffix}",
+            )
+        )
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir(exist_ok=True)
+    # trimesh exports the text formats (OBJ) as str and the binary ones as bytes.
+    exported = trimesh.creation.box().export(file_type=export_type)
+    (raw_dir / f"{uid}{suffix}").write_bytes(
+        exported.encode() if isinstance(exported, str) else exported
+    )
+
+    monkeypatch.setattr(convert, "publish_next", lambda topic, u: None)
+
+    assert convert.process({"uid": uid}) == "converted"
+
+    converted_ply = (tmp_path / "processed" / "converted" / f"{uid}.ply").read_bytes()
+    assert load_mesh(converted_ply, file_type="ply").faces.shape[0] > 0
+
+
+def test_convert_falls_back_to_glb_when_no_raw_key_is_recorded(
+    convert_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rows predating uploads have raw_key set, but a null one must still work."""
+    tmp_path = convert_env
+    uid = "no-raw-key"
+
+    with db.session_scope() as session:
+        session.add(Model(uid=uid, download_status=DownloadStatus.downloaded))
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir(exist_ok=True)
+    (raw_dir / f"{uid}.glb").write_bytes(trimesh.creation.box().export(file_type="glb"))
+
+    monkeypatch.setattr(convert, "publish_next", lambda topic, u: None)
+
+    assert convert.process({"uid": uid}) == "converted"

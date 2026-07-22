@@ -51,9 +51,6 @@ from .artifact_keys import (
     NUM_VIEWS,
     RAW_PREFIX,
     RENDERS_PREFIX,
-    converted_key,
-    normalized_key,
-    raw_key,
     renders_prefix,
     uid_from_key,
 )
@@ -68,17 +65,21 @@ logger = logging.getLogger(__name__)
 INSERT_BATCH_SIZE = 1000
 
 
-def _uids_under(storage: Storage, prefix: str) -> tuple[set[str], int]:
-    """Every uid appearing under `prefix`, plus a count of unrecognised keys."""
-    uids_set: set[str] = set()
+def _uid_to_key_under(storage: Storage, prefix: str) -> tuple[dict[str, str], int]:
+    """Map uid → its actual key under `prefix`, plus a count of unrecognised keys.
+
+    Keeps the observed key rather than rebuilding one, so a source mesh that isn't
+    GLB (an uploaded STL or OBJ) is recorded with the extension it really has.
+    """
+    uid_to_key: dict[str, str] = {}
     unrecognised = 0
     for key in storage.list_keys(prefix):
         uid = uid_from_key(key)
         if uid is None:
             unrecognised += 1
             continue
-        uids_set.add(uid)
-    return uids_set, unrecognised
+        uid_to_key[uid] = key
+    return uid_to_key, unrecognised
 
 
 def _complete_render_uids(storage: Storage) -> tuple[set[str], set[str]]:
@@ -105,18 +106,24 @@ def _batched(rows: list[dict], size: int) -> Iterator[list[dict]]:
         yield rows[start : start + size]
 
 
-def _upsert_models(session: Session, uids_with_raw_set: set[str], all_uids_set: set[str]) -> None:
+def _upsert_models(
+    session: Session, uid_to_raw_key: dict[str, str], all_uids_set: set[str]
+) -> None:
     """Insert one `model` row per uid, preserving any metadata already present.
 
     The conflict clause updates only what storage is authoritative for. `title`
     and `tags` are left alone so a rerun doesn't undo `app.backfill_metadata`.
+
+    The raw key comes from the listing rather than being rebuilt, because the
+    source format isn't always GLB — an uploaded STL or OBJ must keep its own
+    extension or the convert stage would look for a blob that isn't there.
     """
     rows = [
         {
             "uid": uid,
-            "raw_key": raw_key(uid) if uid in uids_with_raw_set else None,
+            "raw_key": uid_to_raw_key.get(uid),
             "download_status": (
-                DownloadStatus.downloaded if uid in uids_with_raw_set else DownloadStatus.pending
+                DownloadStatus.downloaded if uid in uid_to_raw_key else DownloadStatus.pending
             ),
         }
         for uid in sorted(all_uids_set)
@@ -171,12 +178,15 @@ def _upsert_artifacts(session: Session, stage: ArtifactStage, uid_to_key: dict[s
 
 def reconcile(storage: Storage, dry_run: bool) -> dict[str, int]:
     """Rebuild both tables from `storage`; return a count per category."""
-    raw_uids_set, stray_raw = _uids_under(storage, RAW_PREFIX)
-    converted_uids_set, stray_converted = _uids_under(storage, CONVERTED_PREFIX)
-    normalized_uids_set, stray_normalized = _uids_under(storage, NORMALIZED_PREFIX)
+    uid_to_raw_key, stray_raw = _uid_to_key_under(storage, RAW_PREFIX)
+    uid_to_converted_key, stray_converted = _uid_to_key_under(storage, CONVERTED_PREFIX)
+    uid_to_normalized_key, stray_normalized = _uid_to_key_under(storage, NORMALIZED_PREFIX)
     rendered_uids_set, partial_renders_set = _complete_render_uids(storage)
 
-    all_uids_set = raw_uids_set | converted_uids_set | normalized_uids_set | rendered_uids_set
+    raw_uids_set = set(uid_to_raw_key)
+    all_uids_set = (
+        raw_uids_set | set(uid_to_converted_key) | set(uid_to_normalized_key) | rendered_uids_set
+    )
     # A model whose raw mesh is gone but whose outputs survive: still worth a row,
     # since the labeling UI reads the processed artifacts, not the source mesh.
     processed_without_raw_set = all_uids_set - raw_uids_set
@@ -184,8 +194,8 @@ def reconcile(storage: Storage, dry_run: bool) -> dict[str, int]:
     counts = {
         "models": len(all_uids_set),
         "raw": len(raw_uids_set),
-        "converted": len(converted_uids_set),
-        "normalized": len(normalized_uids_set),
+        "converted": len(uid_to_converted_key),
+        "normalized": len(uid_to_normalized_key),
         "rendered": len(rendered_uids_set),
         "partial_renders_skipped": len(partial_renders_set),
         "processed_without_raw": len(processed_without_raw_set),
@@ -199,18 +209,14 @@ def reconcile(storage: Storage, dry_run: bool) -> dict[str, int]:
     with session_scope() as session:
         # Models first: `artifact.model_uid` is a foreign key, and the flush makes
         # the parent rows visible to the child inserts in the same transaction.
-        _upsert_models(session, raw_uids_set, all_uids_set)
+        _upsert_models(session, uid_to_raw_key, all_uids_set)
         session.flush()
 
         for stage, uid_to_key in (
-            (
-                ArtifactStage.converted,
-                {uid: converted_key(uid) for uid in converted_uids_set},
-            ),
-            (
-                ArtifactStage.normalized,
-                {uid: normalized_key(uid) for uid in normalized_uids_set},
-            ),
+            (ArtifactStage.converted, uid_to_converted_key),
+            (ArtifactStage.normalized, uid_to_normalized_key),
+            # The render stage's artifact key is the prefix its views live under,
+            # not any single PNG — so this one is built, not observed.
             (
                 ArtifactStage.rendered,
                 {uid: renders_prefix(uid) for uid in rendered_uids_set},
