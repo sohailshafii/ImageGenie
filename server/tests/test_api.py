@@ -105,6 +105,8 @@ def test_put_label_records_manual(client: TestClient) -> None:
         "class_name": "weapon",
         "source": "manual",
         "confidence": None,
+        # Emitted without checking the blob exists — see ModelSummaryOut.thumbnail.
+        "thumbnail": "/artifacts/processed/renders/m2/view_00.png",
     }
     # And it sticks on the next read.
     assert client.get("/models/m2").json()["source"] == "manual"

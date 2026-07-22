@@ -17,7 +17,8 @@ import logging
 import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
@@ -26,6 +27,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from .artifact_keys import normalized_key, view_key, view_keys
 from .config import get_settings
 from .db import init_db, session_scope
 from .mail import send_invite_email, send_verification_email
@@ -56,6 +58,7 @@ from .security import (
     resolve_session,
     verify_password,
 )
+from .storage import build_storage
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,11 @@ class ModelSummaryOut(BaseModel):
     class_name: str | None  # None until the model is labeled
     source: str | None
     confidence: float | None
+    # First rendered view, for the grid. Emitted **without** checking the blob
+    # exists: a 24-card page would otherwise cost 24 round-trips to object
+    # storage just to draw thumbnails. Signing is local, so this is free; the
+    # client falls back to a placeholder if the image 404s.
+    thumbnail: str | None
 
 
 class ModelPageOut(BaseModel):
@@ -83,6 +91,19 @@ class ModelPageOut(BaseModel):
 
 class LabelIn(BaseModel):
     class_name: str
+
+
+class ModelArtifactsOut(BaseModel):
+    uid: str
+    views: list[str]  # rendered view URLs, in view order; empty if not yet rendered
+    mesh: str | None  # normalized PLY, or None if the stage hasn't run
+
+
+# Short by design: a signed URL is readable by anyone holding it, so it should
+# outlive a page render and not much else.
+ARTIFACT_URL_TTL = timedelta(minutes=15)
+
+_ARTIFACT_MEDIA_TYPES = {".png": "image/png", ".ply": "application/octet-stream"}
 
 
 @asynccontextmanager
@@ -479,7 +500,13 @@ def _latest_labels():
     )
 
 
-def _summary(uid: str, class_name, source, confidence) -> ModelSummaryOut:
+def _thumbnail_url(storage, uid: str) -> str:
+    """URL for a model's first rendered view. No existence check — see the field."""
+    key = view_key(uid, 0)
+    return storage.signed_url(key, ARTIFACT_URL_TTL) or f"/artifacts/{key}"
+
+
+def _summary(storage, uid: str, class_name, source, confidence) -> ModelSummaryOut:
     return ModelSummaryOut(
         uid=uid,
         title=f"model {uid[:8]}",
@@ -487,6 +514,7 @@ def _summary(uid: str, class_name, source, confidence) -> ModelSummaryOut:
         class_name=class_name,
         source=source.value if source is not None else None,
         confidence=confidence,
+        thumbnail=_thumbnail_url(storage, uid),
     )
 
 
@@ -506,12 +534,13 @@ def list_models(
     if source is not None:
         query = query.where(latest.c.source == source)
 
+    storage = build_storage(get_settings())  # built once, reused for every row
     with session_scope() as session:
         total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
         rows = session.execute(
             query.order_by(Model.uid).limit(page_size).offset((page - 1) * page_size)
         ).all()
-        items = [_summary(*row) for row in rows]
+        items = [_summary(storage, *row) for row in rows]
     return ModelPageOut(items=items, total=total, page=page, page_size=page_size)
 
 
@@ -526,12 +555,63 @@ def _load_summary(uid: str) -> ModelSummaryOut:
         ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="unknown model")
-    return _summary(*row)
+    return _summary(build_storage(get_settings()), *row)
 
 
 @app.get("/models/{uid}", response_model=ModelSummaryOut, dependencies=LOGIN_REQUIRED)
 def get_model(uid: str) -> ModelSummaryOut:
     return _load_summary(uid)
+
+
+@app.get(
+    "/models/{uid}/artifacts", response_model=ModelArtifactsOut, dependencies=LOGIN_REQUIRED
+)
+def get_model_artifacts(uid: str) -> ModelArtifactsOut:
+    """URLs for a model's rendered views and its normalized mesh.
+
+    Prefers time-limited signed URLs so the browser reads object storage directly
+    — a paginated grid is 12 views per card, and proxying all of that through the
+    API would make it the bottleneck and pay egress twice. Falls back to streaming
+    via `/artifacts/{key}` when the backend can't sign (local dev).
+
+    Only artifacts that actually exist are returned: a model part-way through the
+    pipeline yields fewer views, or none, and the UI shows a placeholder rather
+    than broken images.
+    """
+    storage = build_storage(get_settings())
+
+    def resolve(key: str) -> str | None:
+        if not storage.exists(key):
+            return None
+        return storage.signed_url(key, ARTIFACT_URL_TTL) or f"/artifacts/{key}"
+
+    with session_scope() as session:
+        if session.get(Model, uid) is None:
+            raise HTTPException(status_code=404, detail="unknown model")
+
+    views = [url for url in (resolve(key) for key in view_keys(uid)) if url is not None]
+    return ModelArtifactsOut(uid=uid, views=views, mesh=resolve(normalized_key(uid)))
+
+
+@app.get("/artifacts/{key:path}", dependencies=LOGIN_REQUIRED)
+def stream_artifact(key: str) -> Response:
+    """Stream a blob through the API — the fallback when signing isn't available.
+
+    Login is required, because this is the dataset (NFR-7). Note the asymmetry
+    with signed URLs, which carry their own bearer-like grant and so are readable
+    without a session until they expire; that is the trade for not proxying every
+    image, and why the TTL is short.
+    """
+    if ".." in key:  # defence in depth — keys are ours, but this endpoint is public-facing
+        raise HTTPException(status_code=400, detail="validation_error")
+    storage = build_storage(get_settings())
+    if not storage.exists(key):
+        raise HTTPException(status_code=404, detail="unknown artifact")
+    return Response(
+        content=storage.get_bytes(key),
+        media_type=_ARTIFACT_MEDIA_TYPES.get(Path(key).suffix, "application/octet-stream"),
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @app.put("/models/{uid}/label", response_model=ModelSummaryOut)
