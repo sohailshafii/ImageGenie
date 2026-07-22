@@ -323,6 +323,43 @@ writer and reader drifts silently, as a missing image rather than an error.
   on itself. Without it the code logs a warning and falls back to streaming — the page still works,
   which is why the log line matters; it's the only signal the binding is missing.
 
+### Migrations
+
+**Alembic owns the schema** (`server/alembic/`). It replaces the skeleton's `create_all` bootstrap,
+which could add a *missing table* but never alter an existing one — so a new column simply never
+appeared, and the failure surfaced later as a query error rather than at startup.
+
+```
+make migrate                        # alembic upgrade head
+make migration MSG="add x to y"     # autogenerate from model changes
+make migration-status               # current revision + head
+```
+
+- **The URL is never in `alembic.ini`.** `env.py` reads `IMAGEGENIE_DATABASE_URL` (Secret Manager in
+  cloud) — the connection string carries the DB password. It only falls back to app config when the
+  caller hasn't supplied a URL, so tooling and tests can point at another database without silently
+  migrating the default one.
+- **`create_all` is off by default** (`IMAGEGENIE_AUTO_CREATE_SCHEMA`). The two must not both create
+  tables: if `create_all` wins, the migration that would have created that table fails as "already
+  exists" and the version table then disagrees with reality. The local Docker stack sets it true so
+  `make compose-up` needs no separate step; deployed environments leave it off.
+- **Deploys run `alembic upgrade head` as a step**, not from every instance at startup — with the
+  workers at maxScale 10–25, per-instance migration would mean a dozen racing upgrades.
+- **A drift test guards the pair** (`tests/test_migrations.py`): it builds a database from migrations
+  alone and asserts it matches `Base.metadata`. Nothing else would catch a model change shipping
+  without a migration, because the rest of the suite builds its schema with `create_all`.
+- **Enum types need explicit drops in `downgrade`.** Autogenerate omits them, and Postgres ENUMs
+  outlive the tables that use them, so a downgrade→upgrade cycle fails with "type already exists".
+  The initial revision drops all five by hand; **any future revision adding an enum must do the
+  same.**
+
+> **Adopting this on the existing Cloud SQL database.** It predates Alembic and has no
+> `alembic_version` table, so `upgrade head` would try to recreate what's already there. It also
+> predates the auth tables and the `model.title`/`tags` columns, and its exact state depends on which
+> worker image last ran `create_all`. So: inspect it (`\dt`, `\d model`), apply the delta by hand
+> once, then `alembic stamp head` to mark it current. After that migrations flow normally. **Do this
+> before deploying the API.**
+
 ### Metadata backfill
 
 `model.title` / `model.tags` hold the store metadata the labeling UI shows. The download worker

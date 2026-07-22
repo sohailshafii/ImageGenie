@@ -3,6 +3,9 @@
 # env-var config; google-cloud-pubsub for the queue; objaverse for the download
 # worker's mesh fetch + uid enumeration.
 SQLAlchemy==2.0.51
+# Schema migrations (server.md#migrations) — create_all can add a missing table
+# but never alters an existing one, so column changes need real migrations.
+alembic==1.14.0
 psycopg[binary]==3.3.4
 pydantic-settings==2.14.2
 google-cloud-pubsub==2.39.0

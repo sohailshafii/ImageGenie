@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://imagegenie:imagegenie@localhost:5432/imagegenie"
     )
+    # Let startup create the schema with create_all instead of migrations
+    # (server.md#migrations). **Local convenience only** — Alembic owns the schema,
+    # and the two must not both create tables. Deployed environments leave this
+    # off and run `alembic upgrade head` as a deploy step.
+    auto_create_schema: bool = False
+
     # Blob storage: "local" (LocalStorage over storage_root, skeleton) or "gcs"
     # (routes raw/* → raw_bucket, processed/* → processed_bucket, cloud). See
     # server.md#object-storage.

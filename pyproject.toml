@@ -21,6 +21,9 @@ testpaths = ["server/tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Alembic writes these; they're machine-generated and reformatting them by hand
+# only creates noise in the next autogenerate diff. Reviewed as SQL, not style.
+extend-exclude = ["server/alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
