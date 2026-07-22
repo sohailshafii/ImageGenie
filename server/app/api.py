@@ -701,7 +701,14 @@ def _read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _reject_unloadable_mesh(data: bytes, file_type: str) -> None:
+# `load_mesh` raises these two itself, and they describe the file in terms the
+# uploader can act on. Every *other* failure is a parser internal ("buffer size
+# must be a multiple of element size"), which is noise to an admin — so those are
+# logged and replaced with a generic explanation.
+_MESH_REASONS_WORTH_SHOWING = {"scene has no geometry", "mesh has no faces"}
+
+
+def _reject_unloadable_mesh(data: bytes, file_type: str, filename: str | None) -> None:
     """Fail an upload whose bytes aren't a usable mesh, before it reaches the queue.
 
     trimesh is imported here rather than at module scope so the API doesn't pull
@@ -717,12 +724,24 @@ def _reject_unloadable_mesh(data: bytes, file_type: str) -> None:
 
     try:
         load_mesh(data, file_type=file_type)
-    except HTTPException:
-        raise
     except Exception as error:  # noqa: BLE001 — any parse failure is a bad upload
-        raise HTTPException(
-            status_code=422, detail=f"could not read the mesh: {error}"
-        ) from error
+        reason = str(error)
+        if reason in _MESH_REASONS_WORTH_SHOWING:
+            detail = f"the file has no usable geometry ({reason})"
+        else:
+            # The real parser error is worth keeping, just not worth showing.
+            logger.warning(
+                "rejected an unreadable upload",
+                # NOT `filename` — LogRecord already defines that, and a clashing
+                # `extra` key raises KeyError inside logging itself.
+                extra={"upload_filename": filename, "file_type": file_type},
+                exc_info=True,
+            )
+            detail = (
+                f"could not read this file as {file_type.upper()} — it may be corrupt, "
+                "or saved in a different format than its extension suggests"
+            )
+        raise HTTPException(status_code=422, detail=detail) from error
 
 
 @app.post("/models/upload", response_model=ModelSummaryOut, status_code=201)
@@ -746,7 +765,7 @@ def upload_model(
 
     suffix = _validated_upload_suffix(file.filename)
     data = _read_within_limit(file, settings.upload_max_bytes)
-    _reject_unloadable_mesh(data, RAW_SUFFIX_TO_FILE_TYPE[suffix])
+    _reject_unloadable_mesh(data, RAW_SUFFIX_TO_FILE_TYPE[suffix], file.filename)
 
     uid = uuid4().hex  # same 32-hex shape as an Objaverse uid
     key = raw_key(uid, suffix)

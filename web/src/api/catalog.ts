@@ -1,4 +1,4 @@
-import { request } from './client';
+import { request, upload } from './client';
 import type {
   ClassName,
   DeadLetter,
@@ -11,11 +11,7 @@ import type {
 } from './types';
 
 // Model catalog client for the FastAPI backend (server.md#api-layer).
-//
-// The model/label calls are real. The **dead-letter calls are still mocked** —
-// the backend has no DLQ endpoints yet (`app/replay_dlq.py` is a CLI tool, not an
-// API), so DeadLettersPage would have nothing to talk to. That is the last mock
-// left in this app; see the marker below.
+// Every call here is real — no mocks remain in this app.
 
 /** Wire shape of a model summary — snake_case, with nullable label fields. */
 interface ModelSummaryResponse {
@@ -144,4 +140,22 @@ export async function listDeadLetters(): Promise<DeadLetter[]> {
  */
 export async function retryDeadLetter(id: number): Promise<void> {
   await request<void>('POST', `/dead-letters/${id}/retry`);
+}
+
+/**
+ * POST /models/upload — admin-only (FR-9). Sends the mesh and returns the model
+ * it created, already queued for preprocessing.
+ *
+ * The upload replaces the *download* stage, so the model enters the pipeline at
+ * convert and is unlabeled until a human labels it — there is no store metadata
+ * to derive a weak label from.
+ *
+ * Rejections carry the server's own explanation in `ApiError.message`
+ * (`unsupported_media_type`, `payload_too_large`, `validation_error` for an empty
+ * or unreadable file), which is worth showing verbatim: it names the offending
+ * format or the actual limit.
+ */
+export async function uploadModel(file: File): Promise<ModelSummary> {
+  const created = await upload<ModelSummaryResponse>('/models/upload', file);
+  return toModelSummary(created);
 }

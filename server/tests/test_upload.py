@@ -194,3 +194,32 @@ def test_two_uploads_of_the_same_file_are_distinct_models(
     assert first != second
     with db.session_scope() as session:
         assert session.execute(select(Model.uid)).scalars().all().count(first) == 1
+
+
+def test_corrupt_mesh_error_does_not_leak_parser_internals(
+    upload_client: TestClient, published
+) -> None:
+    """An admin can't act on 'buffer size must be a multiple of element size'.
+
+    The real parser error goes to the log; the response says what to do about it.
+    """
+    response = _upload(upload_client, "broken.glb", b"not actually a glb")
+
+    detail = response.json()["detail"]
+    assert response.status_code == 422
+    assert "could not read this file as GLB" in detail
+    assert "buffer size" not in detail
+
+
+def test_mesh_with_no_geometry_reports_the_real_reason(
+    upload_client: TestClient, published
+) -> None:
+    """'No usable geometry' is actionable, so that one is passed through."""
+    empty = trimesh.Trimesh()  # valid PLY container, zero faces
+    response = _upload(upload_client, "empty-mesh.ply", empty.export(file_type="ply"))
+    # .ply isn't an accepted upload format, so use a supported container instead.
+    assert response.status_code == 415
+
+    response = _upload(upload_client, "empty-mesh.stl", empty.export(file_type="stl"))
+    assert response.status_code == 422
+    assert "no usable geometry" in response.json()["detail"]
