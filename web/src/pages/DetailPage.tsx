@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { getModel, setLabel } from '../api/catalog';
-import { isApiError } from '../api/errors';
+import { getModel, getModelArtifacts, setLabel } from '../api/catalog';
 import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
@@ -16,6 +15,7 @@ export function DetailPage() {
   const canEdit = user?.role === 'admin';
 
   const [model, setModel] = useState<ModelSummary | null>(null);
+  const [meshUrl, setMeshUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
   const [saving, setSaving] = useState(false);
 
@@ -28,9 +28,26 @@ export function DetailPage() {
         setModel(result);
         setStatus('ready');
       })
-      .catch((caught) => {
-        if (!active) return;
-        setStatus(isApiError(caught, 'validation_error') ? 'not-found' : 'not-found');
+      .catch(() => {
+        if (active) setStatus('not-found');
+      });
+    return () => {
+      active = false;
+    };
+  }, [uid]);
+
+  // Fetched separately from the summary: the artifacts call checks each blob
+  // exists, so it's slower, and the label panel shouldn't wait on the mesh to
+  // become editable. A model with no mesh yet is normal, not an error.
+  useEffect(() => {
+    let active = true;
+    setMeshUrl(null);
+    getModelArtifacts(uid)
+      .then((artifacts) => {
+        if (active) setMeshUrl(artifacts.mesh);
+      })
+      .catch(() => {
+        if (active) setMeshUrl(null);
       });
     return () => {
       active = false;
@@ -57,7 +74,7 @@ export function DetailPage() {
 
       {status === 'ready' && model && (
         <div className="detail-layout">
-          <ModelViewer />
+          <ModelViewer src={meshUrl} />
 
           <aside className="detail-panel">
             <h1>{model.title}</h1>

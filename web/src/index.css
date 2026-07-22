@@ -676,6 +676,23 @@ select:focus {
   display: block;
 }
 
+.model-viewer-wrap {
+  position: relative;
+}
+
+/* Overlays the canvas rather than displacing it, so the panel doesn't reflow
+   when the mesh finishes loading. */
+.model-viewer-status {
+  position: absolute;
+  inset: auto 0 0 0;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+  pointer-events: none; /* never block an orbit drag */
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
