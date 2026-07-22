@@ -89,6 +89,24 @@ def test_filters(client: TestClient) -> None:
     assert [item["uid"] for item in cars["items"]] == ["m2"]
 
 
+def test_serves_store_metadata_when_present(client: TestClient) -> None:
+    with db.session_scope() as session:
+        model = session.get(Model, "m1")
+        model.title = "Vintage Wooden Chair"
+        model.tags = ["furniture", "wood"]
+
+    body = client.get("/models/m1").json()
+    assert body["title"] == "Vintage Wooden Chair"
+    assert body["tags"] == ["furniture", "wood"]
+
+
+def test_falls_back_to_the_uid_before_the_metadata_backfill(client: TestClient) -> None:
+    """A dull caption beats none — models are ingested long before metadata."""
+    body = client.get("/models/m2").json()
+    assert body["title"] == "model m2"
+    assert body["tags"] == []
+
+
 def test_get_one_and_404(client: TestClient) -> None:
     assert client.get("/models/m2").json()["class_name"] == "car"
     assert client.get("/models/nope").status_code == 404

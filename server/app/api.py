@@ -506,16 +506,22 @@ def _thumbnail_url(storage, uid: str) -> str:
     return storage.signed_url(key, ARTIFACT_URL_TTL) or f"/artifacts/{key}"
 
 
-def _summary(storage, uid: str, class_name, source, confidence) -> ModelSummaryOut:
+def _summary(storage, uid, title, tags, class_name, source, confidence) -> ModelSummaryOut:
     return ModelSummaryOut(
         uid=uid,
-        title=f"model {uid[:8]}",
-        tags=[],
+        # Falls back to the uid until `app.backfill_metadata` has run — a card
+        # with no caption at all would be worse than a dull one.
+        title=title or f"model {uid[:8]}",
+        tags=tags or [],
         class_name=class_name,
         source=source.value if source is not None else None,
         confidence=confidence,
         thumbnail=_thumbnail_url(storage, uid),
     )
+
+
+# Selected by both the list and detail queries, so the two can't drift apart.
+_SUMMARY_COLUMNS = (Model.uid, Model.title, Model.tags)
 
 
 @app.get("/models", response_model=ModelPageOut, dependencies=LOGIN_REQUIRED)
@@ -527,7 +533,7 @@ def list_models(
 ) -> ModelPageOut:
     latest = _latest_labels()
     query = select(
-        Model.uid, latest.c.class_name, latest.c.source, latest.c.confidence
+        *_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence
     ).outerjoin(latest, Model.uid == latest.c.model_uid)
     if class_name is not None:
         query = query.where(latest.c.class_name == class_name)
@@ -549,7 +555,7 @@ def _load_summary(uid: str) -> ModelSummaryOut:
     latest = _latest_labels()
     with session_scope() as session:
         row = session.execute(
-            select(Model.uid, latest.c.class_name, latest.c.source, latest.c.confidence)
+            select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
             .outerjoin(latest, Model.uid == latest.c.model_uid)
             .where(Model.uid == uid)
         ).first()

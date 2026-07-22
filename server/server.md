@@ -323,6 +323,37 @@ writer and reader drifts silently, as a missing image rather than an error.
   on itself. Without it the code logs a warning and falls back to streaming — the page still works,
   which is why the log line matters; it's the only signal the binding is missing.
 
+### Metadata backfill
+
+`model.title` / `model.tags` hold the store metadata the labeling UI shows. The download worker
+stores the mesh but not the annotations, so `server/app/backfill_metadata.py`
+(`make backfill-metadata`, `LIMIT=N` / `DRYRUN=1`) fills them in afterwards.
+
+- **Why it matters:** without it a card's only caption is its uid. Titles are frequently what settles
+  the ambiguous classes — `figure` vs `animal` is the weakest at 0.62 precision
+  ([ml.md](../ml/ml.md#weak-label-policy)), and the title usually decides it.
+- **Categories are folded in with tags.** Both are free-text descriptors that help a labeler; the
+  distinction only matters to the weak-labeling rules, which read the annotations directly.
+- **Idempotent (NFR-2)** — only rows with no title are fetched, so a rerun after a partial pass
+  resumes. Models with no usable annotation are counted, not failed: one bad row must not abort a
+  30k-row run.
+- **Batch tool, never on-demand.** `objaverse.load_annotations` downloads whichever of the ~160
+  shard files contain the requested uids, and our uids are spread across all of them — the first run
+  pulls most of the shard set (hundreds of MB, cached afterwards). The API must never do this.
+- The API falls back to `model <uid[:8]>` until the backfill runs, so a dull caption rather than none.
+
+> ⚠️ **This adds columns to an existing table, and there is no migration tool.** `init_db` uses
+> `create_all`, which creates *missing tables* but never alters existing ones — so new tables (like
+> `invite`) appear automatically while new **columns** do not. A database created before this change
+> needs the columns added by hand:
+>
+> ```sql
+> ALTER TABLE model ADD COLUMN title TEXT, ADD COLUMN tags TEXT[];
+> ```
+>
+> (Adding nullable columns is instant in Postgres — no table rewrite.) This is the project's second
+> schema change against a live DB; **adopting Alembic is overdue** before a third lands.
+
 ### Weak-label backfill
 
 Weak labeling (FR-3) writes `data/exploration/weak_labels.csv`, but the labeling UI reads the DB —
