@@ -1,7 +1,7 @@
 """Convert worker (FR-2) — preprocessing stage 1 of 3.
 
-Reads a model's raw mesh (GLB) from storage, flattens it to a single geometry,
-and re-exports it in the pipeline's canonical **PLY** format under
+Reads a model's raw mesh from storage, flattens it to a single geometry, and
+re-exports it in the pipeline's canonical **PLY** format under
 ``processed/converted/<uid>.ply``. Records an ``artifact`` row and hands the model
 to the normalize stage.
 
@@ -16,11 +16,11 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from ..artifact_keys import converted_key, raw_key
+from ..artifact_keys import converted_key, file_type_for_raw_key, raw_key
 from ..config import get_settings
 from ..consumer import run_stage
 from ..db import session_scope
-from ..models import ArtifactStage
+from ..models import ArtifactStage, Model
 from ..queue import publish_next
 from ..storage import build_storage
 from .artifacts import artifact_done, record_artifact
@@ -39,12 +39,19 @@ def process(job: dict) -> str:
 
     with session_scope() as session:
         already_done = artifact_done(session, uid, STAGE, storage, output_key)
+        # The source format isn't fixed: ingestion writes GLB, but an admin upload
+        # may be STL or OBJ, so the stored key is what says which. Falling back to
+        # the default keeps rows written before uploads existed working unchanged.
+        model = session.get(Model, uid)
+        source_key = (model.raw_key if model else None) or raw_key(uid)
 
     if already_done:
         logger.info("skip already-converted", extra={"uid": uid, "stage": STAGE.value})
         result = "skipped"
     else:
-        mesh = load_mesh(storage.get_bytes(raw_key(uid)), file_type="glb")
+        mesh = load_mesh(
+            storage.get_bytes(source_key), file_type=file_type_for_raw_key(source_key)
+        )
         ply_bytes = export_ply(mesh)
         content_hash = hashlib.sha256(ply_bytes).hexdigest()
         storage.put_bytes(output_key, ply_bytes)

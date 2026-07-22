@@ -21,6 +21,7 @@ from pathlib import Path
 import objaverse
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from ..artifact_keys import raw_key as build_raw_key
 from ..config import get_settings
 from ..consumer import run_stage
 from ..db import session_scope
@@ -38,10 +39,6 @@ STAGE = "download"
 # failures (missing object, OOM) still exhaust attempts and dead-letter.
 _MAX_FETCH_ATTEMPTS = 4
 _BASE_BACKOFF_SECONDS = 2.0
-
-
-def _raw_key(uid: str) -> str:
-    return f"raw/{uid}.glb"
 
 
 def _fetch_mesh(uid: str) -> bytes:
@@ -73,7 +70,7 @@ def process(job: dict) -> str:
     uid = job["uid"]
     settings = get_settings()
     storage = build_storage(settings)
-    raw_key = _raw_key(uid)
+    raw_key = build_raw_key(uid)
 
     # Idempotency check: skip if the DB says downloaded and the blob is present.
     with session_scope() as session:

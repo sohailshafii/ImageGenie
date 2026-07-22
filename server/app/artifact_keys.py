@@ -23,12 +23,40 @@ NORMALIZED_PREFIX = "processed/normalized/"
 RENDERS_PREFIX = "processed/renders/"
 
 MESH_SUFFIX = ".ply"
-RAW_SUFFIX = ".glb"
+
+# Source-mesh formats the pipeline accepts, mapped to the `file_type` trimesh
+# loads them as. Ingestion (Objaverse) only ever produces GLB; the others exist
+# for admin upload (web.md#data-upload).
+#
+# **FBX is deliberately absent** — trimesh has no FBX loader, so it is rejected at
+# upload with a clear error rather than failing deep in the convert stage. Adding
+# it later means an assimp package in the worker image and an entry here; nothing
+# else in the pipeline assumes a format (server.md#data-upload).
+RAW_SUFFIX_TO_FILE_TYPE = {
+    ".glb": "glb",
+    ".stl": "stl",
+    ".obj": "obj",
+}
+# What the download worker writes. Objaverse serves GLB.
+DEFAULT_RAW_SUFFIX = ".glb"
 
 
-def raw_key(uid: str) -> str:
-    """The downloaded source mesh."""
-    return f"{RAW_PREFIX}{uid}{RAW_SUFFIX}"
+def raw_key(uid: str, suffix: str = DEFAULT_RAW_SUFFIX) -> str:
+    """The source mesh. `suffix` carries the format, since it is not always GLB."""
+    return f"{RAW_PREFIX}{uid}{suffix}"
+
+
+def file_type_for_raw_key(key: str) -> str:
+    """The trimesh `file_type` for a raw key, from its extension.
+
+    Raises ``ValueError`` for anything unsupported: a stage that cannot tell what
+    it is holding should fail loudly rather than guess a format and mangle the
+    mesh.
+    """
+    for suffix, file_type in RAW_SUFFIX_TO_FILE_TYPE.items():
+        if key.endswith(suffix):
+            return file_type
+    raise ValueError(f"no supported mesh format for raw key {key!r}")
 
 
 def converted_key(uid: str) -> str:
@@ -68,11 +96,11 @@ def uid_from_key(key: str) -> str | None:
     Unrecognised keys return None rather than raising — a listing may legitimately
     contain stray objects, and the reconciler reports them instead of failing.
     """
-    for prefix, suffix in (
-        (RAW_PREFIX, RAW_SUFFIX),
-        (CONVERTED_PREFIX, MESH_SUFFIX),
-        (NORMALIZED_PREFIX, MESH_SUFFIX),
-    ):
+    candidate_suffixes = (
+        [(RAW_PREFIX, suffix) for suffix in RAW_SUFFIX_TO_FILE_TYPE]
+        + [(CONVERTED_PREFIX, MESH_SUFFIX), (NORMALIZED_PREFIX, MESH_SUFFIX)]
+    )
+    for prefix, suffix in candidate_suffixes:
         if key.startswith(prefix) and key.endswith(suffix):
             uid = key[len(prefix) : -len(suffix)]
             # A uid is one path segment: `raw/a/b.glb` is not a raw mesh key.
