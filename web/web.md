@@ -21,7 +21,19 @@ Two views, and labels can be corrected in **either** one (resolves the labeling-
 - Filter/sort by class, label source (weak vs. manual), and confidence.
 
 ### Detail view
-- A single model, full three.js interactive viewer.
+- A single model, full three.js interactive viewer. It loads the pipeline's **normalized PLY**
+  (`PLYLoader`) from [the artifacts endpoint](../server/server.md#serving-artifacts) — one download
+  per model opened, after which orbiting is entirely client-side. Because the normalize stage already
+  centers the mesh and scales its largest extent to 1, the camera framing is fixed and needs no
+  per-model fitting. Pipeline PLYs carry no normals, so the viewer computes them; without that the
+  mesh renders flat and unreadable.
+- The mesh is fetched **separately from the model summary**, so the label panel is usable
+  immediately rather than waiting on geometry. A model with no mesh yet shows "No 3D mesh for this
+  model yet" — normal for anything the pipeline hasn't normalized, not an error.
+- **Dev needs its own proxy entry for `/artifacts`.** Artifact URLs arrive from the server as
+  absolute paths and are used raw (in `<img src>` and the loader), so they never pass through the
+  client's `/api` prefix. Production serves the SPA and API on one host, where this resolves
+  naturally; `vite.config.ts` reproduces that locally.
 - Candidate label with confidence; confirm/correct here too.
 - Neighboring metadata (store tags/title) shown to aid the labeling decision.
 

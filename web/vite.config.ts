@@ -16,6 +16,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // Artifact URLs come *from the server* as absolute paths (`/artifacts/...`)
+      // and are used raw in <img src> and by the mesh loader, so they never pass
+      // through the client's `/api` prefix. In production the SPA and API share
+      // one host and this resolves naturally; in dev it needs its own proxy
+      // entry, with no rewrite — the path is already what the API expects.
+      '/artifacts': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
 });

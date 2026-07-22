@@ -1,19 +1,34 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 
 // The single reusable three.js viewer (web.md): an interactive, orbit-controlled
-// 3D view. It renders a neutral placeholder mesh until the backend serves real
-// GLBs (then this swaps for a GLTFLoader on `src`). Everything created here —
-// renderer, geometry, material, controls, the animation frame, the resize
-// listener — is disposed on unmount so remounting the viewer doesn't leak GPU
-// memory (web.md: "Dispose of GPU resources on unmount").
-export function ModelViewer() {
+// 3D view of a model's normalized mesh.
+//
+// The mesh is the pipeline's normalized PLY (server.md#serving-artifacts) — it is
+// already centered on the origin and scaled so its largest extent is 1, so the
+// camera framing below is fixed and needs no per-model fitting. That is the
+// normalize stage paying off in the UI.
+//
+// One download per model opened, not per view: once the geometry is loaded,
+// orbiting is entirely client-side.
+//
+// Everything created here — renderer, geometry, material, controls, the
+// animation frame, the resize listener — is disposed on unmount so remounting
+// doesn't leak GPU memory (web.md: "Dispose of GPU resources on unmount").
+
+type ViewerStatus = 'loading' | 'ready' | 'unavailable';
+
+export function ModelViewer({ src }: { src?: string | null }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<ViewerStatus>(src ? 'loading' : 'unavailable');
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+
+    setStatus(src ? 'loading' : 'unavailable');
 
     let width = mount.clientWidth;
     let height = mount.clientHeight;
@@ -36,16 +51,43 @@ export function ModelViewer() {
     keyLight.position.set(3, 4, 2);
     scene.add(keyLight);
 
-    // Placeholder geometry — mid-grey flat-shaded, echoing the pipeline's renders.
-    const geometry = new THREE.IcosahedronGeometry(1, 0);
+    // Matches the offscreen renders' material so the viewer and the thumbnails
+    // read as the same object (server/app/workers/render.py).
     const material = new THREE.MeshStandardMaterial({
       color: 0xb4b4bf,
       roughness: 0.75,
       metalness: 0.0,
-      flatShading: true,
     });
-    const mesh = new THREE.Mesh(geometry, material);
-    scene.add(mesh);
+
+    // Tracked so the cleanup below can dispose whatever actually got created —
+    // a load that resolves after unmount must not leave GPU memory behind.
+    let geometry: THREE.BufferGeometry | null = null;
+    let mesh: THREE.Mesh | null = null;
+    let disposed = false;
+
+    if (src) {
+      new PLYLoader().load(
+        src,
+        (loaded) => {
+          if (disposed) {
+            loaded.dispose(); // arrived too late to be shown; don't leak it
+            return;
+          }
+          // Pipeline PLYs carry no normals, so lighting would be flat without
+          // this — computing them is what makes the shape legible.
+          loaded.computeVertexNormals();
+          geometry = loaded;
+          mesh = new THREE.Mesh(loaded, material);
+          scene.add(mesh);
+          setStatus('ready');
+        },
+        undefined,
+        () => {
+          // Expected for a model the pipeline hasn't normalized yet.
+          if (!disposed) setStatus('unavailable');
+        },
+      );
+    }
 
     let frameId = 0;
     const animate = () => {
@@ -65,17 +107,28 @@ export function ModelViewer() {
     window.addEventListener('resize', onResize);
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(frameId);
       window.removeEventListener('resize', onResize);
       controls.dispose();
-      geometry.dispose();
+      if (mesh) scene.remove(mesh);
+      geometry?.dispose();
       material.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [src]);
 
-  return <div ref={mountRef} className="model-viewer" />;
+  return (
+    <div className="model-viewer-wrap">
+      <div ref={mountRef} className="model-viewer" />
+      {status !== 'ready' && (
+        <p className="model-viewer-status" role="status">
+          {status === 'loading' ? 'Loading mesh…' : 'No 3D mesh for this model yet'}
+        </p>
+      )}
+    </div>
+  );
 }
