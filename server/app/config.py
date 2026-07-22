@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     raw_bucket: str = "imagegenie-pipeline-raw"
     processed_bucket: str = "imagegenie-pipeline-processed"
 
+    # Largest admin upload accepted (FR-9, server.md#data-upload). 32 MiB is Cloud
+    # Run's own request-body ceiling, so a larger value here would be rejected by
+    # the platform before the app ever saw it — better to fail with our own clear
+    # error than the platform's.
+    upload_max_bytes: int = 32 * 1024 * 1024
+
     # Auth cookies (server.md#api-layer). `Secure` is off by default so local dev
     # over plain http works; every deployed environment must set
     # IMAGEGENIE_COOKIE_SECURE=true so the session cookie never crosses the wire

@@ -440,6 +440,44 @@ make migration-status               # current revision + head
 > table above has its blobs behind it. (Raw carries 20 objects with no row, most likely the pilot
 > models from before the table was populated; harmless either way.)
 
+### Data upload
+
+`POST /models/upload` (admin-only, FR-9) takes a mesh as `multipart/form-data` and enqueues it.
+**The upload stands in for the download stage** — the file *is* the raw mesh — so it lands at
+`raw/<uid>.<ext>` and goes straight to the convert topic. After that it is an ordinary model: the
+remaining stages, the labeling UI, and the reconciler can't distinguish it from an ingested one.
+
+**Transport: a plain POST through the API**, not a signed resumable upload URL straight to GCS. The
+signed-URL route would lift the size ceiling and spare the API the bandwidth, but it depends on the
+same signing path that is [currently broken on Cloud Run](#deploying-the-api-to-cloud-run), and it
+needs a confirm-then-enqueue round trip to avoid orphaned blobs. A direct POST needs no new IAM and
+is bounded anyway by Cloud Run's own 32 MiB request-body ceiling, which `upload_max_bytes` mirrors so
+the caller gets our error rather than the platform's.
+
+**Everything unusable is rejected at the door**, because the alternative is a dead-letter minutes
+later with nothing tying it back to the admin who uploaded it:
+
+| Condition | Status |
+|---|---|
+| Extension not in `RAW_SUFFIX_TO_FILE_TYPE` (notably `.fbx`) | `415` |
+| Body over `upload_max_bytes` | `413` |
+| Empty file | `400` |
+| Bytes that trimesh can't load, or a mesh with no faces | `422` |
+
+The mesh parse is the one deliberate cost: it runs `load_mesh` in the request path, with trimesh
+imported inside the handler so the API doesn't pull the mesh stack in at startup. Justified because
+the route is admin-only and rate-limited, and a corrupt file accepted with `201` would otherwise fail
+invisibly three stages downstream.
+
+**Uids are generated (`uuid4().hex`), not derived from content.** Re-uploading the same mesh
+therefore creates a second model. Content-addressing would deduplicate, but it would also make two
+admins uploading the same file collide on a single row and silently share its labels. The
+`title` is taken from the uploaded filename — the uid is random hex, so it is the only
+human-readable handle the labeling UI would otherwise have.
+
+Uploaded models carry **no weak label**, since weak labels come from store metadata that an upload
+has none of. They appear in the browse grid as unlabeled and are labeled by hand.
+
 ### Rebuilding the tables from storage
 
 Object storage is the durable record; `model` and `artifact` are an index over it. Every key carries

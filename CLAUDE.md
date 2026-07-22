@@ -30,7 +30,7 @@ redistributed (respects model-store licensing). Users run the pipeline themselve
 
 ## Functional Requirements
 
-- **FR-1 Ingestion** — download 3D models (STL/OBJ/GLB/FBX) from a free model store via its
+- **FR-1 Ingestion** — download 3D models (STL/OBJ/GLB) from a free model store via its
   official API, with polite rate limiting and no scraping.
 - **FR-2 Preprocessing** — convert → normalize → render each model to multi-view images (v1)
   or point clouds (stretch), storing outputs plus metadata.
@@ -46,7 +46,9 @@ redistributed (respects model-store licensing). Users run the pipeline themselve
 - **FR-8 Auth & roles** — login required. **Normal users** can view; **admins** can view and
   correct annotations. See [web/web.md](web/web.md#auth--roles).
 - **FR-9 Data upload** — admins can upload additional models into the pipeline. See
-  [web/web.md](web/web.md#data-upload).
+  [web/web.md](web/web.md#data-upload). **FBX is not supported** — trimesh has no loader for it,
+  so it is rejected at upload rather than failing deep in the pipeline; rationale and the cost of
+  adding it are in [server/server.md](server/server.md#object-storage).
 
 ## Non-Functional Requirements
 
@@ -77,7 +79,7 @@ Queue + workers pattern (embarrassingly parallel preprocessing):
 ```
 [Model store API] → download workers → object storage (raw)
                          ↓ (queue)
-                  conversion workers  (STL/OBJ/GLB/FBX → common format)
+                  conversion workers  (STL/OBJ/GLB → common format)
                          ↓ (queue)
                   normalize workers   (center, rescale, validate)
                          ↓ (queue)
