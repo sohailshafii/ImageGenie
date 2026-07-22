@@ -467,7 +467,10 @@ later with nothing tying it back to the admin who uploaded it:
 The mesh parse is the one deliberate cost: it runs `load_mesh` in the request path, with trimesh
 imported inside the handler so the API doesn't pull the mesh stack in at startup. Justified because
 the route is admin-only and rate-limited, and a corrupt file accepted with `201` would otherwise fail
-invisibly three stages downstream.
+invisibly three stages downstream. Its error is sanitized before it reaches the client: `load_mesh`'s
+own "no geometry" / "no faces" messages describe the file and are passed through, but a raw parser
+internal (`"buffer size must be a multiple of element size"`) is logged and replaced with a generic
+"could not read this file as GLB" — an admin can act on the latter, not the former.
 
 **Uids are generated (`uuid4().hex`), not derived from content.** Re-uploading the same mesh
 therefore creates a second model. Content-addressing would deduplicate, but it would also make two

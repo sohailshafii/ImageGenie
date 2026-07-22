@@ -4,6 +4,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { BrowsePage } from './pages/BrowsePage';
 import { DeadLettersPage } from './pages/DeadLettersPage';
 import { InvitePage } from './pages/InvitePage';
+import { UploadPage } from './pages/UploadPage';
 
 // Code-split the detail view: it pulls in three.js (~600 KB), which no other
 // route needs, so it downloads only when a model is opened.
@@ -48,6 +49,14 @@ export default function App() {
         element={
           <ProtectedRoute requireAdmin>
             <InvitePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/upload"
+        element={
+          <ProtectedRoute requireAdmin>
+            <UploadPage />
           </ProtectedRoute>
         }
       />

@@ -94,7 +94,14 @@ Resolves the login TODO.
   - The **CSRF header** (`X-CSRF-Token`) on any method outside `GET`/`HEAD`/`OPTIONS`, copied from
     the readable `imagegenie_csrf` cookie (see [server.md](../server/server.md#csrf)).
   - Mapping a non-2xx body to a typed `ApiError` code, falling back to the status when the body
-    isn't a code it recognizes — so an unexpected response can never surface as a bogus code.
+    isn't a code it recognizes — so an unexpected response can never surface as a bogus code. The
+    server's human-readable `detail` is kept as the error *message* even for status-mapped codes,
+    because some rejections (an unsupported upload format, an over-limit file) explain themselves
+    better than any string the client could hardcode — the code still drives branching, only the
+    display text comes from the server.
+  - A separate `upload()` for `multipart/form-data`: it sends a `FormData` body and, unlike the JSON
+    path, must **not** set `Content-Type` (the browser adds the multipart boundary itself). Same
+    credentials, same CSRF header, same typed errors — only the body encoding differs.
 - **Same-origin is a requirement, not a convenience.** The dev server proxies `/api` to the backend
   (`vite.config.ts`) specifically so the browser sees one origin: the cookies are `SameSite=Lax` and
   the CSRF defense rests on the same-origin policy, so a cross-origin setup would need CORS and would

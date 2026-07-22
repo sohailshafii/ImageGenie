@@ -48,6 +48,8 @@ const STATUS_CODES: Record<number, ApiErrorCode> = {
   401: 'unauthorized',
   403: 'forbidden',
   409: 'email_taken',
+  413: 'payload_too_large', // upload over the server's cap
+  415: 'unsupported_media_type', // upload of a format the pipeline can't ingest
   422: 'validation_error', // FastAPI request-validation failures
   429: 'rate_limited',
 };
@@ -64,7 +66,12 @@ async function toApiError(response: Response): Promise<ApiError> {
     return new ApiError(detail as ApiErrorCode, detail);
   }
   const code = STATUS_CODES[response.status] ?? 'server_error';
-  return new ApiError(code, `HTTP ${response.status}`);
+  // Keep a human-readable `detail` as the message even when it isn't a known
+  // code. Upload rejections explain *why* ("unsupported format '.fbx' — upload
+  // one of: ...") and that sentence is far more useful to show than the code.
+  // The code still drives branching; only the display text comes from the server.
+  const message = typeof detail === 'string' && detail ? detail : `HTTP ${response.status}`;
+  return new ApiError(code, message);
 }
 
 /**
@@ -99,5 +106,38 @@ export async function request<T>(method: string, path: string, body?: unknown): 
 
   if (!response.ok) throw await toApiError(response);
   if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+/**
+ * POST a file as `multipart/form-data`.
+ *
+ * Separate from `request` because the two disagree on one detail: `request`
+ * serializes to JSON and sets `Content-Type`, whereas multipart's header carries
+ * a generated boundary, so it must be left for the browser to set. Setting it by
+ * hand produces a body the server cannot parse. Everything else — credentials,
+ * the CSRF header, typed errors — is deliberately identical.
+ */
+export async function upload<T>(path: string, file: File, field = 'file'): Promise<T> {
+  const headers: Record<string, string> = {};
+  const csrf = readCookie(CSRF_COOKIE);
+  if (csrf) headers[CSRF_HEADER] = csrf;
+
+  const form = new FormData();
+  form.append(field, file);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers,
+      credentials: 'same-origin',
+      body: form,
+    });
+  } catch {
+    throw new ApiError('network_error', 'Could not reach the server');
+  }
+
+  if (!response.ok) throw await toApiError(response);
   return (await response.json()) as T;
 }

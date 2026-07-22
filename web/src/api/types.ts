@@ -22,6 +22,8 @@ export type ApiErrorCode =
   | 'expired_token'
   | 'rate_limited'
   | 'validation_error'
+  | 'unsupported_media_type' // upload: a format the pipeline can't ingest
+  | 'payload_too_large' // upload: over the server's size cap
   | 'unauthorized' // no valid session
   | 'forbidden' // authenticated but lacking the role (e.g. non-admin inviting)
   | 'csrf_failure' // missing/mismatched CSRF token (server.md#csrf)
