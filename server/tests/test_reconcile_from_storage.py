@@ -221,3 +221,23 @@ def test_model_row_is_created_for_processed_output_with_no_raw_mesh(
         model = session.get(Model, "uid-raw-deleted")
         assert model.download_status == DownloadStatus.pending
         assert model.raw_key is None
+
+
+def test_reconcile_preserves_a_soft_delete(clean_db, storage) -> None:
+    """A soft-deleted model must not be resurrected by a rebuild from storage.
+
+    The blobs still exist, so the reconciler sees the model — but `deleted_at`
+    lives only in the DB, and the upsert writes only storage-authoritative
+    columns, so the deletion has to survive. Without that, deleting a model and
+    then reconciling would silently bring it back.
+    """
+    from datetime import UTC, datetime
+
+    reconcile(storage, dry_run=False)
+    with db.session_scope() as session:
+        session.get(Model, FULLY_PROCESSED).deleted_at = datetime.now(UTC)
+
+    reconcile(storage, dry_run=False)
+
+    with db.session_scope() as session:
+        assert session.get(Model, FULLY_PROCESSED).deleted_at is not None

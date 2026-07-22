@@ -481,6 +481,25 @@ human-readable handle the labeling UI would otherwise have.
 Uploaded models carry **no weak label**, since weak labels come from store metadata that an upload
 has none of. They appear in the browse grid as unlabeled and are labeled by hand.
 
+### Soft delete
+
+Admins can delete a model (FR-9), but a delete is **soft**: it sets `model.deleted_at` and drops
+neither the rows nor the blobs. A deleted model vanishes from every route a labeler uses —
+`GET /models`, `GET /models/{uid}`, its artifacts, and label writes all treat it as a 404 — while a
+separate Deleted view opts *into* deleted rows so an admin can restore one.
+
+Soft, not hard, for two reasons. A mistaken delete should be recoverable rather than vaporize
+ingestion spend; and it composes with the reconciler. **A hard delete that dropped only the DB rows
+would be undone by the next `reconcile-storage`**, which rebuilds any model whose blobs exist — so a
+true purge would have to delete the blobs too, the irreversible operation. `deleted_at` lives only in
+the DB and the reconciler's upsert writes only storage-authoritative columns, so a soft delete
+correctly survives a rebuild (tested in `test_reconcile_from_storage.py`). Reclaiming storage — the
+cost guardrail's "delete raw files for excluded models" — is a separate, deliberate step, not wired
+to this button.
+
+`_require_live_model` is the single existence check the write and artifact routes share, so a route
+can't act on a deleted model by checking only for existence.
+
 ### Rebuilding the tables from storage
 
 Object storage is the durable record; `model` and `artifact` are an index over it. Every key carries

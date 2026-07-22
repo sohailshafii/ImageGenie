@@ -612,9 +612,11 @@ def list_models(
     sort: ModelSort = ModelSort.uid,
 ) -> ModelPageOut:
     latest = _latest_labels()
-    query = select(
-        *_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence
-    ).outerjoin(latest, Model.uid == latest.c.model_uid)
+    query = (
+        select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
+        .outerjoin(latest, Model.uid == latest.c.model_uid)
+        .where(Model.deleted_at.is_(None))  # soft-deleted models are hidden here
+    )
     if class_name is not None:
         query = query.where(latest.c.class_name == class_name)
     if source is not None:
@@ -643,14 +645,32 @@ def list_models(
     return ModelPageOut(items=items, total=total, page=page, page_size=page_size)
 
 
+def _require_live_model(session: Session, uid: str) -> Model:
+    """Return the model, or 404 if it doesn't exist or has been soft-deleted.
+
+    The existence check every write/artifact route needs. Folding the deleted
+    check in here means a route can't accidentally act on a deleted model by
+    checking only for existence.
+    """
+    model = session.get(Model, uid)
+    if model is None or model.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="unknown model")
+    return model
+
+
 def _load_summary(uid: str) -> ModelSummaryOut:
-    """Read one model's current label, or 404. Shared by the GET and PUT routes."""
+    """Read one live model's current label, or 404. Shared by the GET/PUT routes.
+
+    A soft-deleted model reads as 404 here — the same as a nonexistent one, since
+    from a labeler's point of view it is gone. The Deleted view uses a separate
+    query that opts *into* deleted rows.
+    """
     latest = _latest_labels()
     with session_scope() as session:
         row = session.execute(
             select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
             .outerjoin(latest, Model.uid == latest.c.model_uid)
-            .where(Model.uid == uid)
+            .where(Model.uid == uid, Model.deleted_at.is_(None))
         ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="unknown model")
@@ -814,8 +834,7 @@ def get_model_artifacts(uid: str) -> ModelArtifactsOut:
         return storage.signed_url(key, ARTIFACT_URL_TTL) or f"/artifacts/{key}"
 
     with session_scope() as session:
-        if session.get(Model, uid) is None:
-            raise HTTPException(status_code=404, detail="unknown model")
+        _require_live_model(session, uid)
 
     views = [url for url in (resolve(key) for key in view_keys(uid)) if url is not None]
     return ModelArtifactsOut(uid=uid, views=views, mesh=resolve(normalized_key(uid)))
@@ -852,8 +871,7 @@ def set_label(uid: str, body: LabelIn, admin: AdminUser) -> ModelSummaryOut:
     if not label_limiter.check(write_key, LABEL_WRITE_PER_USER):
         raise _too_many_requests(label_limiter.retry_after(write_key))
     with session_scope() as session:
-        if session.get(Model, uid) is None:
-            raise HTTPException(status_code=404, detail="unknown model")
+        _require_live_model(session, uid)
         session.add(
             Label(
                 model_uid=uid,
