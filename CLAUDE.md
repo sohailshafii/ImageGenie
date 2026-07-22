@@ -109,7 +109,15 @@ Component detail and coding standards live in the domain docs:
 3. **Cloud deployment** — workers on Cloud Run/Fargate, object storage, billing alerts
 4. **Full ingestion** — 20–50k models downloaded and preprocessed
 5. **Labeling frontend** — three.js viewer + label confirm/correct UI over weak labels
-6. **Baseline training** — multi-view CNN on weak labels, spot GPU
+6. **Baseline training** — multi-view CNN on weak labels, spot GPU. **Keep the training code
+   simple and let it grow.** The heavy lifting in this project is the pipeline, DB, and app; the
+   training script should start as a plain loop with a handful of hyperparameters in config
+   (see [ml/ml.md](ml/ml.md#training)) and gain complexity only when a result demands it — not
+   in anticipation. The one part that is *not* optional is NFR-4's bookkeeping: record the config,
+   the data snapshot/version, and the metrics for every run. That is bookkeeping, not machinery,
+   and it is what makes "did that change actually help?" answerable at all — without it, runs
+   aren't comparable and the milestone-8 iteration loop has nothing to stand on. Everything
+   beyond it is negotiable.
 7. **Evaluation** — both dev sets, confusion matrices, bias writeup
 8. **Iterate** — active learning loop (hand-label low-confidence examples, retrain)
 9. **(Stretch / v2)** PointNet++ comparison; inference demo endpoint
