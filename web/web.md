@@ -18,7 +18,26 @@ Two views, and labels can be corrected in **either** one (resolves the labeling-
 ### Browse view
 - All items visible, **paginated**. Thumbnail grid (rendered multi-view preview per model).
 - Inline label confirm/correct without leaving the page — for fast sweeps over many models.
-- Filter/sort by class, label source (weak vs. manual), and confidence.
+- Filter by class and label source; **sort by least confidence** — the review queue, and the order
+  the active-learning loop wants. Models with no confidence (manual, or unlabeled) sort last.
+  `uid` always tie-breaks, because confidence is currently a *per-class* value so thousands of models
+  share one number; ordering on it alone would let paging repeat and skip rows.
+
+**Keyboard sweep.** Tab lands on the grid, then `←/→/↑/↓` (or `j`/`k`) move, `Enter` confirms and
+advances, and `c` hands focus to the class dropdown. Design notes:
+
+- **`Enter` is confirm** because it is the overwhelmingly common action — weak-label precision is
+  ~0.9, so most cards just need agreeing with. Confirm-and-advance is the whole sweep.
+- **No per-class hotkeys.** Twelve classes don't fit the digit row, and their initials collide
+  (animal/aircraft, food/figure, car/chair), so any mapping would have to be memorized. Instead `c`
+  focuses the native `<select>`, whose built-in type-ahead already picks a class by typing — a
+  behaviour users know from every other dropdown.
+- **The grid ignores keys once a control has focus**, so the dropdown keeps its native arrow and
+  type-ahead handling instead of fighting the sweep.
+- **Roving tabindex** (only the active card is `tabIndex=0`): Tab enters the grid once and returns
+  where the user left off, rather than stepping through all 24 cards.
+- Row jumps **measure the column count from layout** rather than assuming it — the grid is
+  responsive CSS, so the number of columns changes with the viewport.
 
 ### Detail view
 - A single model, full three.js interactive viewer. It loads the pipeline's **normalized PLY**
