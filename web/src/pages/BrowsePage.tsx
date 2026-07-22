@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { listModels, setLabel } from '../api/catalog';
 import {
   CLASS_NAMES,
@@ -26,6 +26,8 @@ export function BrowsePage() {
   const [data, setData] = useState<ModelPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingUid, setSavingUid] = useState<string | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const cardRefs = useRef<(HTMLElement | null)[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -38,7 +40,11 @@ export function BrowsePage() {
       sort,
     })
       .then((result) => {
-        if (active) setData(result);
+        if (!active) return;
+        setData(result);
+        // A new page of models means the old index points at a different card.
+        cardRefs.current = [];
+        setFocusedIndex(0);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -59,6 +65,77 @@ export function BrowsePage() {
       );
     } finally {
       setSavingUid(null);
+    }
+  }
+
+  /** Move keyboard focus to a card, clamped to the page. */
+  function focusCard(index: number) {
+    const items = data?.items ?? [];
+    const clamped = Math.max(0, Math.min(index, items.length - 1));
+    cardRefs.current[clamped]?.focus();
+  }
+
+  /**
+   * Cards per row, measured rather than assumed — the grid is responsive CSS, so
+   * the column count changes with the viewport and can't be hard-coded.
+   */
+  function columnsPerRow(): number {
+    const cards = cardRefs.current.filter(Boolean) as HTMLElement[];
+    if (cards.length === 0) return 1;
+    const firstTop = cards[0].offsetTop;
+    const inFirstRow = cards.filter((card) => card.offsetTop === firstTop).length;
+    return Math.max(1, inFirstRow);
+  }
+
+  function onGridKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    // Once the dropdown has focus it owns its own keys — arrows change the
+    // selection and letters do native type-ahead. Never fight that.
+    const tag = (event.target as HTMLElement).tagName;
+    if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+    const items = data?.items ?? [];
+    if (items.length === 0) return;
+    const current = focusedIndex;
+
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'j':
+        event.preventDefault();
+        focusCard(current + 1);
+        break;
+      case 'ArrowLeft':
+      case 'k':
+        event.preventDefault();
+        focusCard(current - 1);
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        focusCard(current + columnsPerRow());
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        focusCard(current - columnsPerRow());
+        break;
+      case 'Enter':
+      case ' ': {
+        // Confirm-and-advance: the sweep action. Weak labels are right ~90% of
+        // the time (that's what the precision figure means), so this is the key
+        // that gets pressed most.
+        if (!canEdit) break;
+        const model = items[current];
+        if (!model?.className) break; // nothing to confirm on an unlabeled model
+        event.preventDefault();
+        void onSetLabel(model.uid, model.className);
+        focusCard(current + 1);
+        break;
+      }
+      case 'c':
+        // Hand off to the class dropdown; its native type-ahead does the rest,
+        // which beats inventing a 12-key mnemonic map to memorize.
+        if (!canEdit) break;
+        event.preventDefault();
+        cardRefs.current[current]?.querySelector('select')?.focus();
+        break;
     }
   }
 
@@ -121,17 +198,35 @@ export function BrowsePage() {
       ) : data && data.items.length === 0 ? (
         <p className="page-lead">No models match these filters.</p>
       ) : (
-        <div className="model-grid" aria-busy={loading}>
-          {data?.items.map((model) => (
+        <div
+          className="model-grid"
+          aria-busy={loading}
+          onKeyDown={onGridKeyDown}
+          role="group"
+          aria-label="Models"
+        >
+          {data?.items.map((model, index) => (
             <ModelCard
               key={model.uid}
               model={model}
               canEdit={canEdit}
               saving={savingUid === model.uid}
               onSetLabel={onSetLabel}
+              cardRef={(element) => {
+                cardRefs.current[index] = element;
+              }}
+              onFocusCard={() => setFocusedIndex(index)}
+              tabIndex={index === focusedIndex ? 0 : -1}
             />
           ))}
         </div>
+      )}
+
+      {canEdit && data && data.items.length > 0 && (
+        <p className="keyboard-hint">
+          <kbd>Tab</kbd> into the grid, then <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> to
+          move · <kbd>Enter</kbd> to confirm and advance · <kbd>c</kbd> to change the class
+        </p>
       )}
 
       {data && data.total > 0 && (

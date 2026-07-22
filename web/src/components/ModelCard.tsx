@@ -25,11 +25,23 @@ export function ModelCard({
   canEdit,
   saving,
   onSetLabel,
+  cardRef,
+  onFocusCard,
+  tabIndex,
 }: {
   model: ModelSummary;
   canEdit: boolean;
   saving: boolean;
   onSetLabel: (uid: string, className: ClassName) => void;
+  /** Lets the grid move focus between cards for keyboard sweeps. */
+  cardRef?: (element: HTMLElement | null) => void;
+  onFocusCard?: () => void;
+  /**
+   * Roving tabindex: only the active card is 0, the rest -1. That way Tab enters
+   * the grid once and lands where the user left off, instead of stepping through
+   * all 24 cards.
+   */
+  tabIndex?: number;
 }) {
   const isManual = model.source === 'manual';
   // No label yet — the model predates weak labeling, or the backfill hasn't run.
@@ -38,7 +50,13 @@ export function ModelCard({
   const [previewFailed, setPreviewFailed] = useState(false);
 
   return (
-    <article className="model-card">
+    <article
+      className="model-card"
+      ref={cardRef}
+      // Focusable so a keyboard sweep can land on it; the grid handles the keys.
+      tabIndex={tabIndex ?? -1}
+      onFocus={onFocusCard}
+    >
       <Link to={`/models/${model.uid}`} className="model-thumb" aria-label={`Open ${model.title}`}>
         {model.thumbnail && !previewFailed ? (
           <img
