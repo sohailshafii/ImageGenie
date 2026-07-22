@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 
+from ..artifact_keys import converted_key, normalized_key
 from ..config import get_settings
 from ..consumer import run_stage
 from ..db import session_scope
@@ -29,12 +30,6 @@ logger = logging.getLogger(__name__)
 STAGE = ArtifactStage.normalized
 
 
-def _converted_key(uid: str) -> str:
-    return f"processed/converted/{uid}.ply"
-
-
-def _normalized_key(uid: str) -> str:
-    return f"processed/normalized/{uid}.ply"
 
 
 def process(job: dict) -> str:
@@ -42,16 +37,16 @@ def process(job: dict) -> str:
     uid = job["uid"]
     settings = get_settings()
     storage = build_storage(settings)
-    normalized_key = _normalized_key(uid)
+    output_key = normalized_key(uid)
 
     with session_scope() as session:
-        already_done = artifact_done(session, uid, STAGE, storage, normalized_key)
+        already_done = artifact_done(session, uid, STAGE, storage, output_key)
 
     if already_done:
         logger.info("skip already-normalized", extra={"uid": uid, "stage": STAGE.value})
         result = "skipped"
     else:
-        mesh = load_mesh(storage.get_bytes(_converted_key(uid)), file_type="ply")
+        mesh = load_mesh(storage.get_bytes(converted_key(uid)), file_type="ply")
 
         # Center on the bounding-box center, then scale the largest extent to 1.
         bounding_box_center = mesh.bounds.mean(axis=0)
@@ -63,9 +58,9 @@ def process(job: dict) -> str:
 
         ply_bytes = export_ply(mesh)
         content_hash = hashlib.sha256(ply_bytes).hexdigest()
-        storage.put_bytes(normalized_key, ply_bytes)
+        storage.put_bytes(output_key, ply_bytes)
         with session_scope() as session:
-            record_artifact(session, uid, STAGE, normalized_key, content_hash)
+            record_artifact(session, uid, STAGE, output_key, content_hash)
         logger.info(
             "normalized",
             extra={"uid": uid, "stage": STAGE.value, "content_hash": content_hash},

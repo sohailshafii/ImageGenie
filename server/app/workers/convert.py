@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 
+from ..artifact_keys import converted_key, raw_key
 from ..config import get_settings
 from ..consumer import run_stage
 from ..db import session_scope
@@ -29,34 +30,26 @@ logger = logging.getLogger(__name__)
 STAGE = ArtifactStage.converted
 
 
-def _raw_key(uid: str) -> str:
-    return f"raw/{uid}.glb"
-
-
-def _converted_key(uid: str) -> str:
-    return f"processed/converted/{uid}.ply"
-
-
 def process(job: dict) -> str:
     """Convert one model to canonical PLY. Returns ``"converted"`` or ``"skipped"``."""
     uid = job["uid"]
     settings = get_settings()
     storage = build_storage(settings)
-    converted_key = _converted_key(uid)
+    output_key = converted_key(uid)
 
     with session_scope() as session:
-        already_done = artifact_done(session, uid, STAGE, storage, converted_key)
+        already_done = artifact_done(session, uid, STAGE, storage, output_key)
 
     if already_done:
         logger.info("skip already-converted", extra={"uid": uid, "stage": STAGE.value})
         result = "skipped"
     else:
-        mesh = load_mesh(storage.get_bytes(_raw_key(uid)), file_type="glb")
+        mesh = load_mesh(storage.get_bytes(raw_key(uid)), file_type="glb")
         ply_bytes = export_ply(mesh)
         content_hash = hashlib.sha256(ply_bytes).hexdigest()
-        storage.put_bytes(converted_key, ply_bytes)
+        storage.put_bytes(output_key, ply_bytes)
         with session_scope() as session:
-            record_artifact(session, uid, STAGE, converted_key, content_hash)
+            record_artifact(session, uid, STAGE, output_key, content_hash)
         logger.info(
             "converted",
             extra={"uid": uid, "stage": STAGE.value, "content_hash": content_hash},
