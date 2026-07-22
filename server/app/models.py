@@ -11,7 +11,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import ARRAY, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -38,6 +38,12 @@ class Model(Base):
     uid: Mapped[str] = mapped_column(primary_key=True)
     source_url: Mapped[str | None] = mapped_column(default=None)
     license: Mapped[str | None] = mapped_column(default=None)
+    # Store metadata, backfilled by `app.backfill_metadata` (the download worker
+    # doesn't persist annotations). Shown in the labeling UI to aid the decision
+    # — on the ambiguous classes the title is often what settles it. Nullable
+    # because a model can be ingested long before its metadata is fetched.
+    title: Mapped[str | None] = mapped_column(default=None)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), default=None)
     download_status: Mapped[DownloadStatus] = mapped_column(default=DownloadStatus.pending)
     content_hash: Mapped[str | None] = mapped_column(default=None)
     raw_key: Mapped[str | None] = mapped_column(default=None)
