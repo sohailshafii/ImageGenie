@@ -107,6 +107,59 @@ def test_falls_back_to_the_uid_before_the_metadata_backfill(client: TestClient) 
     assert body["tags"] == []
 
 
+def test_confidence_sort_puts_the_least_confident_first(client: TestClient) -> None:
+    """The review queue: uncertain weak labels first (web.md)."""
+    with db.session_scope() as session:
+        session.add(Model(uid="m3", download_status=DownloadStatus.downloaded))
+        session.flush()
+        session.add(
+            Label(model_uid="m3", class_name="figure", source=LabelSource.weak, confidence=0.22)
+        )
+
+    items = client.get("/models", params={"sort": "confidence"}).json()["items"]
+    assert [item["uid"] for item in items[:2]] == ["m3", "m2"]  # 0.22 then 0.9
+
+
+def test_confidence_sort_puts_nulls_last(client: TestClient) -> None:
+    """A NULL confidence is a manual label (already reviewed) or no label at all —
+    neither belongs above a genuinely uncertain weak label."""
+    items = client.get("/models", params={"sort": "confidence"}).json()["items"]
+    assert items[0]["uid"] == "m2"  # weak, 0.9
+    assert items[-1]["uid"] == "m1"  # manual, confidence None
+
+
+def test_confidence_sort_pages_without_repeating_rows(client: TestClient) -> None:
+    """Many models share a class's precision exactly, so confidence alone is not a
+    deterministic order — uid must tie-break or paging repeats and skips."""
+    with db.session_scope() as session:
+        for index in range(6):
+            session.add(Model(uid=f"tie{index}", download_status=DownloadStatus.downloaded))
+        session.flush()
+        for index in range(6):
+            session.add(
+                Label(
+                    model_uid=f"tie{index}",
+                    class_name="figure",
+                    source=LabelSource.weak,
+                    confidence=0.622,  # identical, as a real class's precision is
+                )
+            )
+
+    seen: list[str] = []
+    for page in (1, 2, 3, 4):
+        body = client.get(
+            "/models", params={"sort": "confidence", "page": page, "page_size": 2}
+        ).json()
+        seen.extend(item["uid"] for item in body["items"])
+
+    assert len(seen) == len(set(seen)), f"paging repeated rows: {seen}"
+
+
+def test_default_sort_is_stable_by_uid(client: TestClient) -> None:
+    items = client.get("/models").json()["items"]
+    assert [item["uid"] for item in items] == sorted(item["uid"] for item in items)
+
+
 def test_get_one_and_404(client: TestClient) -> None:
     assert client.get("/models/m2").json()["class_name"] == "car"
     assert client.get("/models/nope").status_code == 404

@@ -68,6 +68,13 @@ export type ClassName = (typeof CLASS_NAMES)[number];
 export type LabelSource = 'weak' | 'manual';
 
 /**
+ * Browse ordering. `confidence` is least-confident-first — the review queue,
+ * and the order the active-learning loop wants (ml.md). Models with no
+ * confidence (manual labels, or none at all) sort last.
+ */
+export type ModelSort = 'uid' | 'confidence';
+
+/**
  * A model in the browse grid: its current label plus metadata to aid labeling.
  *
  * The label fields are **nullable**: a model has no label until weak labeling or
