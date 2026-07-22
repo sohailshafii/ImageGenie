@@ -22,6 +22,7 @@ import math
 
 import numpy as np
 
+from ..artifact_keys import NUM_VIEWS, normalized_key, renders_prefix, view_key
 from ..config import get_settings
 from ..consumer import run_stage
 from ..db import session_scope
@@ -33,8 +34,6 @@ from .mesh import load_mesh
 logger = logging.getLogger(__name__)
 STAGE = ArtifactStage.rendered
 
-# ~12 views feeding a standard CNN at ResNet's native input size (ml/ml.md).
-NUM_VIEWS = 12
 RESOLUTION = 224
 # The normalized mesh fits a unit cube; this camera distance frames it with margin
 # at pyrender's default ~45° vertical FOV, and the ring is tilted up for a 3/4 view.
@@ -46,16 +45,6 @@ CAMERA_ELEVATION = 0.8
 MATERIAL_BASE_COLOR = [0.55, 0.55, 0.58, 1.0]
 
 
-def _normalized_key(uid: str) -> str:
-    return f"processed/normalized/{uid}.ply"
-
-
-def _renders_prefix(uid: str) -> str:
-    return f"processed/renders/{uid}/"
-
-
-def _view_key(uid: str, view_index: int) -> str:
-    return f"{_renders_prefix(uid)}view_{view_index:02d}.png"
 
 
 def _look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
@@ -162,7 +151,7 @@ def _render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]
 
 
 def _all_views_present(storage: Storage, uid: str) -> bool:
-    return all(storage.exists(_view_key(uid, index)) for index in range(NUM_VIEWS))
+    return all(storage.exists(view_key(uid, index)) for index in range(NUM_VIEWS))
 
 
 def process(job: dict) -> str:
@@ -170,23 +159,23 @@ def process(job: dict) -> str:
     uid = job["uid"]
     settings = get_settings()
     storage = build_storage(settings)
-    renders_prefix = _renders_prefix(uid)
+    output_prefix = renders_prefix(uid)
 
     with session_scope() as session:
         already_done = artifact_done(
-            session, uid, STAGE, storage, _view_key(uid, NUM_VIEWS - 1)
+            session, uid, STAGE, storage, view_key(uid, NUM_VIEWS - 1)
         )
     # Guard the last-view marker against a partially-written set from a prior crash.
     if already_done and _all_views_present(storage, uid):
         logger.info("skip already-rendered", extra={"uid": uid, "stage": STAGE.value})
         return "skipped"
 
-    mesh = load_mesh(storage.get_bytes(_normalized_key(uid)), file_type="ply")
+    mesh = load_mesh(storage.get_bytes(normalized_key(uid)), file_type="ply")
     images = _render_views(mesh, _camera_poses(NUM_VIEWS), RESOLUTION)
     for view_index, png_bytes in enumerate(images):
-        storage.put_bytes(_view_key(uid, view_index), png_bytes)
+        storage.put_bytes(view_key(uid, view_index), png_bytes)
     with session_scope() as session:
-        record_artifact(session, uid, STAGE, renders_prefix, content_hash=None)
+        record_artifact(session, uid, STAGE, output_prefix, content_hash=None)
     logger.info(
         "rendered", extra={"uid": uid, "stage": STAGE.value, "views": len(images)}
     )

@@ -10,10 +10,14 @@ in for cloud without changing callers.
 
 from __future__ import annotations
 
+import logging
+from datetime import timedelta
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from .config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -30,6 +34,16 @@ class Storage(Protocol):
 
     def get_bytes(self, key: str) -> bytes:
         """Read the blob at `key`; raises if it does not exist."""
+        ...
+
+    def signed_url(self, key: str, ttl: timedelta) -> str | None:
+        """A time-limited URL a browser can fetch `key` from directly.
+
+        Returns ``None`` when the backend can't issue one (local dev), in which
+        case the caller streams the bytes through the API instead. Serving the
+        browser straight from the store matters in cloud: 12 view PNGs per model
+        across a paginated grid would otherwise all be proxied through the API.
+        """
         ...
 
 
@@ -56,6 +70,10 @@ class LocalStorage:
     def get_bytes(self, key: str) -> bytes:
         return self._path(key).read_bytes()
 
+    def signed_url(self, key: str, ttl: timedelta) -> str | None:
+        """None — a local file has no URL, so the API streams the bytes itself."""
+        return None
+
 
 class GcsStorage:
     """GCS-backed `Storage` — keys map to objects in a bucket (cloud backend).
@@ -77,6 +95,28 @@ class GcsStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._bucket.blob(key).download_as_bytes()
+
+    def signed_url(self, key: str, ttl: timedelta) -> str | None:
+        """A V4 signed GET URL, so the browser reads GCS without proxying us.
+
+        Returns None if signing isn't available rather than failing the request —
+        Cloud Run's metadata-server credentials have no private key, so signing
+        needs the runtime service account to hold `iam.serviceAccountTokenCreator`
+        on itself. Falling back to streaming keeps the page working either way;
+        the log line is what tells you the IAM binding is missing.
+        """
+        try:
+            return self._bucket.blob(key).generate_signed_url(
+                version="v4", expiration=ttl, method="GET"
+            )
+        except Exception:
+            logger.warning(
+                "could not sign a URL for %s — falling back to streaming through the API; "
+                "grant the runtime service account iam.serviceAccountTokenCreator on itself",
+                key,
+                exc_info=True,
+            )
+            return None
 
 
 class RoutedGcsStorage:
@@ -103,6 +143,9 @@ class RoutedGcsStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._backend(key).get_bytes(key)
+
+    def signed_url(self, key: str, ttl: timedelta) -> str | None:
+        return self._backend(key).signed_url(key, ttl)
 
 
 def build_storage(settings: Settings) -> Storage:
