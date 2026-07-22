@@ -5,6 +5,7 @@ import type {
   LabelSource,
   ModelArtifacts,
   ModelPage,
+  ModelSort,
   ModelSummary,
   PipelineStage,
 } from './types';
@@ -72,6 +73,7 @@ export async function listModels(params: {
   pageSize: number;
   className?: ClassName;
   source?: LabelSource;
+  sort?: ModelSort;
 }): Promise<ModelPage> {
   const query = new URLSearchParams({
     page: String(params.page),
@@ -79,6 +81,7 @@ export async function listModels(params: {
   });
   if (params.className !== undefined) query.set('class_name', params.className);
   if (params.source !== undefined) query.set('source', params.source);
+  if (params.sort !== undefined) query.set('sort', params.sort);
 
   const page = await request<ModelPageResponse>('GET', `/models?${query}`);
   return {

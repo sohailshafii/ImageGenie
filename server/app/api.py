@@ -13,6 +13,7 @@ an ASGI server: `uvicorn app.api:app`.
 
 from __future__ import annotations
 
+import enum
 import logging
 import math
 from collections.abc import AsyncIterator
@@ -91,6 +92,13 @@ class ModelPageOut(BaseModel):
 
 class LabelIn(BaseModel):
     class_name: str
+
+
+class ModelSort(str, enum.Enum):
+    """Browse ordering. `confidence` is least-confident-first — the review queue."""
+
+    uid = "uid"
+    confidence = "confidence"
 
 
 class ModelArtifactsOut(BaseModel):
@@ -530,6 +538,7 @@ def list_models(
     page_size: int = Query(24, ge=1, le=PAGE_SIZE_MAX),
     class_name: str | None = None,
     source: LabelSource | None = None,
+    sort: ModelSort = ModelSort.uid,
 ) -> ModelPageOut:
     latest = _latest_labels()
     query = select(
@@ -540,11 +549,24 @@ def list_models(
     if source is not None:
         query = query.where(latest.c.source == source)
 
+    if sort is ModelSort.confidence:
+        # Least-confident first — the review queue (web.md, and what the
+        # active-learning loop wants). NULLS LAST is explicit rather than relying
+        # on Postgres' default: a NULL confidence means a manual label (already
+        # reviewed) or no label at all, and neither belongs above a genuinely
+        # uncertain weak label.
+        order = (latest.c.confidence.asc().nulls_last(), Model.uid)
+    else:
+        order = (Model.uid,)
+    # `Model.uid` always tie-breaks. Without it, ordering by confidence alone is
+    # non-deterministic across queries — 1,141 models share figure's 0.622 — and
+    # paging would silently repeat and skip rows.
+
     storage = build_storage(get_settings())  # built once, reused for every row
     with session_scope() as session:
         total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
         rows = session.execute(
-            query.order_by(Model.uid).limit(page_size).offset((page - 1) * page_size)
+            query.order_by(*order).limit(page_size).offset((page - 1) * page_size)
         ).all()
         items = [_summary(storage, *row) for row in rows]
     return ModelPageOut(items=items, total=total, page=page, page_size=page_size)

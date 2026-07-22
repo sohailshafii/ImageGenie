@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { listModels, setLabel } from '../api/catalog';
-import { CLASS_NAMES, type ClassName, type LabelSource, type ModelPage } from '../api/types';
+import {
+  CLASS_NAMES,
+  type ClassName,
+  type LabelSource,
+  type ModelPage,
+  type ModelSort,
+} from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { ModelCard } from '../components/ModelCard';
@@ -15,6 +21,7 @@ export function BrowsePage() {
 
   const [classFilter, setClassFilter] = useState<ClassName | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<LabelSource | 'all'>('all');
+  const [sort, setSort] = useState<ModelSort>('uid');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ModelPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,6 +35,7 @@ export function BrowsePage() {
       pageSize: PAGE_SIZE,
       className: classFilter === 'all' ? undefined : classFilter,
       source: sourceFilter === 'all' ? undefined : sourceFilter,
+      sort,
     })
       .then((result) => {
         if (active) setData(result);
@@ -38,7 +46,7 @@ export function BrowsePage() {
     return () => {
       active = false;
     };
-  }, [page, classFilter, sourceFilter]);
+  }, [page, classFilter, sourceFilter, sort]);
 
   async function onSetLabel(uid: string, className: ClassName) {
     setSavingUid(uid);
@@ -90,6 +98,19 @@ export function BrowsePage() {
               <option value="all">all</option>
               <option value="weak">weak</option>
               <option value="manual">manual</option>
+            </select>
+          </label>
+          <label>
+            Sort
+            <select
+              value={sort}
+              onChange={(e) => {
+                setSort(e.target.value as ModelSort);
+                setPage(1); // a new order makes the current page meaningless
+              }}
+            >
+              <option value="uid">default</option>
+              <option value="confidence">least confident</option>
             </select>
           </label>
         </div>
