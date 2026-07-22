@@ -138,8 +138,18 @@ Resolves the upload TODO.
 
 - Admins can upload additional models into the pipeline.
 - Uploaded models enter the same ingestion chain (convert → normalize → render → label) and are
-  subject to the same idempotency rules ([server.md](../server/server.md#queue--workers)).
-- Validate format (STL/OBJ/GLB/FBX) and size on upload; reject unsupported files with a clear error.
+  subject to the same idempotency rules ([server.md](../server/server.md#queue--workers)). The
+  upload takes the place of the *download* stage, so it enters at convert.
+- Validate format and size on upload; reject unsupported files with a clear error. The endpoint
+  ([server.md](../server/server.md#data-upload)) rejects with a specific status per reason — wrong
+  format, too large, empty, unreadable mesh — so the UI can show the server's message rather than a
+  generic failure.
+- **Accepted: STL, OBJ, GLB. FBX is not supported**, despite this doc's earlier claim: trimesh has
+  no FBX loader, so accepting one would mean failing deep in the pipeline instead of at the door. The
+  rationale and the cost of adding it are in
+  [server.md](../server/server.md#object-storage).
+- Uploaded models have **no weak label** — nothing derives one, since there is no store metadata —
+  so they appear unlabeled and are labeled by hand. Their `title` comes from the filename.
 
 ## Coding Standards (frontend)
 

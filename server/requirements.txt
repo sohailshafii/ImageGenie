@@ -16,6 +16,9 @@ objaverse==0.1.7
 fastapi==0.139.2
 uvicorn[standard]==0.51.0
 bcrypt==4.2.1
+# Multipart form parsing — FastAPI needs it for the admin upload's UploadFile
+# (server.md#data-upload); without it that route raises at import, not at runtime.
+python-multipart==0.0.20
 # Transactional email: Resend is one POST, so httpx rather than its SDK (app/mail.py).
 httpx==0.28.1
 # Preprocessing stages (convert/normalize/render) — mesh IO + offscreen render.

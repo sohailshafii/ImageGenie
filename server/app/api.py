@@ -1,9 +1,9 @@
 """Backend-for-frontend REST API (server.md#api-layer).
 
-The single FastAPI app the labeling frontend talks to. This module serves the
-**auth** and **models + labels** endpoints; dead-letters and upload land in later
-chunks. Read endpoints resolve each model's *current* label — the most recent
-`label` row, so a manual correction wins over the weak label.
+The single FastAPI app the labeling frontend talks to: **auth**, **models +
+labels**, **artifacts**, **dead-letters**, and admin **upload**. Read endpoints
+resolve each model's *current* label — the most recent `label` row, so a manual
+correction wins over the weak label.
 
 Access model (FR-8): `/healthz` and the pre-auth flows (login, invite-gated
 signup, email verification and its resend) are public; everything else needs a
@@ -14,6 +14,7 @@ an ASGI server: `uvicorn app.api:app`.
 from __future__ import annotations
 
 import enum
+import hashlib
 import logging
 import math
 from collections.abc import AsyncIterator
@@ -21,19 +22,37 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from .artifact_keys import normalized_key, view_key, view_keys
+from .artifact_keys import (
+    RAW_SUFFIX_TO_FILE_TYPE,
+    normalized_key,
+    raw_key,
+    view_key,
+    view_keys,
+)
 from .config import get_settings
 from .db import init_db, session_scope
 from .dead_letters import list_dead_letters, replay
 from .mail import send_invite_email, send_verification_email
 from .models import (
+    DownloadStatus,
     EmailVerification,
     Invite,
     Label,
@@ -42,6 +61,7 @@ from .models import (
     User,
     UserRole,
 )
+from .queue import publish_next
 from .ratelimit import BackoffRule, FixedWindowRateLimiter, LoginBackoff, RateLimitRule
 from .security import (
     CSRF_COOKIE,
@@ -209,10 +229,14 @@ VERIFY_PER_IP = RateLimitRule(max_hits=20, window_seconds=10 * 60)
 RESEND_PER_IP = RateLimitRule(max_hits=5, window_seconds=10 * 60)
 RESEND_PER_EMAIL = RateLimitRule(max_hits=5, window_seconds=10 * 60)
 INVITE_PER_ADMIN = RateLimitRule(max_hits=50, window_seconds=10 * 60)
+# Uploads are far heavier than a label write (a parse plus an object write), so
+# the cap is a runaway guard on an admin-only route, not abuse control.
+UPLOAD_PER_ADMIN = RateLimitRule(max_hits=120, window_seconds=10 * 60)
 
 login_limiter = FixedWindowRateLimiter()
 label_limiter = FixedWindowRateLimiter()
 signup_limiter = FixedWindowRateLimiter()
+upload_limiter = FixedWindowRateLimiter()
 login_backoff = LoginBackoff(LOGIN_BACKOFF_RULE)
 
 
@@ -635,6 +659,116 @@ def _load_summary(uid: str) -> ModelSummaryOut:
 
 @app.get("/models/{uid}", response_model=ModelSummaryOut, dependencies=LOGIN_REQUIRED)
 def get_model(uid: str) -> ModelSummaryOut:
+    return _load_summary(uid)
+
+
+def _validated_upload_suffix(filename: str | None) -> str:
+    """The raw-key suffix for an uploaded filename, or 415 if we can't ingest it.
+
+    Rejecting here rather than downstream is the point: an unsupported format that
+    reached the queue would fail inside the convert worker and surface as a
+    dead-letter minutes later, with no way to tell the admin why.
+    """
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in RAW_SUFFIX_TO_FILE_TYPE:
+        supported = ", ".join(sorted(RAW_SUFFIX_TO_FILE_TYPE))
+        raise HTTPException(
+            status_code=415,
+            detail=f"unsupported format '{suffix or filename}' — upload one of: {supported}",
+        )
+    return suffix
+
+
+def _read_within_limit(upload: UploadFile, max_bytes: int) -> bytes:
+    """Read the upload, refusing anything over `max_bytes` with a 413.
+
+    Reads in chunks and stops at the ceiling instead of loading the whole body
+    first, so an oversized file can't exhaust memory on the way to being
+    rejected.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := upload.file.read(1024 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"file exceeds the {max_bytes // (1024 * 1024)} MiB upload limit",
+            )
+        chunks.append(chunk)
+    if total == 0:
+        raise HTTPException(status_code=400, detail="the uploaded file is empty")
+    return b"".join(chunks)
+
+
+def _reject_unloadable_mesh(data: bytes, file_type: str) -> None:
+    """Fail an upload whose bytes aren't a usable mesh, before it reaches the queue.
+
+    trimesh is imported here rather than at module scope so the API doesn't pull
+    the mesh stack in at startup — `artifact_keys` stays deliberately light for
+    the same reason.
+
+    Worth the parse cost on this route: it is admin-only and rate-limited, and the
+    alternative is a corrupt file being accepted with 201, then dying in the
+    convert worker with nothing tying the dead-letter back to the person who
+    uploaded it.
+    """
+    from .workers.mesh import load_mesh
+
+    try:
+        load_mesh(data, file_type=file_type)
+    except HTTPException:
+        raise
+    except Exception as error:  # noqa: BLE001 — any parse failure is a bad upload
+        raise HTTPException(
+            status_code=422, detail=f"could not read the mesh: {error}"
+        ) from error
+
+
+@app.post("/models/upload", response_model=ModelSummaryOut, status_code=201)
+def upload_model(
+    admin: AdminUser,
+    file: Annotated[UploadFile, File(description="STL, OBJ, or GLB mesh")],
+) -> ModelSummaryOut:
+    """Accept a mesh from an admin and enqueue it into the pipeline (FR-9).
+
+    The upload takes the place of the download stage: the file *is* the raw mesh,
+    so it lands at `raw/<uid>.<ext>` and goes straight to the convert topic. From
+    there it is an ordinary model — the remaining stages and the labeling UI can't
+    tell it apart from an ingested one.
+
+    The uid is generated rather than derived from the file, so re-uploading the
+    same mesh creates a second model. Content-addressing would deduplicate, but
+    it would also make two admins uploading the same file collide on one row.
+    """
+    settings = get_settings()
+    _rate_limit(upload_limiter, f"upload:user:{admin.id}", UPLOAD_PER_ADMIN)
+
+    suffix = _validated_upload_suffix(file.filename)
+    data = _read_within_limit(file, settings.upload_max_bytes)
+    _reject_unloadable_mesh(data, RAW_SUFFIX_TO_FILE_TYPE[suffix])
+
+    uid = uuid4().hex  # same 32-hex shape as an Objaverse uid
+    key = raw_key(uid, suffix)
+    build_storage(settings).put_bytes(key, data)
+
+    with session_scope() as session:
+        session.add(
+            Model(
+                uid=uid,
+                download_status=DownloadStatus.downloaded,
+                raw_key=key,
+                content_hash=hashlib.sha256(data).hexdigest(),
+                # The filename is the only human-readable thing an upload carries,
+                # and the labeling UI shows the title — so keep it rather than
+                # leaving the admin to identify the model by a random hex uid.
+                title=Path(file.filename or uid).stem or uid,
+                tags=[],
+            )
+        )
+
+    publish_next(settings.convert_topic, uid)
+    logger.info("uploaded", extra={"uid": uid, "admin": admin.email, "key": key})
     return _load_summary(uid)
 
 
