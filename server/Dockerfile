@@ -1,5 +1,23 @@
-# Worker/seed image for the pipeline (milestones 2 + 4). One image runs every
-# stage; the compose service / Cloud Run job overrides CMD to pick the worker.
+# Worker + API image. One image runs every pipeline stage (the compose service /
+# Cloud Run job overrides CMD to pick a worker) AND the backend-for-frontend API
+# (uvicorn app.api:root_app), which serves the built SPA — so the build compiles
+# the frontend too. Built from the repo root so both server/ and web/ are in the
+# context (see `make deploy-image` and docker-compose.yml).
+
+# ── Stage 1: build the single-page app (web/dist) ───────────────────────────
+# The API serves this build so the SPA and API share one origin
+# (server.md#serving-the-spa). Compiling it here keeps the image self-contained;
+# with layer caching the `npm ci` step is skipped unless the lockfile changes, so
+# iterating on the workers doesn't pay for it.
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /web
+# Deps first, against the lockfile, so this layer caches independently of source.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build  # tsc -b && vite build -> /web/dist
+
+# ── Stage 2: worker + API runtime ───────────────────────────────────────────
 FROM python:3.12-slim
 
 WORKDIR /srv
@@ -25,11 +43,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ENV PYOPENGL_PLATFORM=osmesa
 
-COPY requirements.txt .
+COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY server/app ./app
+
+# The built SPA the API serves. IMAGEGENIE_SPA_DIR points the API (root_app) at
+# it; the workers never read it, so it is inert for them.
+COPY --from=web-build /web/dist ./web_dist
+ENV IMAGEGENIE_SPA_DIR=/srv/web_dist
 
 # Default: run the download worker (consumes the queue forever). Preprocessing
-# stages override this, e.g. `python -m app.workers.render`.
+# stages override this, e.g. `python -m app.workers.render`; the API service runs
+# `uvicorn app.api:root_app`.
 CMD ["python", "-m", "app.workers.download"]

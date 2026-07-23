@@ -767,10 +767,9 @@ today, not a theoretical risk.
 4. **The SPA ships inside the API deployment** — one origin, because the CSRF defense is same-origin
    double-submit; splitting the SPA onto another origin would force CORS and weaken exactly the thing
    CSRF relies on, and GCS static hosting is HTTP-only on a custom domain (HTTPS needs a ~$18/month
-   load balancer). Built and wired — see [Serving the SPA](#serving-the-spa) for how, and set
-   `IMAGEGENIE_SPA_DIR` to where the image copies `web/dist`. The **image must actually contain the
-   build**, which is the one remaining piece: `make deploy-image` builds from `server/` only, so the
-   Dockerfile needs a stage that builds the SPA and copies it in (or the build context widened).
+   load balancer). Built and wired — see [Serving the SPA](#serving-the-spa). The image already
+   carries the build (`/srv/web_dist`) and bakes `IMAGEGENIE_SPA_DIR`, so the API service just runs
+   `uvicorn app.api:root_app`; nothing more to do for this one.
 
 Also set, in the same deploy: `IMAGEGENIE_COOKIE_SECURE=true` (defaults false for local http — over
 HTTPS the session cookie must be `Secure`), `IMAGEGENIE_TRUST_PROXY_HEADERS=true` (Cloud Run is a
@@ -797,6 +796,13 @@ changes between dev and prod.
   deep link like `/deleted` is not a file on disk and must reach the browser router. Hashed
   `assets/*` get an immutable cache header; the shell gets `no-cache` so a deploy can't strand
   browsers on a stale `index.html` pointing at asset hashes the new build dropped.
+- **The image carries the build.** `server/Dockerfile` is multi-stage — a `node` stage runs
+  `npm ci && npm run build`, and the runtime stage copies `web/dist` to `/srv/web_dist` and bakes
+  `IMAGEGENIE_SPA_DIR`. Because both `server/` and `web/` must be in the build context, the build
+  runs from the **repo root** (`make deploy-image` uses `-f server/Dockerfile .`, and
+  `docker-compose.yml` sets `context: ..`). Layer caching skips `npm ci` unless the lockfile changes,
+  so iterating on the workers doesn't pay for the SPA build. The same image runs the workers, which
+  never read `web_dist`.
 
 Two mount-specific details, both easy to get wrong and both regression-tested:
 

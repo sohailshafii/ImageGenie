@@ -25,7 +25,11 @@ services:
   # download → convert → normalize → render: one service per stage, all sharing
   # the same image (CMD picks the worker), the storage volume, DB, and emulator.
   worker:
-    build: .
+    # Repo-root context so the multi-stage build can reach web/ (the SPA build);
+    # the Dockerfile lives in server/. All stage services share this build.
+    build: &build
+      context: ..
+      dockerfile: server/Dockerfile
     restart: on-failure  # retry until the emulator/DB are ready
     environment: &worker-env
       PUBSUB_EMULATOR_HOST: pubsub:8681
@@ -44,7 +48,7 @@ services:
         condition: service_started
 
   convert:
-    build: .
+    build: *build
     restart: on-failure
     command: python -m app.workers.convert
     environment: *worker-env
@@ -52,7 +56,7 @@ services:
     depends_on: *worker-deps
 
   normalize:
-    build: .
+    build: *build
     restart: on-failure
     command: python -m app.workers.normalize
     environment: *worker-env
@@ -60,7 +64,7 @@ services:
     depends_on: *worker-deps
 
   render:
-    build: .
+    build: *build
     restart: on-failure
     command: python -m app.workers.render
     environment: *worker-env
@@ -69,7 +73,7 @@ services:
 
   # Producer — run on demand via `make compose-seed` (profile keeps it off `up`).
   seed:
-    build: .
+    build: *build
     profiles: ["seed"]
     environment: *worker-env
     volumes:
