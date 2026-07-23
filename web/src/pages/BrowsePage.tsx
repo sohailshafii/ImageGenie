@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { listModels, setLabel } from '../api/catalog';
+import { deleteModel, listModels, setLabel } from '../api/catalog';
 import {
   CLASS_NAMES,
   type ClassName,
@@ -26,6 +26,7 @@ export function BrowsePage() {
   const [data, setData] = useState<ModelPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingUid, setSavingUid] = useState<string | null>(null);
+  const [deletingUid, setDeletingUid] = useState<string | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const cardRefs = useRef<(HTMLElement | null)[]>([]);
 
@@ -65,6 +66,24 @@ export function BrowsePage() {
       );
     } finally {
       setSavingUid(null);
+    }
+  }
+
+  async function onDelete(uid: string) {
+    setDeletingUid(uid);
+    try {
+      await deleteModel(uid);
+      // Drop it from the current page in place and decrement the count, rather
+      // than refetching — a refetch would reflow the grid and jump the admin's
+      // position mid-cleanup. The page can end up one short until the next fetch
+      // refills it, which is fine for an occasional admin action.
+      setData((prev) =>
+        prev
+          ? { ...prev, items: prev.items.filter((m) => m.uid !== uid), total: prev.total - 1 }
+          : prev,
+      );
+    } finally {
+      setDeletingUid(null);
     }
   }
 
@@ -212,6 +231,8 @@ export function BrowsePage() {
               canEdit={canEdit}
               saving={savingUid === model.uid}
               onSetLabel={onSetLabel}
+              onDelete={canEdit ? onDelete : undefined}
+              deleting={deletingUid === model.uid}
               cardRef={(element) => {
                 cardRefs.current[index] = element;
               }}

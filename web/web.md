@@ -158,6 +158,28 @@ Resolves the upload TODO.
 - Uploaded models have **no weak label** — nothing derives one, since there is no store metadata —
   so they appear unlabeled and are labeled by hand. Their `title` comes from the filename.
 
+## Delete & Restore
+
+Admins can remove a model, and the delete is **soft** (server.md#soft-delete): the row and blobs are
+kept, so it is always reversible. The UI surfaces this in three places:
+
+- **Delete from the detail view** — a danger-styled control below the metadata; on success it
+  navigates back to browse, since the model it was showing is now hidden.
+- **Delete from the browse grid** — a quiet ✕ in each card's corner, revealed on hover or keyboard
+  focus so it doesn't clutter the grid. On delete the card is dropped from the page in place (and the
+  count decremented) rather than refetching, which would reflow the grid mid-cleanup.
+- **A Deleted view** (`/deleted`, admin-only) — the restore queue, most-recently-deleted first, each
+  row restorable. Restoring returns the model to browse with its labels intact.
+
+Both destructive actions use **`ConfirmButton`**, a two-step inline confirm (arm on the first click,
+fire on the second) rather than `window.confirm`: no blocking native dialog, and a stray click on a
+dense grid is harmless because the first press only arms it. It disarms on a timeout or on blur but
+**not** on mouse-leave — the armed label is wider than the idle one, so the small cursor move between
+the two clicks could otherwise exit the button and drop the confirming click on the link behind it.
+
+All three actions are admin-only in the UI and re-checked on the server (NFR-7); the client calls
+live in `web/src/api/catalog.ts` alongside the rest of the catalog.
+
 ## Coding Standards (frontend)
 
 - **Stack (chosen):** **React + TypeScript + Vite**, three.js for 3D rendering. TypeScript for typed

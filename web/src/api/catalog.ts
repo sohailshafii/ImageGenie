@@ -159,3 +159,39 @@ export async function uploadModel(file: File): Promise<ModelSummary> {
   const created = await upload<ModelSummaryResponse>('/models/upload', file);
   return toModelSummary(created);
 }
+
+/**
+ * DELETE /models/{uid} — admin-only soft delete (server.md#soft-delete). The
+ * model's data is kept; it just disappears from browse until restored.
+ * Idempotent, so a double click is harmless.
+ */
+export async function deleteModel(uid: string): Promise<void> {
+  await request<void>('DELETE', `/models/${encodeURIComponent(uid)}`);
+}
+
+/** POST /models/{uid}/restore — admin-only: undo a soft delete. */
+export async function restoreModel(uid: string): Promise<ModelSummary> {
+  const restored = await request<ModelSummaryResponse>(
+    'POST',
+    `/models/${encodeURIComponent(uid)}/restore`,
+  );
+  return toModelSummary(restored);
+}
+
+/** GET /models/deleted — admin-only: the restore queue, most-recent first. */
+export async function listDeletedModels(params: {
+  page: number;
+  pageSize: number;
+}): Promise<ModelPage> {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    page_size: String(params.pageSize),
+  });
+  const body = await request<ModelPageResponse>('GET', `/models/deleted?${query}`);
+  return {
+    items: body.items.map(toModelSummary),
+    total: body.total,
+    page: body.page,
+    pageSize: body.page_size,
+  };
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
+import { ConfirmButton } from './ConfirmButton';
 
 // A single model in the browse grid: a rendered-preview placeholder, its label +
 // confidence, and (for admins) inline confirm/correct. Thumbnails are a class-tinted
@@ -25,6 +26,8 @@ export function ModelCard({
   canEdit,
   saving,
   onSetLabel,
+  onDelete,
+  deleting,
   cardRef,
   onFocusCard,
   tabIndex,
@@ -33,6 +36,9 @@ export function ModelCard({
   canEdit: boolean;
   saving: boolean;
   onSetLabel: (uid: string, className: ClassName) => void;
+  /** Admin-only soft delete. Omitted for non-admins, so the control never renders. */
+  onDelete?: (uid: string) => void;
+  deleting?: boolean;
   /** Lets the grid move focus between cards for keyboard sweeps. */
   cardRef?: (element: HTMLElement | null) => void;
   onFocusCard?: () => void;
@@ -57,6 +63,17 @@ export function ModelCard({
       tabIndex={tabIndex ?? -1}
       onFocus={onFocusCard}
     >
+      {canEdit && onDelete && (
+        <ConfirmButton
+          className="card-delete"
+          busy={deleting}
+          onConfirm={() => onDelete(model.uid)}
+          idleLabel={<span aria-hidden="true">✕</span>}
+          armedLabel="Delete?"
+          title={`Delete ${model.title}`}
+        />
+      )}
+
       <Link to={`/models/${model.uid}`} className="model-thumb" aria-label={`Open ${model.title}`}>
         {model.thumbnail && !previewFailed ? (
           <img

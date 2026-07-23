@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { BrowsePage } from './pages/BrowsePage';
 import { DeadLettersPage } from './pages/DeadLettersPage';
+import { DeletedModelsPage } from './pages/DeletedModelsPage';
 import { InvitePage } from './pages/InvitePage';
 import { UploadPage } from './pages/UploadPage';
 
@@ -57,6 +58,14 @@ export default function App() {
         element={
           <ProtectedRoute requireAdmin>
             <UploadPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/deleted"
+        element={
+          <ProtectedRoute requireAdmin>
+            <DeletedModelsPage />
           </ProtectedRoute>
         }
       />

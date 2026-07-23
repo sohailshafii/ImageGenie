@@ -16,6 +16,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </Link>
         <nav className="app-user">
           {user?.role === 'admin' && <Link to="/upload">Upload</Link>}
+          {user?.role === 'admin' && <Link to="/deleted">Deleted</Link>}
           {user?.role === 'admin' && <Link to="/dead-letters">Failed</Link>}
           {user?.role === 'admin' && <Link to="/invite">Invite</Link>}
           <span>
