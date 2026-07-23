@@ -488,6 +488,13 @@ neither the rows nor the blobs. A deleted model vanishes from every route a labe
 `GET /models`, `GET /models/{uid}`, its artifacts, and label writes all treat it as a 404 — while a
 separate Deleted view opts *into* deleted rows so an admin can restore one.
 
+- `DELETE /models/{uid}` — soft-delete (admin, 204). Idempotent: deleting an already-deleted model
+  is a no-op, so a double click or retried request doesn't error.
+- `POST /models/{uid}/restore` — clear `deleted_at` (admin), returning the now-visible model.
+- `GET /models/deleted` — the paginated restore queue, most-recently-deleted first (admin only:
+  which models were removed is operational detail). **Registered before `GET /models/{uid}`** so the
+  literal path wins — otherwise `deleted` binds as a uid and the view is unreachable.
+
 Soft, not hard, for two reasons. A mistaken delete should be recoverable rather than vaporize
 ingestion spend; and it composes with the reconciler. **A hard delete that dropped only the DB rows
 would be undone by the next `reconcile-storage`**, which rebuilds any model whose blobs exist — so a
