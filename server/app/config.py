@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     raw_bucket: str = "imagegenie-pipeline-raw"
     processed_bucket: str = "imagegenie-pipeline-processed"
 
+    # Runtime service-account email used to sign GCS URLs via the IAM signBlob
+    # API (server.md#serving-artifacts). On Cloud Run the ambient credentials
+    # have no private key, so V4 signing goes through IAM, which needs the SA's
+    # own email. Left None, the signer falls back to the email the credentials
+    # report; the deploy sets it explicitly to the runtime SA so signing is
+    # deterministic rather than dependent on what the metadata server exposes.
+    signer_service_account_email: str | None = None
+
     # Largest admin upload accepted (FR-9, server.md#data-upload). 32 MiB is Cloud
     # Run's own request-body ceiling, so a larger value here would be rejected by
     # the platform before the app ever saw it — better to fail with our own clear
