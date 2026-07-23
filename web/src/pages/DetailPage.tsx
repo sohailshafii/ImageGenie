@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { getModel, getModelArtifacts, setLabel } from '../api/catalog';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { deleteModel, getModel, getModelArtifacts, setLabel } from '../api/catalog';
 import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
+import { ConfirmButton } from '../components/ConfirmButton';
 import { ModelViewer } from '../components/ModelViewer';
 
 // Detail view (web.md): a single model in the interactive three.js viewer, its
@@ -11,6 +12,7 @@ import { ModelViewer } from '../components/ModelViewer';
 // metadata (title/tags) that aids the labeling decision.
 export function DetailPage() {
   const { uid = '' } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const canEdit = user?.role === 'admin';
 
@@ -18,6 +20,7 @@ export function DetailPage() {
   const [meshUrl, setMeshUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -60,6 +63,17 @@ export function DetailPage() {
       setModel(await setLabel(uid, className));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function onDelete() {
+    setDeleting(true);
+    try {
+      await deleteModel(uid);
+      // The model is gone from browse now; there's nothing left to show here.
+      navigate('/');
+    } catch {
+      setDeleting(false); // stay on the page so the admin can retry
     }
   }
 
@@ -144,6 +158,19 @@ export function DetailPage() {
               <span className="detail-label">Model id</span>
               <span className="dlq-uid">{model.uid}</span>
             </div>
+
+            {canEdit && (
+              <div className="detail-danger">
+                <ConfirmButton
+                  className="btn-danger"
+                  busy={deleting}
+                  onConfirm={onDelete}
+                  idleLabel="Delete model"
+                  armedLabel="Click again to delete"
+                  title="Soft-delete: hides the model but keeps its data, restorable later"
+                />
+              </div>
+            )}
           </aside>
         </div>
       )}

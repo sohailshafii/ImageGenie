@@ -423,6 +423,7 @@ select:focus {
 }
 
 .model-card {
+  position: relative; /* anchors the card-delete control */
   display: flex;
   flex-direction: column;
   background: var(--surface-raised);
@@ -787,4 +788,80 @@ select:focus {
   font-size: 0.95rem;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+/* ── Destructive controls (soft delete / restore) ──────────────────────────── */
+
+/* A danger-tinted button; the armed state (ConfirmButton's second step) fills. */
+.btn-danger {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.btn-danger:hover:not(:disabled),
+.btn-danger.is-armed {
+  color: var(--accent-contrast);
+  background: var(--danger);
+}
+
+.btn-danger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Sets the delete control apart from the metadata fields above it. */
+.detail-danger {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Per-card delete: a small round control in the thumbnail's top-right, kept
+   quiet until hover/focus so it doesn't clutter the grid or invite a mis-click. */
+.card-delete {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  padding: 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-contrast);
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+/* Reveal on hover or keyboard focus anywhere in the card. */
+.model-card:hover .card-delete,
+.model-card:focus-within .card-delete,
+.card-delete:focus-visible {
+  opacity: 1;
+}
+
+.card-delete.is-armed {
+  opacity: 1;
+  background: var(--danger);
+}
+
+.card-delete:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
