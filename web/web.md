@@ -105,7 +105,10 @@ Resolves the login TODO.
 - **Same-origin is a requirement, not a convenience.** The dev server proxies `/api` to the backend
   (`vite.config.ts`) specifically so the browser sees one origin: the cookies are `SameSite=Lax` and
   the CSRF defense rests on the same-origin policy, so a cross-origin setup would need CORS and would
-  weaken exactly that. Production must serve the SPA and API behind one host for the same reason.
+  weaken exactly that. In production the API serves the SPA at the root and mounts itself under `/api`
+  ([server.md](../server/server.md#serving-the-spa)) — so the client's `/api` base is unchanged
+  between dev and prod, and the SPA's own routes (`/models/:uid`, `/dead-letters`) don't collide with
+  the API's, which share those exact paths.
 - **Labels are nullable in the UI.** A model has no label until weak labeling or a human assigns one,
   and the API reports that rather than inventing a class. The grid and detail view render it as
   "unlabeled" with a "— pick a class —" placeholder, and hide Confirm (there is nothing to confirm).
