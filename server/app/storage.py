@@ -16,7 +16,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from .config import Settings
+from .config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,34 @@ class GcsStorage:
         from google.cloud import storage
 
         self._bucket = storage.Client().bucket(bucket_name)
+        self._signing_credentials = None  # lazily fetched on the first sign
+
+    def _iam_signer(self) -> tuple[str, str]:
+        """The SA email + a live access token for IAM-based V4 signing.
+
+        Cloud Run's ambient credentials carry no private key, so signing has to go
+        through the IAM ``signBlob`` API — which needs the runtime SA's own email
+        and a current access token, and the runtime SA holding
+        ``iam.serviceAccountTokenCreator`` on itself. The credentials are fetched
+        once and the token refreshed only when stale (it lives ~1h).
+        """
+        import google.auth
+        from google.auth.transport.requests import Request as AuthRequest
+
+        if self._signing_credentials is None:
+            credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            self._signing_credentials = credentials
+        credentials = self._signing_credentials
+        if not credentials.valid:
+            credentials.refresh(AuthRequest())
+        # Prefer the configured email so signing doesn't depend on what the
+        # metadata server happens to report; fall back to the credentials' own.
+        email = get_settings().signer_service_account_email or getattr(
+            credentials, "service_account_email", None
+        )
+        return email, credentials.token
 
     def exists(self, key: str) -> bool:
         return self._bucket.blob(key).exists()
@@ -133,15 +161,24 @@ class GcsStorage:
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         """A V4 signed GET URL, so the browser reads GCS without proxying us.
 
-        Returns None if signing isn't available rather than failing the request —
-        Cloud Run's metadata-server credentials have no private key, so signing
-        needs the runtime service account to hold `iam.serviceAccountTokenCreator`
-        on itself. Falling back to streaming keeps the page working either way;
-        the log line is what tells you the IAM binding is missing.
+        Signs through the IAM ``signBlob`` API (`service_account_email` +
+        `access_token`), because Cloud Run's metadata credentials have no private
+        key — without those two arguments ``generate_signed_url`` tries to sign
+        locally and always raises there. This needs the runtime SA to hold
+        `iam.serviceAccountTokenCreator` on itself.
+
+        Returns None if signing fails rather than failing the request: the caller
+        falls back to streaming the blob through the API, so the page still works
+        (slower), and the log line points at the likely-missing IAM binding.
         """
         try:
+            email, token = self._iam_signer()
             return self._bucket.blob(key).generate_signed_url(
-                version="v4", expiration=ttl, method="GET"
+                version="v4",
+                expiration=ttl,
+                method="GET",
+                service_account_email=email,
+                access_token=token,
             )
         except Exception:
             logger.warning(

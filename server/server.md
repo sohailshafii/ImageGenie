@@ -333,10 +333,14 @@ writer and reader drifts silently, as a missing image rather than an error.
 - **`GET /artifacts/{key}` streams as a fallback** for backends that can't sign (local dev). Login
   required, since this is the dataset (NFR-7). Note the asymmetry: signed URLs are readable without a
   session until they expire. That is the trade for not proxying, and the reason the TTL is short.
-- ⚠️ **Signing needs IAM on Cloud Run.** The metadata server's credentials have no private key, so
-  `generate_signed_url` requires the runtime service account to hold `iam.serviceAccountTokenCreator`
-  on itself. Without it the code logs a warning and falls back to streaming — the page still works,
-  which is why the log line matters; it's the only signal the binding is missing.
+- ⚠️ **Signing goes through IAM on Cloud Run.** The metadata server's credentials have no private
+  key, so `GcsStorage.signed_url` signs via the IAM `signBlob` API — it passes the runtime SA's email
+  and a live access token to `generate_signed_url` (without those it would try to sign locally and
+  always raise). Two things the deploy must provide: the runtime SA holding
+  `iam.serviceAccountTokenCreator` **on itself**, and `IMAGEGENIE_SIGNER_SA_EMAIL` set to that SA
+  (else it falls back to whatever email the credentials report). If signing fails anyway, the code
+  logs a warning and streams the blob through the API instead — the page still works, slower, and the
+  log line is the signal the binding is missing.
 
 ### Dead letters
 
@@ -749,15 +753,14 @@ today, not a theoretical risk.
    under [Migrations](#migrations) for its verified state and the two ways forward. The API cannot
    serve a single authenticated request until this is done: none of the auth tables exist.
 
-2. **Signed URLs need both an IAM binding and a code change.** Granting the runtime service account
-   `iam.serviceAccountTokenCreator` **on itself** is necessary but not sufficient. Cloud Run's
-   metadata-server credentials carry no private key, so signing must go through the IAM `SignBlob`
-   API — which `generate_signed_url` only does when it is passed `service_account_email` and
-   `access_token`. The call in `storage.py` passes neither, so on Cloud Run it will raise, get
-   swallowed by the `except`, and silently fall back to streaming every image through the API.
-   Nothing breaks visibly; the page just gets slower and the API pays the bandwidth. The warning log
-   is the only signal, so **check for it after the first deploy** — and fix the call, since the IAM
-   binding alone will not change the behaviour.
+2. **Signed URLs — code done, IAM + config still to wire.** `GcsStorage.signed_url` now signs
+   through the IAM `signBlob` API (passing `service_account_email` + `access_token`), so it works
+   with Cloud Run's keyless metadata credentials instead of always raising. What the deploy must
+   provide: the runtime SA holding `iam.serviceAccountTokenCreator` **on itself** (the Terraform
+   step), and `IMAGEGENIE_SIGNER_SA_EMAIL` set to that SA. Both fall under the Terraform chunk. This
+   is the one gotcha only real GCS on Cloud Run can fully confirm, so **check the logs after the
+   first deploy** for the "could not sign a URL … falling back to streaming" warning — its absence is
+   the proof the binding is right. Until then the fallback keeps the page working, slower.
 
 3. **Pin the service to one instance.** Rate-limit counters are per-process and in-memory (see the
    note above). `max_instance_count > 1` multiplies every cap by the instance count and splits login
