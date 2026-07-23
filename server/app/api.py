@@ -603,6 +603,18 @@ def retry_failure(dead_letter_id: int, admin: AdminUser) -> Response:
     return Response(status_code=204)
 
 
+def _paginate_summaries(query, order, page: int, page_size: int) -> ModelPageOut:
+    """Run a summary `query` with `order` and wrap one page as a ModelPageOut."""
+    storage = build_storage(get_settings())  # built once, reused for every row
+    with session_scope() as session:
+        total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+        rows = session.execute(
+            query.order_by(*order).limit(page_size).offset((page - 1) * page_size)
+        ).all()
+        items = [_summary(storage, *row) for row in rows]
+    return ModelPageOut(items=items, total=total, page=page, page_size=page_size)
+
+
 @app.get("/models", response_model=ModelPageOut, dependencies=LOGIN_REQUIRED)
 def list_models(
     page: int = Query(1, ge=1),
@@ -635,14 +647,30 @@ def list_models(
     # non-deterministic across queries — 1,141 models share figure's 0.622 — and
     # paging would silently repeat and skip rows.
 
-    storage = build_storage(get_settings())  # built once, reused for every row
-    with session_scope() as session:
-        total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
-        rows = session.execute(
-            query.order_by(*order).limit(page_size).offset((page - 1) * page_size)
-        ).all()
-        items = [_summary(storage, *row) for row in rows]
-    return ModelPageOut(items=items, total=total, page=page, page_size=page_size)
+    return _paginate_summaries(query, order, page, page_size)
+
+
+# Registered before `GET /models/{uid}` so the literal path wins — otherwise
+# "deleted" would bind as a uid and this view would be unreachable.
+@app.get("/models/deleted", response_model=ModelPageOut)
+def list_deleted_models(
+    admin: AdminUser,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=PAGE_SIZE_MAX),
+) -> ModelPageOut:
+    """Soft-deleted models, most-recently-deleted first — the restore queue.
+
+    Admin-only: which models an admin removed is operational detail, not
+    something a labeler should page through.
+    """
+    latest = _latest_labels()
+    query = (
+        select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
+        .outerjoin(latest, Model.uid == latest.c.model_uid)
+        .where(Model.deleted_at.is_not(None))
+    )
+    order = (Model.deleted_at.desc(), Model.uid)
+    return _paginate_summaries(query, order, page, page_size)
 
 
 def _require_live_model(session: Session, uid: str) -> Model:
@@ -679,6 +707,41 @@ def _load_summary(uid: str) -> ModelSummaryOut:
 
 @app.get("/models/{uid}", response_model=ModelSummaryOut, dependencies=LOGIN_REQUIRED)
 def get_model(uid: str) -> ModelSummaryOut:
+    return _load_summary(uid)
+
+
+@app.delete("/models/{uid}", status_code=204)
+def delete_model(uid: str, admin: AdminUser) -> Response:
+    """Soft-delete a model (admin-only, FR-9): hide it, keep its data.
+
+    Idempotent — deleting an already-deleted model is a no-op, so a double click
+    or a retried request doesn't error. The blobs are left in place and the row
+    keeps all its labels, so `POST /models/{uid}/restore` fully reverses this
+    (server.md#soft-delete).
+    """
+    with session_scope() as session:
+        model = session.get(Model, uid)
+        if model is None:
+            raise HTTPException(status_code=404, detail="unknown model")
+        if model.deleted_at is None:
+            model.deleted_at = datetime.now(UTC)
+    logger.info("soft-deleted", extra={"uid": uid, "admin": admin.email})
+    return Response(status_code=204)
+
+
+@app.post("/models/{uid}/restore", response_model=ModelSummaryOut)
+def restore_model(uid: str, admin: AdminUser) -> ModelSummaryOut:
+    """Undo a soft delete (admin-only), returning the now-visible model.
+
+    404 if the uid doesn't exist; restoring a model that isn't deleted just
+    returns it, so this is idempotent too.
+    """
+    with session_scope() as session:
+        model = session.get(Model, uid)
+        if model is None:
+            raise HTTPException(status_code=404, detail="unknown model")
+        model.deleted_at = None
+    logger.info("restored", extra={"uid": uid, "admin": admin.email})
     return _load_summary(uid)
 
 
