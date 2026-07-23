@@ -764,19 +764,51 @@ today, not a theoretical risk.
    backoff state across instances. Pinning is cheaper than the alternative — a shared store means
    Redis, which is standing spend against NFR-1's $100.
 
-4. **The SPA ships inside the API deployment.** Mount `web/dist` with FastAPI `StaticFiles` (not
-   built yet — there is no `StaticFiles` mount in `server/app/` today). This is not a packaging
-   preference: the CSRF defense is same-origin double-submit, so splitting the SPA onto another
-   origin would force CORS and weaken exactly the thing CSRF relies on. Serving it from GCS instead
-   is also HTTP-only on a custom domain, and HTTPS there needs a GCP load balancer at ~$18/month
-   against a $100 budget. One origin is both the cheap answer and the secure one. See
-   [web.md](../web/web.md#auth--roles).
+4. **The SPA ships inside the API deployment** — one origin, because the CSRF defense is same-origin
+   double-submit; splitting the SPA onto another origin would force CORS and weaken exactly the thing
+   CSRF relies on, and GCS static hosting is HTTP-only on a custom domain (HTTPS needs a ~$18/month
+   load balancer). Built and wired — see [Serving the SPA](#serving-the-spa) for how, and set
+   `IMAGEGENIE_SPA_DIR` to where the image copies `web/dist`. The **image must actually contain the
+   build**, which is the one remaining piece: `make deploy-image` builds from `server/` only, so the
+   Dockerfile needs a stage that builds the SPA and copies it in (or the build context widened).
 
 Also set, in the same deploy: `IMAGEGENIE_COOKIE_SECURE=true` (defaults false for local http — over
 HTTPS the session cookie must be `Secure`), `IMAGEGENIE_TRUST_PROXY_HEADERS=true` (Cloud Run is a
 proxy; without it every request keys to the same front-end IP), and a real `IMAGEGENIE_MAIL_FROM`
 plus `IMAGEGENIE_RESEND_API_KEY` — with no key the app logs verification and invite links instead of
 sending them, so signup silently strands every user.
+
+### Serving the SPA
+
+The built SPA and the API share one origin (gotcha 4 above). The catch is that the SPA's own
+client-side routes share the API's URL namespace — **`/models/{uid}` is both a labeling page and a
+JSON endpoint**, and `/dead-letters` likewise. One route can't answer both a browser navigation (wants
+the app shell) and a `fetch` (wants JSON), so they can't both live at the root.
+
+**The API therefore mounts under `/api`, and the SPA is served at the root.** `/api` is exactly the
+prefix the frontend already sends and the Vite dev server already strips, so nothing in the client
+changes between dev and prod.
+
+- The API app (`app`, every route unprefixed) is **untouched**: it still runs at the root under
+  `uvicorn app.api:app` for local backend-only dev, and the whole test suite exercises it that way.
+- `app.api:root_app` is the **production entrypoint**: it mounts `app` at `/api` and serves
+  `IMAGEGENIE_SPA_DIR` at `/` via a catch-all. The catch-all (not a `StaticFiles` mount) returns a
+  real file when the path names one and otherwise falls back to `index.html`, because a client-routed
+  deep link like `/deleted` is not a file on disk and must reach the browser router. Hashed
+  `assets/*` get an immutable cache header; the shell gets `no-cache` so a deploy can't strand
+  browsers on a stale `index.html` pointing at asset hashes the new build dropped.
+
+Two mount-specific details, both easy to get wrong and both regression-tested:
+
+- **The CSRF middleware matches the mount-relative path.** It runs at the outermost layer, before the
+  router strips the mount prefix, so under `/api` the exempt `/auth/login` arrives as
+  `/api/auth/login` with `root_path == "/api"`. It strips `root_path` before checking the exempt set,
+  or every login would 403.
+- **Streaming-fallback artifact URLs carry the mount prefix.** When the backend can't sign a URL
+  (local storage, or Cloud Run before the [signing fix](#deploying-the-api-to-cloud-run)), it hands
+  the browser a `/artifacts/{key}` path to stream from. Mounted, that has to be `/api/artifacts/...`
+  or the browser requests it at the root and gets the SPA shell instead of the blob — so the URL is
+  built from the request's `root_path` (empty unmounted, `/api` mounted).
 
 ## Request Resilience
 

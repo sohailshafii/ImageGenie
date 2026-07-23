@@ -35,7 +35,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -179,10 +179,20 @@ async def enforce_csrf(request: Request, call_next):
     Middleware rather than a per-route dependency so it **fails closed**: a new
     state-changing endpoint is protected the day it's added, and skipping the
     check has to be a deliberate edit to `CSRF_EXEMPT_PATHS`.
+
+    Matches the exemptions against the **mount-relative** path. This middleware
+    runs at the outermost layer, before the router strips the mount prefix, so
+    mounted under `/api` the exempt `/auth/login` arrives as `/api/auth/login`
+    with `root_path == "/api"`. Stripping root_path keeps the exemptions correct
+    whether the app runs mounted or standalone (server.md#serving-the-spa).
     """
+    path = request.scope["path"]
+    root_path = request.scope.get("root_path", "")
+    if root_path and path.startswith(root_path):
+        path = path[len(root_path) :] or "/"
     if (
         request.method not in CSRF_SAFE_METHODS
-        and request.url.path not in CSRF_EXEMPT_PATHS
+        and path not in CSRF_EXEMPT_PATHS
         and not csrf_tokens_match(
             request.cookies.get(CSRF_COOKIE), request.headers.get(CSRF_HEADER)
         )
@@ -543,13 +553,27 @@ def _latest_labels():
     )
 
 
-def _thumbnail_url(storage, uid: str) -> str:
+def _url_prefix(request: Request) -> str:
+    """The mount prefix for building same-origin artifact URLs.
+
+    In production the API is mounted at `/api` (so the SPA can own the root), and
+    Starlette exposes that as `root_path`; unmounted (local backend dev, the test
+    suite) it is empty. A streaming-fallback artifact URL must carry this prefix
+    or the browser would request it at the root and hit the SPA shell instead of
+    the blob (server.md#serving-the-spa).
+    """
+    return request.scope.get("root_path", "")
+
+
+def _thumbnail_url(storage, uid: str, url_prefix: str = "") -> str:
     """URL for a model's first rendered view. No existence check — see the field."""
     key = view_key(uid, 0)
-    return storage.signed_url(key, ARTIFACT_URL_TTL) or f"/artifacts/{key}"
+    return storage.signed_url(key, ARTIFACT_URL_TTL) or f"{url_prefix}/artifacts/{key}"
 
 
-def _summary(storage, uid, title, tags, class_name, source, confidence) -> ModelSummaryOut:
+def _summary(
+    storage, uid, title, tags, class_name, source, confidence, url_prefix: str = ""
+) -> ModelSummaryOut:
     return ModelSummaryOut(
         uid=uid,
         # Falls back to the uid until `app.backfill_metadata` has run — a card
@@ -559,7 +583,7 @@ def _summary(storage, uid, title, tags, class_name, source, confidence) -> Model
         class_name=class_name,
         source=source.value if source is not None else None,
         confidence=confidence,
-        thumbnail=_thumbnail_url(storage, uid),
+        thumbnail=_thumbnail_url(storage, uid, url_prefix),
     )
 
 
@@ -603,7 +627,9 @@ def retry_failure(dead_letter_id: int, admin: AdminUser) -> Response:
     return Response(status_code=204)
 
 
-def _paginate_summaries(query, order, page: int, page_size: int) -> ModelPageOut:
+def _paginate_summaries(
+    query, order, page: int, page_size: int, url_prefix: str = ""
+) -> ModelPageOut:
     """Run a summary `query` with `order` and wrap one page as a ModelPageOut."""
     storage = build_storage(get_settings())  # built once, reused for every row
     with session_scope() as session:
@@ -611,12 +637,13 @@ def _paginate_summaries(query, order, page: int, page_size: int) -> ModelPageOut
         rows = session.execute(
             query.order_by(*order).limit(page_size).offset((page - 1) * page_size)
         ).all()
-        items = [_summary(storage, *row) for row in rows]
+        items = [_summary(storage, *row, url_prefix=url_prefix) for row in rows]
     return ModelPageOut(items=items, total=total, page=page, page_size=page_size)
 
 
 @app.get("/models", response_model=ModelPageOut, dependencies=LOGIN_REQUIRED)
 def list_models(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=PAGE_SIZE_MAX),
     class_name: str | None = None,
@@ -647,13 +674,14 @@ def list_models(
     # non-deterministic across queries — 1,141 models share figure's 0.622 — and
     # paging would silently repeat and skip rows.
 
-    return _paginate_summaries(query, order, page, page_size)
+    return _paginate_summaries(query, order, page, page_size, _url_prefix(request))
 
 
 # Registered before `GET /models/{uid}` so the literal path wins — otherwise
 # "deleted" would bind as a uid and this view would be unreachable.
 @app.get("/models/deleted", response_model=ModelPageOut)
 def list_deleted_models(
+    request: Request,
     admin: AdminUser,
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=PAGE_SIZE_MAX),
@@ -670,7 +698,7 @@ def list_deleted_models(
         .where(Model.deleted_at.is_not(None))
     )
     order = (Model.deleted_at.desc(), Model.uid)
-    return _paginate_summaries(query, order, page, page_size)
+    return _paginate_summaries(query, order, page, page_size, _url_prefix(request))
 
 
 def _require_live_model(session: Session, uid: str) -> Model:
@@ -686,7 +714,7 @@ def _require_live_model(session: Session, uid: str) -> Model:
     return model
 
 
-def _load_summary(uid: str) -> ModelSummaryOut:
+def _load_summary(uid: str, url_prefix: str = "") -> ModelSummaryOut:
     """Read one live model's current label, or 404. Shared by the GET/PUT routes.
 
     A soft-deleted model reads as 404 here — the same as a nonexistent one, since
@@ -702,12 +730,12 @@ def _load_summary(uid: str) -> ModelSummaryOut:
         ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="unknown model")
-    return _summary(build_storage(get_settings()), *row)
+    return _summary(build_storage(get_settings()), *row, url_prefix=url_prefix)
 
 
 @app.get("/models/{uid}", response_model=ModelSummaryOut, dependencies=LOGIN_REQUIRED)
-def get_model(uid: str) -> ModelSummaryOut:
-    return _load_summary(uid)
+def get_model(request: Request, uid: str) -> ModelSummaryOut:
+    return _load_summary(uid, _url_prefix(request))
 
 
 @app.delete("/models/{uid}", status_code=204)
@@ -730,7 +758,7 @@ def delete_model(uid: str, admin: AdminUser) -> Response:
 
 
 @app.post("/models/{uid}/restore", response_model=ModelSummaryOut)
-def restore_model(uid: str, admin: AdminUser) -> ModelSummaryOut:
+def restore_model(request: Request, uid: str, admin: AdminUser) -> ModelSummaryOut:
     """Undo a soft delete (admin-only), returning the now-visible model.
 
     404 if the uid doesn't exist; restoring a model that isn't deleted just
@@ -742,7 +770,7 @@ def restore_model(uid: str, admin: AdminUser) -> ModelSummaryOut:
             raise HTTPException(status_code=404, detail="unknown model")
         model.deleted_at = None
     logger.info("restored", extra={"uid": uid, "admin": admin.email})
-    return _load_summary(uid)
+    return _load_summary(uid, _url_prefix(request))
 
 
 def _validated_upload_suffix(filename: str | None) -> str:
@@ -829,6 +857,7 @@ def _reject_unloadable_mesh(data: bytes, file_type: str, filename: str | None) -
 
 @app.post("/models/upload", response_model=ModelSummaryOut, status_code=201)
 def upload_model(
+    request: Request,
     admin: AdminUser,
     file: Annotated[UploadFile, File(description="STL, OBJ, or GLB mesh")],
 ) -> ModelSummaryOut:
@@ -871,13 +900,13 @@ def upload_model(
 
     publish_next(settings.convert_topic, uid)
     logger.info("uploaded", extra={"uid": uid, "admin": admin.email, "key": key})
-    return _load_summary(uid)
+    return _load_summary(uid, _url_prefix(request))
 
 
 @app.get(
     "/models/{uid}/artifacts", response_model=ModelArtifactsOut, dependencies=LOGIN_REQUIRED
 )
-def get_model_artifacts(uid: str) -> ModelArtifactsOut:
+def get_model_artifacts(request: Request, uid: str) -> ModelArtifactsOut:
     """URLs for a model's rendered views and its normalized mesh.
 
     Prefers time-limited signed URLs so the browser reads object storage directly
@@ -890,11 +919,12 @@ def get_model_artifacts(uid: str) -> ModelArtifactsOut:
     than broken images.
     """
     storage = build_storage(get_settings())
+    url_prefix = _url_prefix(request)
 
     def resolve(key: str) -> str | None:
         if not storage.exists(key):
             return None
-        return storage.signed_url(key, ARTIFACT_URL_TTL) or f"/artifacts/{key}"
+        return storage.signed_url(key, ARTIFACT_URL_TTL) or f"{url_prefix}/artifacts/{key}"
 
     with session_scope() as session:
         _require_live_model(session, uid)
@@ -925,7 +955,9 @@ def stream_artifact(key: str) -> Response:
 
 
 @app.put("/models/{uid}/label", response_model=ModelSummaryOut)
-def set_label(uid: str, body: LabelIn, admin: AdminUser) -> ModelSummaryOut:
+def set_label(
+    request: Request, uid: str, body: LabelIn, admin: AdminUser
+) -> ModelSummaryOut:
     """Record a **manual** label (confirm keeps the class, correct changes it).
 
     Admin-only (FR-8); the correction is attributed to the calling admin.
@@ -944,4 +976,58 @@ def set_label(uid: str, body: LabelIn, admin: AdminUser) -> ModelSummaryOut:
                 annotator=admin.email,
             )
         )
-    return _load_summary(uid)
+    return _load_summary(uid, _url_prefix(request))
+
+
+# ── SPA serving (server.md#serving-the-spa) ─────────────────────────────────
+# In production the built SPA ships inside this deployment so it and the API
+# share one origin — the CSRF scheme rests on that. But the SPA's own client-side
+# routes share the API's namespace (`/models/:uid` is both a page and an
+# endpoint), so they can't both live at the root. The API therefore mounts under
+# `/api` — which is exactly the prefix the frontend already sends and the Vite dev
+# server already strips — and the SPA is served at the root.
+#
+# The public entrypoint is `app.api:root_app`. The API app above is untouched and
+# still `app`, so it runs at the root under a direct `uvicorn app.api:app` (local
+# backend-only dev) and the whole test suite exercises it that way.
+
+# Hashed asset filenames can be cached forever; the shell must never be, or a
+# deploy leaves browsers holding an index.html that points at asset hashes the
+# new build no longer serves.
+_SPA_ASSET_CACHE = "public, max-age=31536000, immutable"
+_SPA_SHELL_CACHE = "no-cache"
+
+# Same lifespan as `app`: mounting a sub-app does not run its lifespan, so the
+# schema bootstrap (init_db) has to hang off the app uvicorn actually serves.
+root_app = FastAPI(lifespan=lifespan, title="ImageGenie")
+root_app.mount("/api", app)
+
+
+@root_app.get("/{spa_path:path}", include_in_schema=False)
+def serve_spa(spa_path: str) -> FileResponse:
+    """Serve a built SPA file, or its index shell for client-routed paths.
+
+    A catch-all rather than a StaticFiles mount because the SPA routes client-side:
+    a deep link like `/deleted` or `/models/{uid}` is not a file on disk, so an
+    unknown path must fall back to `index.html` for the browser router to take
+    over — a plain static mount would 404 it. Registered after the `/api` mount,
+    so it only ever sees non-API paths.
+
+    404s when no `spa_dir` is configured, so a misconfigured deploy fails loudly
+    rather than serving nothing.
+    """
+    spa_dir = get_settings().spa_dir
+    if spa_dir is None:
+        raise HTTPException(status_code=404, detail="not found")
+    root = Path(spa_dir).resolve()
+    index = root / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+
+    # Serve a real file when the path names one *inside* the SPA dir — the
+    # `root in parents` check rejects `..` traversal, which resolves outside root.
+    candidate = (root / spa_path).resolve()
+    if spa_path and candidate.is_file() and root in candidate.parents:
+        cache = _SPA_ASSET_CACHE if spa_path.startswith("assets/") else _SPA_SHELL_CACHE
+        return FileResponse(candidate, headers={"Cache-Control": cache})
+    return FileResponse(index, headers={"Cache-Control": _SPA_SHELL_CACHE})

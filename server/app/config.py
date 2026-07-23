@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # error than the platform's.
     upload_max_bytes: int = 32 * 1024 * 1024
 
+    # Directory of the built SPA (web/dist) for the API to serve, so the frontend
+    # and API share one origin — a hard requirement of the CSRF scheme, not a
+    # packaging preference (web.md#auth--roles). None = API-only (local backend
+    # dev runs the SPA under Vite instead, and the test suite needs no build).
+    # The deploy sets this to where the image copies the build.
+    spa_dir: Path | None = None
+
     # Auth cookies (server.md#api-layer). `Secure` is off by default so local dev
     # over plain http works; every deployed environment must set
     # IMAGEGENIE_COOKIE_SECURE=true so the session cookie never crosses the wire

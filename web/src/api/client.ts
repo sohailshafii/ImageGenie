@@ -10,6 +10,11 @@ import type { ApiErrorCode } from './types';
 // served behind the same host in production. Same-origin is not incidental — the
 // CSRF defense (server.md#csrf) rests on it, and a cross-origin API would mean
 // enabling CORS and weakening exactly that.
+//
+// The `/api` prefix separates the JSON API from the SPA's own client-side routes,
+// which share the same namespace (`/models/:uid` is both a page *and* an API
+// endpoint). In dev the Vite server strips the prefix; in production the API is
+// mounted under `/api` while the SPA is served at the root (server.md#serving-the-spa).
 const API_BASE = '/api';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
