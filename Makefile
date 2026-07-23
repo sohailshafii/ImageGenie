@@ -88,9 +88,11 @@ compose-seed: ## publish COUNT download jobs into the running skeleton (default 
 compose-down: ## stop the skeleton and remove its volumes
 	$(COMPOSE) down -v
 
-deploy-image: ## build (linux/amd64) + push the worker image to Artifact Registry
+deploy-image: ## build (linux/amd64) + push the worker/API image to Artifact Registry
 	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
-	docker build --platform linux/amd64 -t $(WORKER_IMAGE) server/
+	# Context is the repo root so the build can compile the SPA (web/) alongside
+	# the server; the Dockerfile is multi-stage (server/Dockerfile).
+	docker build --platform linux/amd64 -f server/Dockerfile -t $(WORKER_IMAGE) .
 	docker push $(WORKER_IMAGE)
 
 clean: ## remove the virtualenv and caches
