@@ -591,6 +591,18 @@ select:focus {
   color: var(--text-muted);
 }
 
+.pager-jump {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.pager-jump input {
+  width: 4.5rem;
+}
+
 /* ── Dead-letter (failed ingestion) table ──────────────────────────────────── */
 .table-wrap {
   overflow-x: auto;
