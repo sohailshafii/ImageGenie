@@ -23,6 +23,7 @@ export function BrowsePage() {
   const [sourceFilter, setSourceFilter] = useState<LabelSource | 'all'>('all');
   const [sort, setSort] = useState<ModelSort>('uid');
   const [page, setPage] = useState(1);
+  const [jumpValue, setJumpValue] = useState('');
   const [data, setData] = useState<ModelPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingUid, setSavingUid] = useState<string | null>(null);
@@ -271,6 +272,31 @@ export function BrowsePage() {
           >
             Next →
           </button>
+          {/* Jump to an arbitrary page — prev/next alone is unusable across
+              hundreds of pages of models. */}
+          <form
+            className="pager-jump"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const target = Math.trunc(Number(jumpValue));
+              if (Number.isFinite(target) && target >= 1) {
+                setPage(Math.min(totalPages, Math.max(1, target)));
+              }
+              setJumpValue('');
+            }}
+          >
+            <label htmlFor="jump-page">Go to page</label>
+            <input
+              id="jump-page"
+              type="number"
+              min={1}
+              max={totalPages}
+              value={jumpValue}
+              onChange={(event) => setJumpValue(event.target.value)}
+              placeholder={String(data.page)}
+              disabled={loading || totalPages <= 1}
+            />
+          </form>
         </nav>
       )}
     </AppLayout>
