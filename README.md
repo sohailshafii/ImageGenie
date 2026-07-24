@@ -92,6 +92,35 @@ The dev server proxies `/api` and `/artifacts` to the API so the browser sees a 
 the session cookies are `SameSite=Lax` and the CSRF defense depends on that
 ([web/web.md](web/web.md#auth--roles)).
 
+## Deploy to the cloud
+
+Heavy work runs on GCP (Cloud Run + Cloud SQL + GCS). You bring your own GCP project (with billing
+enabled) and a Resend account with a verified domain — nothing here is shared.
+
+```
+make cloud-tools              # terraform, gcloud, cloud-sql-proxy (macOS/Homebrew)
+make deploy-config            # scaffold .env + infra/terraform.tfvars from the examples
+```
+
+Fill in the two scaffolded files:
+
+- `infra/terraform.tfvars` — `project_id`, `region`, `billing_account`, `budget_amount`
+- `.env` — `TF_VAR_mail_from`, `TF_VAR_resend_api_key` (Sending-access key), and the admin login
+
+Then run the deploy:
+
+```
+set -a; source .env; set +a   # export the secrets for Terraform + the scripts
+make deploy-image             # build + push the API/worker image
+scripts/adopt_schema.sh       # drop + rebuild the schema from storage (destructive, gated)
+terraform -chdir=infra apply  # create the API service; prints api_url
+scripts/check_deploy.sh       # health + the URL-signing check
+```
+
+Finally set `app_base_url = <api_url>` in `infra/terraform.tfvars` and re-apply, so email links point
+at the real host. Full flow and gotchas:
+[server/server.md](server/server.md#deploying-the-api-to-cloud-run).
+
 ## Distribution policy
 
 **Code only.** Labeled data and trained models are **not** redistributed — you run the pipeline

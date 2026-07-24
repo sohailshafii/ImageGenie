@@ -30,7 +30,7 @@ variable "budget_amount" {
 # to the api_url output after the first apply and re-apply. ---
 
 variable "mail_from" {
-  description = "Verified Resend sender, e.g. 'ImageGenie <noreply@onboarding.furiousnacho.com>'."
+  description = "Verified Resend sender, e.g. 'ImageGenie <noreply@yourdomain.com>'."
   type        = string
 }
 

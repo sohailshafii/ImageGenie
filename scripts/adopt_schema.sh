@@ -27,6 +27,13 @@
 
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Load ./.env (gitignored) so admin creds + overrides are picked up without being
+# exported by hand; set -a exports each assignment to the tools invoked below.
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && { set -a; . "$REPO_ROOT/.env"; set +a; }
+
 # ── Config (override via env) ───────────────────────────────────────────────
 PROJECT="${IMAGEGENIE_GCP_PROJECT:-imagegenie-pipeline}"
 REGION="${IMAGEGENIE_GCP_REGION:-us-central1}"
@@ -48,7 +55,6 @@ for arg in "$@"; do
   esac
 done
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PY="${REPO_ROOT}/.venv/bin/python"
 ALEMBIC="${REPO_ROOT}/.venv/bin/alembic"
 
