@@ -643,7 +643,9 @@ origin, since the links point at the SPA).
   resend.
 - **No API key → log the link instead of sending**, so local dev needs no credentials. This writes a
   token-bearing link into the logs and is therefore strictly a development affordance: **every
-  deployed environment must set `IMAGEGENIE_RESEND_API_KEY`.**
+  deployed environment must set `IMAGEGENIE_RESEND_API_KEY`.** The Cloud Run deploy enforces this —
+  `mail_from` and `resend_api_key` are required tfvars ([api.tf](../infra/api.tf)), so the service
+  can't come up without them.
 - **The transport is swappable** (`set_mail_sender`) and tests use that seam, so subjects, bodies, and
   generated links are actually asserted. Testing only the no-key path would leave the builder — the
   part that can silently generate a broken link — uncovered.
@@ -766,18 +768,26 @@ entrypoint. It wires the four things that would otherwise break the deploy:
 
 **The one manual gate is the schema.** The existing Cloud SQL database was built by the workers'
 `create_all` and knows nothing about migrations — the API cannot serve a single authenticated request
-until the auth tables exist. Reconcile it (drop-and-rebuild or hand-apply + `alembic stamp head`, see
-[Migrations](#migrations)) before or right after the apply.
+until the auth tables exist. `scripts/adopt_schema.sh` does the drop-and-rebuild end to end: it
+verifies the buckets are populated, drops the schema, runs `alembic upgrade head`, rebuilds
+`model`/`artifact` from storage ([Rebuilding the tables from storage](#rebuilding-the-tables-from-storage)),
+backfills metadata + weak labels, and bootstraps the first admin (`app.create_admin` — signup is
+invite-gated and invites need an admin, so a fresh database has no other way in). It is destructive by
+design and safe only because the buckets hold the artifacts it rebuilds from — which it checks first.
 
-**Deploy order:** `make deploy-image` (build + push the image, now including the SPA) → adopt the
-schema → `terraform -chdir=infra apply` (creates the service; prints `api_url`). The apply also shows
-a benign in-place update on the four worker services — a provider cosmetic (`min_instance_count 0 →
-null`), not a behavior change.
+**Deploy order:**
 
-**Email is optional** and off unless the `mail_from` / `app_base_url` / `resend_api_key` tfvars are
-set (server.md#email). Without them the app logs verification and invite links instead of sending
-them — fine for the pre-seeded admin, but signup for anyone else needs them. Set `app_base_url` to the
-`api_url` output after the first apply and re-apply.
+1. `make deploy-image` — build + push the image (now including the SPA).
+2. `scripts/adopt_schema.sh` — reconcile the schema and seed the admin (once).
+3. `terraform -chdir=infra apply` — create the service; prints `api_url`. Also shows a benign in-place
+   update on the four worker services (a provider cosmetic, `min_instance_count 0 → null`).
+4. `scripts/check_deploy.sh` — health, plus the signing-fallback log scan that confirms gotcha 2.
+
+**Email is required** — `mail_from` and `resend_api_key` are mandatory tfvars, because the deployed
+app must be able to send verification and invite mail or nobody but the seeded admin can get an
+account (server.md#email). The one exception is `app_base_url` (the link host): the Cloud Run URL
+isn't known until the service exists, so leave it empty for the first apply, then set it to the
+`api_url` output and re-apply.
 
 ### Serving the SPA
 

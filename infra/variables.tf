@@ -23,25 +23,25 @@ variable "budget_amount" {
   default     = 100
 }
 
-# --- Optional transactional email (API). All empty ⇒ email disabled: the app logs
-# verification/invite links instead of sending them, which is fine until signup for
-# users other than the pre-seeded admin is needed (server.md#email). ---
+# --- Transactional email (API), server.md#email. mail_from + resend_api_key are
+# REQUIRED — the deployed app must be able to send verification and invite mail, or
+# nobody but the pre-seeded admin can ever get an account. app_base_url is the one
+# two-phase value: the Cloud Run URL isn't known until the service exists, so set it
+# to the api_url output after the first apply and re-apply. ---
 
 variable "mail_from" {
-  description = "Verified Resend sender, e.g. 'ImageGenie <noreply@...>'. Empty disables email."
+  description = "Verified Resend sender, e.g. 'ImageGenie <noreply@onboarding.furiousnacho.com>'."
   type        = string
-  default     = ""
-}
-
-variable "app_base_url" {
-  description = "Public origin of the app for email links (set to the api_url output after first apply). Empty disables email links."
-  type        = string
-  default     = ""
 }
 
 variable "resend_api_key" {
-  description = "Resend API key for sending email. Empty disables sending."
+  description = "Resend API key for sending transactional email."
+  type        = string
+  sensitive   = true
+}
+
+variable "app_base_url" {
+  description = "Public origin of the app for email links; set to the api_url output after the first apply, then re-apply. Empty until then (links use the app default)."
   type        = string
   default     = ""
-  sensitive   = true
 }

@@ -53,13 +53,10 @@ resource "google_service_account_iam_member" "api_self_sign" {
   member             = "serviceAccount:${google_service_account.api.email}"
 }
 
-# --- Optional transactional email (Resend) ---
-# Left unset, the app logs verification / invite links instead of sending them —
-# fine for the pre-seeded admin, but signup for anyone else needs a key
-# (server.md#email). The key is a Secret Manager secret so it never sits in the
-# service's plain env; the value comes from the (sensitive) tfvar.
+# --- Transactional email (Resend), required (server.md#email) ---
+# The key is a Secret Manager secret so it never sits in the service's plain env;
+# the value comes from the (sensitive) tfvar.
 resource "google_secret_manager_secret" "resend_api_key" {
-  count     = var.resend_api_key != "" ? 1 : 0
   secret_id = "imagegenie-resend-api-key"
   replication {
     auto {}
@@ -68,14 +65,12 @@ resource "google_secret_manager_secret" "resend_api_key" {
 }
 
 resource "google_secret_manager_secret_version" "resend_api_key" {
-  count       = var.resend_api_key != "" ? 1 : 0
-  secret      = google_secret_manager_secret.resend_api_key[0].id
+  secret      = google_secret_manager_secret.resend_api_key.id
   secret_data = var.resend_api_key
 }
 
 resource "google_secret_manager_secret_iam_member" "api_resend_secret" {
-  count     = var.resend_api_key != "" ? 1 : 0
-  secret_id = google_secret_manager_secret.resend_api_key[0].id
+  secret_id = google_secret_manager_secret.resend_api_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.api.email}"
 }
@@ -150,12 +145,20 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
 
-      # Optional email config — only wired when the corresponding tfvar is set.
-      dynamic "env" {
-        for_each = var.mail_from != "" ? [1] : []
-        content {
-          name  = "IMAGEGENIE_MAIL_FROM"
-          value = var.mail_from
+      # Transactional email (required). The sender and key are always set; the
+      # link host (APP_BASE_URL) is the one two-phase value — set it to the
+      # api_url output after the first apply and re-apply (server.md#email).
+      env {
+        name  = "IMAGEGENIE_MAIL_FROM"
+        value = var.mail_from
+      }
+      env {
+        name = "IMAGEGENIE_RESEND_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.resend_api_key.secret_id
+            version = "latest"
+          }
         }
       }
       dynamic "env" {
@@ -163,18 +166,6 @@ resource "google_cloud_run_v2_service" "api" {
         content {
           name  = "IMAGEGENIE_APP_BASE_URL"
           value = var.app_base_url
-        }
-      }
-      dynamic "env" {
-        for_each = var.resend_api_key != "" ? [1] : []
-        content {
-          name = "IMAGEGENIE_RESEND_API_KEY"
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.resend_api_key[0].secret_id
-              version = "latest"
-            }
-          }
         }
       }
 
