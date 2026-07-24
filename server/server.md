@@ -632,8 +632,10 @@ can the account log in.
 - **Tokens are consumed even when expired** — a one-time token must not survive its own use. Note the
   ordering this forces: the failure is raised *after* the transaction commits, because raising inside
   `session_scope` rolls the block back and would leave a spent token replayable.
-- **Invites never grant admin.** Signup always creates a `user`; promotion is a deliberate manual
-  step.
+- **The invite carries the role.** The admin chooses viewer (`user`) or `admin` when minting the
+  invite (`Invite.role`, defaulting to `user`), and signup creates the account with it. An admin
+  invite therefore grants admin — acceptable because only admins can invite, so it stays a
+  trusted-caller decision rather than a self-service escalation.
 ### Email
 
 **Provider → Resend** (`server/app/mail.py`), reached over plain HTTP rather than its SDK — the API

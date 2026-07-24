@@ -211,6 +211,9 @@ class Invite(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     accepted: Mapped[bool] = mapped_column(default=False)
     invited_by: Mapped[str | None] = mapped_column(default=None)  # admin's email
+    # The role the account is created with when this invite is accepted — the
+    # admin chooses viewer (``user``) or ``admin`` at invite time (FR-8).
+    role: Mapped[UserRole] = mapped_column(default=UserRole.user)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

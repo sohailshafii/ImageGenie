@@ -19,6 +19,7 @@ interface InviteResponse {
   email: string;
   expires_at: string;
   accepted: boolean;
+  role: Invite['role'];
 }
 
 /** POST /auth/login — throws `invalid_credentials`, or `unverified`. */
@@ -70,11 +71,12 @@ export async function logout(): Promise<void> {
  * address (re-inviting refreshes it). Throws `unauthorized`/`forbidden` for a
  * non-admin caller, or `validation_error` on a malformed address.
  */
-export async function createInvite(email: string): Promise<Invite> {
-  const invite = await request<InviteResponse>('POST', '/auth/invites', { email });
+export async function createInvite(email: string, role: Invite['role']): Promise<Invite> {
+  const invite = await request<InviteResponse>('POST', '/auth/invites', { email, role });
   return {
     email: invite.email,
     expiresAt: invite.expires_at,
     accepted: invite.accepted,
+    role: invite.role,
   };
 }
