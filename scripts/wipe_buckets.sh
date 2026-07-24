@@ -21,6 +21,11 @@
 
 set -euo pipefail
 
+# Load ./.env (gitignored) so bucket/project overrides are picked up (see .env.example).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && { set -a; . "$REPO_ROOT/.env"; set +a; }
+
 # ── Config (override via env) ───────────────────────────────────────────────
 PROJECT="${IMAGEGENIE_GCP_PROJECT:-imagegenie-pipeline}"
 RAW_BUCKET="${IMAGEGENIE_RAW_BUCKET:-${PROJECT}-raw}"

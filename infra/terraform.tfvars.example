@@ -4,10 +4,10 @@ region          = "us-central1"
 billing_account = "XXXXXX-XXXXXX-XXXXXX"
 budget_amount   = 100
 
-# Transactional email — mail_from and resend_api_key are REQUIRED (the deployed
-# app must be able to send verification + invite mail).
-mail_from      = "ImageGenie <noreply@onboarding.furiousnacho.com>"
-resend_api_key = "re_..." # sensitive; goes through Secret Manager, not plain env
+# Transactional email is REQUIRED but is NOT set here. mail_from and resend_api_key
+# are per-operator values (your own verified Resend sender + key), so they live in
+# the gitignored .env as TF_VAR_mail_from / TF_VAR_resend_api_key (see .env.example).
+# Source .env before `terraform apply` and Terraform reads them automatically.
 
 # The Cloud Run URL isn't known until the service exists. Leave empty for the first
 # apply, then set app_base_url = the api_url output and re-apply so email links

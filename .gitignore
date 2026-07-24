@@ -4,6 +4,10 @@
 .DS_Store
 
 # Python
+# Local secrets sourced by the deploy scripts (admin creds + TF_VAR_resend_api_key).
+# Commit .env.example instead.
+.env
+
 __pycache__/
 *.py[cod]
 .venv/
@@ -24,3 +28,7 @@ render_captures/
 
 # Alembic bytecode (versions/ itself is tracked — migrations are source)
 server/alembic/versions/__pycache__/
+
+# Editor swap/backup files for the secrets file
+.env.*
+!.env.example

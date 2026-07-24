@@ -36,9 +36,15 @@ setup: ## create the virtualenv and install ml + server + dev deps
 	$(BIN)/pip install --upgrade pip
 	$(BIN)/pip install -r requirements.txt -r server/requirements.txt -e ".[dev]"
 
-cloud-tools: ## install cloud-deploy CLIs (terraform, gcloud) — macOS/Homebrew, idempotent
+cloud-tools: ## install cloud-deploy CLIs (terraform, gcloud, cloud-sql-proxy) — macOS/Homebrew, idempotent
 	brew install hashicorp/tap/terraform
 	brew install --cask google-cloud-sdk
+	brew install cloud-sql-proxy
+
+deploy-config: ## scaffold .env + infra/terraform.tfvars from the examples (won't clobber)
+	@test -f .env || { cp .env.example .env && echo "created .env — fill in the secrets"; }
+	@test -f infra/terraform.tfvars || { cp infra/terraform.tfvars.example infra/terraform.tfvars && echo "created infra/terraform.tfvars — fill in project/billing"; }
+	@echo "Edit both, then: set -a; source .env; set +a; make deploy-image; scripts/adopt_schema.sh; terraform -chdir=infra apply"
 
 lint: ## ruff-check the codebase
 	$(BIN)/ruff check .

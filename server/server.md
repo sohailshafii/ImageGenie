@@ -644,8 +644,8 @@ origin, since the links point at the SPA).
 - **No API key → log the link instead of sending**, so local dev needs no credentials. This writes a
   token-bearing link into the logs and is therefore strictly a development affordance: **every
   deployed environment must set `IMAGEGENIE_RESEND_API_KEY`.** The Cloud Run deploy enforces this —
-  `mail_from` and `resend_api_key` are required tfvars ([api.tf](../infra/api.tf)), so the service
-  can't come up without them.
+  `mail_from` and `resend_api_key` are required inputs, supplied from the gitignored `.env` as
+  `TF_VAR_*` ([api.tf](../infra/api.tf)), so the service can't come up without them.
 - **The transport is swappable** (`set_mail_sender`) and tests use that seam, so subjects, bodies, and
   generated links are actually asserted. Testing only the no-key path would leave the builder — the
   part that can silently generate a broken link — uncovered.
@@ -794,11 +794,13 @@ objects` vs `drop and rebuild`) so neither is reachable by reflex.
    update on the four worker services (a provider cosmetic, `min_instance_count 0 → null`).
 4. `scripts/check_deploy.sh` — health, plus the signing-fallback log scan that confirms gotcha 2.
 
-**Email is required** — `mail_from` and `resend_api_key` are mandatory tfvars, because the deployed
-app must be able to send verification and invite mail or nobody but the seeded admin can get an
-account (server.md#email). The one exception is `app_base_url` (the link host): the Cloud Run URL
-isn't known until the service exists, so leave it empty for the first apply, then set it to the
-`api_url` output and re-apply.
+**Email is required** — `mail_from` and `resend_api_key` are mandatory, because the deployed app must
+be able to send verification and invite mail or nobody but the seeded admin can get an account
+(server.md#email). Both are per-operator values kept out of the repo: set them in the gitignored `.env`
+as `TF_VAR_mail_from` / `TF_VAR_resend_api_key` (see `.env.example`) and `source` it before
+`terraform apply`, which reads `TF_VAR_*` natively. The Resend key needs only *Sending* access. The one
+tfvars exception is `app_base_url` (the link host): the Cloud Run URL isn't known until the service
+exists, so leave it empty for the first apply, then set it to the `api_url` output and re-apply.
 
 ### Serving the SPA
 

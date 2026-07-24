@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+# Load ./.env (gitignored) so project/region/service overrides are picked up.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && { set -a; . "$REPO_ROOT/.env"; set +a; }
+
 PROJECT="${IMAGEGENIE_GCP_PROJECT:-imagegenie-pipeline}"
 REGION="${IMAGEGENIE_GCP_REGION:-us-central1}"
 SERVICE="${IMAGEGENIE_API_SERVICE:-imagegenie-api}"
