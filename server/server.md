@@ -739,46 +739,45 @@ budget (NFR-1), so pinning is the cheaper answer unless the API needs to scale.
 
 ### Deploying the API to Cloud Run
 
-Not yet deployed — infra has workers only. It goes to **Cloud Run in the same project as the
-workers**, because the API talks to Cloud SQL and GCS constantly and hosting it elsewhere would mean
-exposing Cloud SQL publicly and paying cross-cloud egress on every read (see the Open Decision in
-[CLAUDE.md](../CLAUDE.md)). Cloud Run gives a free HTTPS `*.run.app` URL; a custom domain can come
-later.
+Goes to **Cloud Run in the same project as the workers**, because the API talks to Cloud SQL and GCS
+constantly and hosting it elsewhere would mean exposing Cloud SQL publicly and paying cross-cloud
+egress on every read (see the Open Decision in [CLAUDE.md](../CLAUDE.md)). Cloud Run gives a free
+HTTPS `*.run.app` URL; a custom domain can come later.
 
-Four things will break the deploy if they aren't handled first. Each is a real gap in what exists
-today, not a theoretical risk.
+**Provisioned by `infra/api.tf`** — the `imagegenie-api` service (its own least-privilege SA), public
+(`allUsers` invoker; the app gates itself behind login), running the shared image with the API
+entrypoint. It wires the four things that would otherwise break the deploy:
 
-1. **The Cloud SQL schema has to be reconciled with Alembic before the API starts.** The database
-   was built by the workers' `create_all` and knows nothing about migrations — see the adoption note
-   under [Migrations](#migrations) for its verified state and the two ways forward. The API cannot
-   serve a single authenticated request until this is done: none of the auth tables exist.
+1. **Pinned to one instance** (`max_instance_count = 1`). Rate-limit counters are per-process and
+   in-memory (see the note above); more than one instance multiplies every cap and splits login
+   backoff. Pinning is cheaper than the alternative — a shared store means Redis, standing spend
+   against NFR-1's $100.
+2. **Signing wired** — the SA holds `iam.serviceAccountTokenCreator` on itself and
+   `IMAGEGENIE_SIGNER_SA_EMAIL` is set to it, so `GcsStorage.signed_url`'s IAM `signBlob` path works
+   (the code fix is done; [Serving artifacts](#serving-artifacts)). This is the one thing only real
+   GCS on Cloud Run can fully confirm, so **check the logs after the first deploy** for the "could
+   not sign a URL … falling back to streaming" warning — its absence is the proof.
+3. **The SPA is in the image** (`/srv/web_dist`, `IMAGEGENIE_SPA_DIR` baked), so the service just runs
+   `uvicorn app.api:root_app` and serves both the SPA and API on one origin
+   ([Serving the SPA](#serving-the-spa)).
+4. **The HTTPS/proxy env is set** — `IMAGEGENIE_COOKIE_SECURE=true` (the session cookie must be
+   `Secure`) and `IMAGEGENIE_TRUST_PROXY_HEADERS=true` (Cloud Run is a proxy; without it every request
+   keys to the same front-end IP for rate limits).
 
-2. **Signed URLs — code done, IAM + config still to wire.** `GcsStorage.signed_url` now signs
-   through the IAM `signBlob` API (passing `service_account_email` + `access_token`), so it works
-   with Cloud Run's keyless metadata credentials instead of always raising. What the deploy must
-   provide: the runtime SA holding `iam.serviceAccountTokenCreator` **on itself** (the Terraform
-   step), and `IMAGEGENIE_SIGNER_SA_EMAIL` set to that SA. Both fall under the Terraform chunk. This
-   is the one gotcha only real GCS on Cloud Run can fully confirm, so **check the logs after the
-   first deploy** for the "could not sign a URL … falling back to streaming" warning — its absence is
-   the proof the binding is right. Until then the fallback keeps the page working, slower.
+**The one manual gate is the schema.** The existing Cloud SQL database was built by the workers'
+`create_all` and knows nothing about migrations — the API cannot serve a single authenticated request
+until the auth tables exist. Reconcile it (drop-and-rebuild or hand-apply + `alembic stamp head`, see
+[Migrations](#migrations)) before or right after the apply.
 
-3. **Pin the service to one instance.** Rate-limit counters are per-process and in-memory (see the
-   note above). `max_instance_count > 1` multiplies every cap by the instance count and splits login
-   backoff state across instances. Pinning is cheaper than the alternative — a shared store means
-   Redis, which is standing spend against NFR-1's $100.
+**Deploy order:** `make deploy-image` (build + push the image, now including the SPA) → adopt the
+schema → `terraform -chdir=infra apply` (creates the service; prints `api_url`). The apply also shows
+a benign in-place update on the four worker services — a provider cosmetic (`min_instance_count 0 →
+null`), not a behavior change.
 
-4. **The SPA ships inside the API deployment** — one origin, because the CSRF defense is same-origin
-   double-submit; splitting the SPA onto another origin would force CORS and weaken exactly the thing
-   CSRF relies on, and GCS static hosting is HTTP-only on a custom domain (HTTPS needs a ~$18/month
-   load balancer). Built and wired — see [Serving the SPA](#serving-the-spa). The image already
-   carries the build (`/srv/web_dist`) and bakes `IMAGEGENIE_SPA_DIR`, so the API service just runs
-   `uvicorn app.api:root_app`; nothing more to do for this one.
-
-Also set, in the same deploy: `IMAGEGENIE_COOKIE_SECURE=true` (defaults false for local http — over
-HTTPS the session cookie must be `Secure`), `IMAGEGENIE_TRUST_PROXY_HEADERS=true` (Cloud Run is a
-proxy; without it every request keys to the same front-end IP), and a real `IMAGEGENIE_MAIL_FROM`
-plus `IMAGEGENIE_RESEND_API_KEY` — with no key the app logs verification and invite links instead of
-sending them, so signup silently strands every user.
+**Email is optional** and off unless the `mail_from` / `app_base_url` / `resend_api_key` tfvars are
+set (server.md#email). Without them the app logs verification and invite links instead of sending
+them — fine for the pre-seeded admin, but signup for anyone else needs them. Set `app_base_url` to the
+`api_url` output after the first apply and re-apply.
 
 ### Serving the SPA
 

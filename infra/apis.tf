@@ -13,6 +13,7 @@ locals {
     "cloudbilling.googleapis.com",         # billing operations
     "billingbudgets.googleapis.com",       # budget + alerts
     "iam.googleapis.com",                  # service accounts / IAM
+    "iamcredentials.googleapis.com",       # signBlob for signed GCS URLs (API)
     "secretmanager.googleapis.com",        # DB connection secret
   ]
 }
