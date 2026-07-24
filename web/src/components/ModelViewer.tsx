@@ -18,7 +18,10 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 // animation frame, the resize listener — is disposed on unmount so remounting
 // doesn't leak GPU memory (web.md: "Dispose of GPU resources on unmount").
 
-type ViewerStatus = 'loading' | 'ready' | 'unavailable';
+// 'unavailable' = no mesh exists (src is null); 'failed' = a mesh was offered but
+// the fetch/parse failed. Kept distinct so a genuine load error doesn't read as
+// "the pipeline hasn't produced this yet".
+type ViewerStatus = 'loading' | 'ready' | 'unavailable' | 'failed';
 
 export function ModelViewer({ src }: { src?: string | null }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -83,8 +86,9 @@ export function ModelViewer({ src }: { src?: string | null }) {
         },
         undefined,
         () => {
-          // Expected for a model the pipeline hasn't normalized yet.
-          if (!disposed) setStatus('unavailable');
+          // A URL was offered but the mesh couldn't be fetched/parsed (e.g. a
+          // network error) — distinct from "no mesh exists", handled by !src above.
+          if (!disposed) setStatus('failed');
         },
       );
     }
@@ -126,7 +130,11 @@ export function ModelViewer({ src }: { src?: string | null }) {
       <div ref={mountRef} className="model-viewer" />
       {status !== 'ready' && (
         <p className="model-viewer-status" role="status">
-          {status === 'loading' ? 'Loading mesh…' : 'No 3D mesh for this model yet'}
+          {status === 'loading'
+            ? 'Loading mesh…'
+            : status === 'failed'
+              ? 'Couldn’t load the 3D mesh'
+              : 'No 3D mesh for this model yet'}
         </p>
       )}
     </div>
