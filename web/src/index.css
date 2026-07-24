@@ -361,6 +361,17 @@ a {
 
 .invite-email {
   font-weight: 600;
+  margin-right: auto; /* push the role + expiry to the right */
+}
+
+.invite-role {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
 }
 
 .invite-expiry {

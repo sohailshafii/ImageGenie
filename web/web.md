@@ -80,7 +80,9 @@ Resolves the login TODO.
 - Enforce authorization on the **server** (API layer), not just by hiding UI — the frontend
   role checks are for UX, the backend checks are the security boundary (NFR-7).
 - **Account flows (modeled on the ChatApp reference):** signup is **invite-only** — an admin mints an
-  email-bound invite, and signup is gated to invited emails; a new account is **unverified** until the
+  email-bound invite **and chooses its role, viewer (`user`) or `admin`**, and signup is gated to
+  invited emails; the account is created with the invite's role (an admin invite grants admin — only
+  admins can invite, so it stays a trusted-caller decision). A new account is **unverified** until the
   emailed confirmation link is clicked, with a **resend confirmation** path; login surfaces the
   `unverified` state. Endpoints respond generically (no account enumeration).
 - **Implemented (milestone 5), now against the real FastAPI backend:** login, invite-gated signup,

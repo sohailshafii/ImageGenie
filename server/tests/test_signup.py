@@ -82,7 +82,7 @@ def test_signup_creates_an_unverified_user_and_spends_the_invite(
         user = session.scalar(select(User).where(User.email == INVITED_EMAIL))
         assert user is not None
         assert user.verified is False  # must verify before logging in
-        assert user.role is UserRole.user  # an invite never grants admin
+        assert user.role is UserRole.user  # a default invite grants viewer
         assert session.get(Invite, INVITED_EMAIL).accepted is True
 
 
@@ -236,6 +236,43 @@ def test_admin_can_mint_an_invite_that_unlocks_signup(admin_client: TestClient) 
     assert admin_client.post(
         "/auth/signup", json={"email": "fresh@imagegenie.dev", "password": NEW_PASSWORD}
     ).status_code == 204
+
+
+def test_invite_can_grant_admin(admin_client: TestClient) -> None:
+    """An admin can mint an *admin* invite; the accepted account is admin. Only admins
+    can invite, so this stays a trusted-caller decision (FR-8)."""
+    response = admin_client.post(
+        "/auth/invites", json={"email": "boss@imagegenie.dev", "role": "admin"}
+    )
+    assert response.status_code == 201
+    assert response.json()["role"] == "admin"
+
+    assert admin_client.post(
+        "/auth/signup", json={"email": "boss@imagegenie.dev", "password": NEW_PASSWORD}
+    ).status_code == 204
+    with db.session_scope() as session:
+        user = session.scalar(select(User).where(User.email == "boss@imagegenie.dev"))
+        assert user is not None
+        assert user.role is UserRole.admin
+
+
+def test_invite_defaults_to_viewer(admin_client: TestClient) -> None:
+    response = admin_client.post("/auth/invites", json={"email": "plain@imagegenie.dev"})
+    assert response.json()["role"] == "user"
+
+
+def test_invite_rejects_an_unknown_role(admin_client: TestClient) -> None:
+    response = admin_client.post(
+        "/auth/invites", json={"email": "x@imagegenie.dev", "role": "superuser"}
+    )
+    assert response.status_code == 422
+
+
+def test_reinviting_can_change_the_role(admin_client: TestClient) -> None:
+    admin_client.post("/auth/invites", json={"email": INVITED_EMAIL, "role": "admin"})
+    admin_client.post("/auth/invites", json={"email": INVITED_EMAIL, "role": "user"})
+    with db.session_scope() as session:
+        assert session.get(Invite, INVITED_EMAIL).role is UserRole.user
 
 
 def test_invites_are_idempotent_per_email(admin_client: TestClient) -> None:

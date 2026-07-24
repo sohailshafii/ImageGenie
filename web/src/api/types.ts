@@ -45,6 +45,7 @@ export interface Invite {
   email: string;
   expiresAt: string; // ISO 8601
   accepted: boolean;
+  role: Role; // the role the account is created with — viewer (user) or admin
 }
 
 // ── Model catalog (labeling) ────────────────────────────────────────────────

@@ -309,12 +309,16 @@ class ResendIn(BaseModel):
 
 class InviteIn(BaseModel):
     email: str
+    # Viewer (``user``) or ``admin``; defaults to viewer. Typing it as UserRole
+    # makes anything else a 422 rather than silently coercing.
+    role: UserRole = UserRole.user
 
 
 class InviteOut(BaseModel):
     email: str
     expires_at: datetime
     accepted: bool
+    role: UserRole
 
 
 class AuthUser(BaseModel):
@@ -438,7 +442,9 @@ def signup(body: SignupIn, request: Request, background: BackgroundTasks) -> Res
 
         user = User(
             email=email,
-            role=UserRole.user,  # invites never grant admin; promotion is manual
+            # The role the admin chose at invite time — an admin invite grants admin
+            # (only admins can invite, so this stays a trusted-caller decision).
+            role=invite.role,
             password_hash=hash_password(body.password),
             verified=False,
         )
@@ -520,8 +526,9 @@ def create_invite(
         invite.expires_at = expires_at
         invite.accepted = False  # re-inviting reopens a spent invite
         invite.invited_by = admin.email
+        invite.role = body.role  # re-inviting can also change the role
     background.add_task(send_invite_email, email, admin.email)
-    return InviteOut(email=email, expires_at=expires_at, accepted=False)
+    return InviteOut(email=email, expires_at=expires_at, accepted=False, role=body.role)
 
 
 @app.get("/auth/me", response_model=MeOut)
