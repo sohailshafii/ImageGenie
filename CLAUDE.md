@@ -159,9 +159,10 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
       Terraform. **The SPA ships inside the API deployment** — the CSRF defense rests on one origin,
       and splitting them would force CORS or a ~$18/month load balancer.
       See [web/web.md](web/web.md#auth--roles).
-- [ ] **Transactional email sender → Resend**, reusing an already-verified domain. Wired and tested;
-      the remaining step is setting the real `IMAGEGENIE_MAIL_FROM`, since the default sandbox sender
-      only delivers to the Resend account owner. See [server/server.md](server/server.md#email).
+- [x] **Transactional email sender → Resend**, reusing an already-verified domain. Wired, tested, and
+      deployed: the real `mail_from` + a Sending-access key come from the gitignored `.env` as `TF_VAR_*`
+      and are routed through Secret Manager (the sandbox sender only delivered to the account owner).
+      See [server/server.md](server/server.md#email).
 
 ## Development Workflow
 

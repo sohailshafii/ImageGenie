@@ -36,16 +36,15 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   (scale-to-zero, per-stage Pub/Sub push + DLQ); ran the labeled 12-class set (32k seeded) with
   resilience tuning (2–4 GiB, one-model-per-instance, in-worker retry + backoff) and a DLQ-replay tool
   to recover transient mirror failures
-- 🚧 **Milestone 5** — labeling frontend (React + TS + Vite) on a FastAPI backend-for-frontend.
-  The labeling loop works end to end: sign in, browse real rendered previews, open a model in the
-  three.js viewer (its normalized mesh from the pipeline), and confirm or correct the label —
-  attributed to the admin who made the change. Also done: invite-gated signup with email
-  verification (Resend), session cookies with CSRF and rate limiting, the weak-label and
-  Objaverse-metadata backfills that populate the catalog, sort-by-least-confidence and a keyboard
-  sweep for fast review, an admin dead-letter view over recorded pipeline failures, and Alembic
-  migrations.
-  **Remaining:** admin data upload (FR-9), and deploying the API itself — only the workers are in
-  Terraform today.
+- ✅ **Milestone 5** — labeling frontend (React + TS + Vite) on a FastAPI backend-for-frontend,
+  deployed to Cloud Run. The labeling loop works end to end: sign in, browse real rendered previews,
+  open a model in the three.js viewer (its normalized mesh from the pipeline), and confirm or correct
+  the label — attributed to the admin who made the change. Also done: admin data upload (FR-9),
+  invite-gated signup with email verification (Resend), session cookies with CSRF and rate limiting,
+  the weak-label and Objaverse-metadata backfills that populate the catalog, sort-by-least-confidence
+  and a keyboard sweep for fast review, an admin dead-letter view over recorded pipeline failures, and
+  Alembic migrations. The API and SPA ship as one image on one origin; `scripts/adopt_schema.sh`
+  rebuilds the database from the buckets on deploy.
 - ⬜ **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU)
 - ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
 
