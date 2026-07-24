@@ -341,6 +341,15 @@ writer and reader drifts silently, as a missing image rather than an error.
   (else it falls back to whatever email the credentials report). If signing fails anyway, the code
   logs a warning and streams the blob through the API instead — the page still works, slower, and the
   log line is the signal the binding is missing.
+- ⚠️ **The processed bucket needs a CORS policy.** The three.js viewer fetches the normalized PLY
+  cross-origin — a signed `storage.googleapis.com` URL read by `PLYLoader`'s XHR — so without
+  `Access-Control-Allow-Origin` the browser blocks the response and the viewer shows "No 3D mesh yet",
+  even though the object exists and the URL signs correctly (`curl` returns it fine; the browser gets a
+  `TypeError: Failed to fetch`). `<img>` thumbnails are exempt from CORS, which is why only the 3D mesh
+  broke — and why signed URLs make this production-only (local dev streams same-origin through
+  `/artifacts/{key}`, which needs no CORS). `infra/storage.tf` grants the bucket `GET`/`HEAD` from
+  `app_base_url`; like `app_base_url` itself it lands on the phase-2 re-apply once the Cloud Run URL is
+  known.
 
 ### Dead letters
 

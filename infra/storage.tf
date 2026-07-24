@@ -41,5 +41,22 @@ resource "google_storage_bucket" "processed" {
   uniform_bucket_level_access = true
   force_destroy               = true
 
+  # The three.js viewer fetches the normalized PLY cross-origin via a signed GCS
+  # URL (PLYLoader uses XHR/fetch), so the bucket must return CORS headers or the
+  # browser blocks the read — the mesh silently fails while <img> thumbnails, which
+  # are exempt from CORS, still render. Signed URLs make this a production-only bug
+  # (local dev streams same-origin through the API). Only GET is needed; the app is
+  # the sole origin. Gated on app_base_url so the first apply (URL not yet known)
+  # doesn't set an empty origin — CORS lands on the phase-2 re-apply.
+  dynamic "cors" {
+    for_each = var.app_base_url == "" ? [] : [1]
+    content {
+      origin          = [var.app_base_url]
+      method          = ["GET", "HEAD"]
+      response_header = ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag"]
+      max_age_seconds = 3600
+    }
+  }
+
   depends_on = [google_project_service.enabled]
 }
