@@ -775,6 +775,17 @@ backfills metadata + weak labels, and bootstraps the first admin (`app.create_ad
 invite-gated and invites need an admin, so a fresh database has no other way in). It is destructive by
 design and safe only because the buckets hold the artifacts it rebuilds from — which it checks first.
 
+**Two teardown depths.** The default `adopt_schema.sh` rebuilds the DB *from* the buckets and leaves
+them untouched — the buckets are the backup, so this is a non-destructive-to-data reset. For a full
+clean slate there is `scripts/wipe_buckets.sh` (the inverse of the reconciler): it deletes the objects
+under `raw/` and/or `processed/` — dry-run by default, `--apply` to delete, gated on typing `delete all
+objects`. Because those objects are the *only* copy, wiping `raw/` means re-running M4 ingestion to
+restore it; `--processed` is cheap (a re-render). After a wipe the populated-bucket gate would (rightly)
+refuse the normal path, so pair it with `scripts/adopt_schema.sh --fresh`, which skips that gate, the
+reconcile, and both backfills — leaving drop → migrate → admin against empty buckets. The two scripts
+stay separate on purpose: two explicit destructive acts with distinct confirmation phrases (`delete all
+objects` vs `drop and rebuild`) so neither is reachable by reflex.
+
 **Deploy order:**
 
 1. `make deploy-image` — build + push the image (now including the SPA).

@@ -13,6 +13,13 @@
 #
 #   scripts/adopt_schema.sh                 # prompts before the destructive step
 #   scripts/adopt_schema.sh --yes           # non-interactive (CI / repeat runs)
+#   scripts/adopt_schema.sh --fresh         # empty-bucket clean slate (see below)
+#
+# --fresh is the companion to `scripts/wipe_buckets.sh`: after the buckets have
+# been emptied there is nothing to reconcile from, so it SKIPS the populated-bucket
+# gate, the storage reconcile, and both backfills — leaving just drop → migrate →
+# admin. Use it ONLY when the buckets really are empty; on populated buckets the
+# default mode (which rebuilds the rows from them) is what you want.
 #
 # Admin bootstrap reads IMAGEGENIE_ADMIN_EMAIL and IMAGEGENIE_ADMIN_PASSWORD; if
 # either is unset it prompts (unless --yes, which then skips the admin step with a
@@ -32,7 +39,14 @@ DB_NAME="${IMAGEGENIE_DB_NAME:-imagegenie}"
 DB_USER="${IMAGEGENIE_DB_USER:-imagegenie}"
 
 ASSUME_YES=0
-[[ "${1:-}" == "--yes" ]] && ASSUME_YES=1
+FRESH=0
+for arg in "$@"; do
+  case "$arg" in
+    --yes)   ASSUME_YES=1 ;;
+    --fresh) FRESH=1 ;;
+    *) printf 'unknown argument: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PY="${REPO_ROOT}/.venv/bin/python"
@@ -75,14 +89,31 @@ bucket_has_objects() {
   [[ -n "$first" ]]
 }
 
-log "Verifying the buckets are populated before dropping anything"
-bucket_has_objects "gs://${RAW_BUCKET}/raw/" \
-  || die "raw bucket gs://${RAW_BUCKET} looks empty — refusing to drop the schema (a rebuild would have nothing to restore from)"
-bucket_has_objects "gs://${PROCESSED_BUCKET}/processed/" \
-  || die "processed bucket gs://${PROCESSED_BUCKET} looks empty — refusing to drop the schema"
-printf '  raw and processed buckets both contain objects.\n'
+if [[ "$FRESH" -eq 1 ]]; then
+  warn "--fresh: skipping the populated-bucket check; the schema will be rebuilt EMPTY (no reconcile, no backfills)."
+else
+  log "Verifying the buckets are populated before dropping anything"
+  bucket_has_objects "gs://${RAW_BUCKET}/raw/" \
+    || die "raw bucket gs://${RAW_BUCKET} looks empty — refusing to drop the schema (a rebuild would have nothing to restore from). Pass --fresh for a deliberate empty clean slate."
+  bucket_has_objects "gs://${PROCESSED_BUCKET}/processed/" \
+    || die "processed bucket gs://${PROCESSED_BUCKET} looks empty — refusing to drop the schema. Pass --fresh for a deliberate empty clean slate."
+  printf '  raw and processed buckets both contain objects.\n'
+fi
 
 # ── Confirm ─────────────────────────────────────────────────────────────────
+if [[ "$FRESH" -eq 1 ]]; then
+cat <<EOF
+
+  About to, on Cloud SQL instance '${INSTANCE}' (project ${PROJECT}):
+    1. DROP SCHEMA public CASCADE   ← destroys every current table + row
+    2. alembic upgrade head          ← rebuild the schema from migrations
+    3. create/refresh the admin account
+
+  --fresh: NO reconcile and NO backfills — the tables come back EMPTY. Use this
+  only right after wiping the buckets; the pipeline re-ingests to repopulate.
+
+EOF
+else
 cat <<EOF
 
   About to, on Cloud SQL instance '${INSTANCE}' (project ${PROJECT}):
@@ -96,6 +127,7 @@ cat <<EOF
   any manual labels not in weak_labels.csv are NOT recoverable.
 
 EOF
+fi
 if [[ "$ASSUME_YES" -ne 1 ]]; then
   read -r -p "  Type 'drop and rebuild' to proceed: " reply
   [[ "$reply" == "drop and rebuild" ]] || die "aborted"
@@ -130,20 +162,23 @@ SQL
 log "Running alembic upgrade head"
 ( cd "$REPO_ROOT/server" && "$ALEMBIC" upgrade head )
 
-# ── 3. Rebuild model + artifact from storage ────────────────────────────────
-log "Rebuilding model/artifact from object storage"
-( cd "$REPO_ROOT/server" && "$VENV_PY" -m app.reconcile_from_storage )
-
-# ── 4. Backfills ────────────────────────────────────────────────────────────
-log "Backfilling Objaverse metadata (titles/tags)"
-( cd "$REPO_ROOT/server" && "$VENV_PY" -m app.backfill_metadata )
-if [[ -f "$REPO_ROOT/data/exploration/weak_labels.csv" ]]; then
-  log "Backfilling weak labels"
-  ( cd "$REPO_ROOT/server" && "$VENV_PY" -m app.backfill_labels \
-      --labels "$REPO_ROOT/data/exploration/weak_labels.csv" \
-      --eval "$REPO_ROOT/data/exploration/weak_label_eval.json" )
+# ── 3–4. Rebuild rows from storage + backfills (skipped on --fresh) ─────────
+if [[ "$FRESH" -eq 1 ]]; then
+  warn "--fresh: skipping reconcile + backfills; the tables stay empty until the pipeline re-ingests."
 else
-  warn "no data/exploration/weak_labels.csv — skipping the weak-label backfill (models will be unlabeled)"
+  log "Rebuilding model/artifact from object storage"
+  ( cd "$REPO_ROOT/server" && "$VENV_PY" -m app.reconcile_from_storage )
+
+  log "Backfilling Objaverse metadata (titles/tags)"
+  ( cd "$REPO_ROOT/server" && "$VENV_PY" -m app.backfill_metadata )
+  if [[ -f "$REPO_ROOT/data/exploration/weak_labels.csv" ]]; then
+    log "Backfilling weak labels"
+    ( cd "$REPO_ROOT/server" && "$VENV_PY" -m app.backfill_labels \
+        --labels "$REPO_ROOT/data/exploration/weak_labels.csv" \
+        --eval "$REPO_ROOT/data/exploration/weak_label_eval.json" )
+  else
+    warn "no data/exploration/weak_labels.csv — skipping the weak-label backfill (models will be unlabeled)"
+  fi
 fi
 
 # ── 5. Admin bootstrap ──────────────────────────────────────────────────────
