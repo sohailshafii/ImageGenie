@@ -3,3 +3,9 @@ project_id      = "imagegenie-pipeline"
 region          = "us-central1"
 billing_account = "XXXXXX-XXXXXX-XXXXXX"
 budget_amount   = 100
+
+# Optional — leave empty to deploy without transactional email (links are logged).
+# Set after the first apply: app_base_url = the api_url output.
+# mail_from      = "ImageGenie <noreply@onboarding.furiousnacho.com>"
+# app_base_url   = "https://imagegenie-api-xxxxx-uc.a.run.app"
+# resend_api_key = "re_..."   # sensitive; kept out of state's plain env via Secret Manager
