@@ -187,3 +187,36 @@ def run_training(config: Config, run_id: int) -> None:
             f"epoch {epoch + 1}/{config.epochs}  "
             f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
         )
+
+
+# --- Entry point -------------------------------------------------------------
+
+
+def main() -> None:
+    """Run one training run end to end: snapshot the data, open the run row,
+    train, and finalize. Any failure marks the run ``failed`` (so it never
+    lingers as ``running``) and re-raises so the traceback is visible.
+
+    Config is the ``Config`` defaults for now — CLI/config-file overrides can be
+    added here later without touching the loop or the bookkeeping.
+    """
+    config = Config()
+    snapshot = data_snapshot()
+    run_id = create_run(
+        config, snapshot, notes=f"{config.arch} baseline, {config.epochs} epochs"
+    )
+    print(
+        f"training_run {run_id}: {snapshot['label_count']} labels, "
+        f"{config.epochs} epochs x {config.steps_per_epoch} steps"
+    )
+    try:
+        run_training(config, run_id)
+    except Exception:
+        finalize_run(run_id, TrainingStatus.failed)
+        raise
+    finalize_run(run_id, TrainingStatus.completed)
+    print(f"training_run {run_id}: completed")
+
+
+if __name__ == "__main__":
+    main()
