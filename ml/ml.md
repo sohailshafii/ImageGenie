@@ -174,6 +174,41 @@ tally) and `weak_labels.csv` (`uid, class, reason` for every labeled object) —
   weakest class; recall spans 0.22–0.73. (The per-tuning deltas above were measured at 4 shards, so
   small-sample; these 20-shard numbers are the reproducible reference.)
 
+## Training
+
+The baseline is a **multi-view CNN** (see [Representation](#representation)) trained on the 12-class
+weak labels, reading the rendered views from the processed bucket. Per CLAUDE.md's M6 complexity
+budget, the script starts as a plain loop and grows only when a result demands it — the one
+non-negotiable is NFR-4 bookkeeping.
+
+`ml/train.py` (`make train`) is built around that budget:
+
+- **`Config` dataclass** — all hyperparameters (arch, epochs, steps/epoch, batch size, learning
+  rate, optimizer, momentum, Adam betas/eps, seed, and `log_every`). Persisted verbatim to
+  `training_run.config`, so adding a knob needs no migration (config-over-code).
+- **`data_snapshot()`** — captures *which labels* the run trains on: the current label per live
+  model (resolved manual-over-weak, exactly as the labeling API does), returned as
+  `{label_count, label_hash, as_of, filter, class_counts}`. The `label_hash` (sha256 over the
+  sorted `(uid, class)` pairs) identifies the training set, so a changed hash flags that the data
+  moved underneath a comparison.
+- **Bookkeeping helpers** — `create_run` / `log_metric` / `finalize_run`, each committing on its
+  own `session_scope` so the [dashboard](../web/web.md#training-dashboard) sees a **live** run with
+  a growing loss curve. Written directly through a DB session (like the pipeline workers); the API
+  only reads these rows. `log_every` throttles the `training_metric` writes — a point every N steps,
+  always keeping each epoch's last step so its `val_loss` is never dropped.
+- **`run_training()`** — a plain epoch/step loop. **Current state:** the model and dataset are
+  deliberate placeholders (a synthetic decaying loss, seeded so it reproduces) — enough to exercise
+  the bookkeeping and the cost curve end to end. A real MVCNN forward/backward pass and a dataset
+  that streams renders from the processed bucket replace the synthetic loss here, leaving the
+  logging around it unchanged.
+- **`main()`** — snapshot → `create_run` → train → `finalize_run(completed)`; any exception marks
+  the run `failed` (so it never lingers as `running`) and re-raises.
+
+Run it with `make train`, which sets `PYTHONPATH=server` so the DB layer (`app.db`, `app.models`)
+imports; no cert shim, since training only touches Postgres. Dev-set `metrics` and `weights_uri`
+stay null until [evaluation](#evaluation) (B4 / M7) and a real saved model exist. The reproducibility
+schema this writes to is detailed under [Coding Standards](#coding-standards-ml).
+
 ## Dataset Splits
 
 Resolves the dev-set-percentage TODO.
