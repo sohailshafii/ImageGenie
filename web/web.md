@@ -64,13 +64,31 @@ Both views write label corrections through the same API endpoint (see
 
 ## Training Dashboard
 
-Resolves the dashboard TODO.
+Resolves the dashboard TODO. Built in **B3**: a list and a per-run detail page over the
+read-only training API ([server.md](../server/server.md#endpoints-and-access-control) —
+`GET /training-runs`, `/training-runs/{id}`, `/training-runs/{id}/metrics`). Runs are produced by
+`ml/train.py` writing to the DB directly, so the dashboard only *reads*; there are no write flows.
+**Viewable by any authenticated user** (not admin-only) — it's a view, like browse (FR-8).
 
-- **List view** — all training runs: id, date, config summary, headline metrics, status.
-  Sortable/filterable.
-- **Detail view (per run)** — full config snapshot, metric curves (loss/accuracy over epochs),
-  per-class precision/recall, confusion matrices (see [ml.md](../ml/ml.md#evaluation)), and links to
-  artifacts. Backed by the `training_run` entity in [server.md](../server/server.md#database).
+- **List view** (`/training`, `TrainingRunsPage`) — all runs, newest first: run id, status badge
+  (running / completed / failed), architecture, label count, headline **final training loss**, and
+  start time. Each row links to the run's detail page. A "Training" nav link is shown to every user.
+- **Detail view** (`/training/:id`, `TrainingRunDetailPage`) — distinct from the per-*model*
+  labeling detail page. Shows:
+  - the **cost curve** — an inline-SVG line chart (`CostCurve`, no charting dependency) of training
+    loss and, where evaluated, validation loss over steps; the dashed val line sits above train so
+    the train/val gap (bias vs. variance) reads at a glance. Fetched separately from the run, so the
+    header/config don't wait on a long curve.
+  - **Configuration** and **Data snapshot** panels — the `config` and `data_snapshot` JSONB blobs
+    rendered as generic key/value lists, so a new hyperparameter or snapshot field appears with no
+    frontend change (config-over-code).
+  - **Dev-set metrics** — a placeholder ("not evaluated yet") until the run has a `metrics` blob;
+    per-class precision/recall + confusion matrices (see [ml.md](../ml/ml.md#evaluation)) land with
+    **B4 / M7**.
+  - timestamps (started / finished).
+
+  Backed by the `training_run` / `training_metric` entities in
+  [server.md](../server/server.md#database).
 
 ## Auth & Roles
 
