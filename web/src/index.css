@@ -663,6 +663,126 @@ select:focus {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
+/* ── Training-run detail ───────────────────────────────────────────────────── */
+.run-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.run-section {
+  margin-top: 1.75rem;
+}
+
+.run-section h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.run-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1.5rem;
+}
+
+.kv-list {
+  margin: 0;
+}
+
+.kv-row {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.kv-row dt {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.kv-row dd {
+  margin: 0;
+  overflow-wrap: anywhere; /* long values (the sha256 label_hash) must wrap */
+}
+
+.run-timestamps {
+  margin-top: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Cost curve (inline SVG — no charting dependency) */
+.cost-curve {
+  margin: 0;
+}
+
+.cost-curve svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cc-axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.cc-tick {
+  fill: var(--text-muted);
+  font-size: 12px;
+}
+
+.cc-line {
+  stroke-width: 2;
+}
+
+.cc-line.cc-train {
+  stroke: var(--accent-strong);
+}
+
+.cc-line.cc-val {
+  stroke: var(--danger);
+  stroke-dasharray: 5 4; /* dashed so the series read apart without relying on color */
+}
+
+.cc-legend {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.cc-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cc-key::before {
+  content: '';
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.cc-key.cc-train {
+  color: var(--accent-strong);
+}
+
+.cc-key.cc-val {
+  color: var(--danger);
+}
+
+.cc-axis-label {
+  margin-left: auto;
+}
+
 .dlq-uid {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-muted);
