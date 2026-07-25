@@ -5,6 +5,7 @@ import { BrowsePage } from './pages/BrowsePage';
 import { DeadLettersPage } from './pages/DeadLettersPage';
 import { DeletedModelsPage } from './pages/DeletedModelsPage';
 import { InvitePage } from './pages/InvitePage';
+import { TrainingRunDetailPage } from './pages/TrainingRunDetailPage';
 import { TrainingRunsPage } from './pages/TrainingRunsPage';
 import { UploadPage } from './pages/UploadPage';
 
@@ -51,6 +52,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <TrainingRunsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/training/:id"
+        element={
+          <ProtectedRoute>
+            <TrainingRunDetailPage />
           </ProtectedRoute>
         }
       />
