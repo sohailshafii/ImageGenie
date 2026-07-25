@@ -5,6 +5,7 @@ import { BrowsePage } from './pages/BrowsePage';
 import { DeadLettersPage } from './pages/DeadLettersPage';
 import { DeletedModelsPage } from './pages/DeletedModelsPage';
 import { InvitePage } from './pages/InvitePage';
+import { TrainingRunsPage } from './pages/TrainingRunsPage';
 import { UploadPage } from './pages/UploadPage';
 
 // Code-split the detail view: it pulls in three.js (~600 KB), which no other
@@ -42,6 +43,14 @@ export default function App() {
             <Suspense fallback={<p style={{ padding: '1.5rem' }}>Loading viewer…</p>}>
               <DetailPage />
             </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/training"
+        element={
+          <ProtectedRoute>
+            <TrainingRunsPage />
           </ProtectedRoute>
         }
       />
