@@ -22,6 +22,8 @@ export function BrowsePage() {
   const [classFilter, setClassFilter] = useState<ClassName | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<LabelSource | 'all'>('all');
   const [sort, setSort] = useState<ModelSort>('uid');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [jumpValue, setJumpValue] = useState('');
   const [data, setData] = useState<ModelPage | null>(null);
@@ -39,6 +41,7 @@ export function BrowsePage() {
       pageSize: PAGE_SIZE,
       className: classFilter === 'all' ? undefined : classFilter,
       source: sourceFilter === 'all' ? undefined : sourceFilter,
+      search: search || undefined,
       sort,
     })
       .then((result) => {
@@ -54,7 +57,18 @@ export function BrowsePage() {
     return () => {
       active = false;
     };
-  }, [page, classFilter, sourceFilter, sort]);
+  }, [page, classFilter, sourceFilter, search, sort]);
+
+  // Debounce the search box so typing doesn't fire a request per keystroke, and
+  // reset to page 1 when the query settles — the old page is meaningless for a
+  // different result set.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
 
   async function onSetLabel(uid: string, className: ClassName) {
     setSavingUid(uid);
@@ -166,6 +180,15 @@ export function BrowsePage() {
       <div className="page-head">
         <h1>Browse</h1>
         <div className="filters">
+          <label>
+            Search
+            <input
+              type="search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="title…"
+            />
+          </label>
           <label>
             Class
             <select

@@ -298,7 +298,7 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /auth/me` | logged in | the caller's email + role |
 | `POST /auth/logout` | public | revokes the session server-side; 204 |
 | `POST /auth/invites` | **admin** | mints an email-bound invite; idempotent per email |
-| `GET /models` | logged in | paginated; filter by `class_name` / `source` |
+| `GET /models` | logged in | paginated; filter by `class_name` / `source`, `search` by title |
 | `GET /models/{uid}` | logged in | resolves the model's *current* label |
 | `PUT /models/{uid}/label` | **admin** | records a manual label, attributed to the calling admin |
 
