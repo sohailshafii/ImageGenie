@@ -89,6 +89,32 @@ def test_filters(client: TestClient) -> None:
     assert [item["uid"] for item in cars["items"]] == ["m2"]
 
 
+def test_search_filters_by_title(client: TestClient) -> None:
+    with db.session_scope() as session:
+        session.get(Model, "m1").title = "Vintage Wooden Chair"
+        session.get(Model, "m2").title = "Red Sports Car"
+
+    hit = client.get("/models", params={"search": "wooden"}).json()
+    assert [item["uid"] for item in hit["items"]] == ["m1"]  # substring, mid-title
+    assert [  # case-insensitive
+        item["uid"] for item in client.get("/models", params={"search": "CAR"}).json()["items"]
+    ] == ["m2"]
+    assert client.get("/models", params={"search": "nomatch"}).json()["total"] == 0
+    # Blank/whitespace search is ignored, not treated as "match nothing".
+    assert client.get("/models", params={"search": "  "}).json()["total"] == 2
+
+
+def test_search_escapes_like_wildcards(client: TestClient) -> None:
+    """A '%' in the query matches a literal percent, not "anything" — otherwise a
+    lone '%' would match every title."""
+    with db.session_scope() as session:
+        session.get(Model, "m1").title = "50% off sale"
+        session.get(Model, "m2").title = "plain title"
+
+    hit = client.get("/models", params={"search": "50%"}).json()
+    assert [item["uid"] for item in hit["items"]] == ["m1"]
+
+
 def test_serves_store_metadata_when_present(client: TestClient) -> None:
     with db.session_scope() as session:
         model = session.get(Model, "m1")

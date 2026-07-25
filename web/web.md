@@ -16,9 +16,12 @@ The web app: the labeling tool, the training dashboard, auth/roles, and data upl
 Two views, and labels can be corrected in **either** one (resolves the labeling-UI TODO):
 
 ### Browse view
-- All items visible, **paginated**. Thumbnail grid (rendered multi-view preview per model).
+- All items visible, **paginated** — with a **jump-to-page** input, since the catalog is ~12k models
+  (hundreds of pages) and prev/next alone is unusable at that scale.
+- Thumbnail grid (rendered multi-view preview per model).
 - Inline label confirm/correct without leaving the page — for fast sweeps over many models.
-- Filter by class and label source; **sort by least confidence** — the review queue, and the order
+- **Search by title** (debounced, case-insensitive substring) and filter by class and label source;
+  **sort by least confidence** — the review queue, and the order
   the active-learning loop wants. Models with no confidence (manual, or unlabeled) sort last.
   `uid` always tie-breaks, because confidence is currently a *per-class* value so thousands of models
   share one number; ordering on it alone would let paging repeat and skip rows.

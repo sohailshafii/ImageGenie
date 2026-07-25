@@ -655,6 +655,7 @@ def list_models(
     page_size: int = Query(24, ge=1, le=PAGE_SIZE_MAX),
     class_name: str | None = None,
     source: LabelSource | None = None,
+    search: str | None = None,
     sort: ModelSort = ModelSort.uid,
 ) -> ModelPageOut:
     latest = _latest_labels()
@@ -667,6 +668,12 @@ def list_models(
         query = query.where(latest.c.class_name == class_name)
     if source is not None:
         query = query.where(latest.c.source == source)
+    if search is not None and search.strip():
+        # Case-insensitive substring match on the title. Escape the LIKE
+        # metacharacters in user input first, so a search for "50%" or "a_b"
+        # matches those literally instead of acting as wildcards.
+        term = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Model.title.ilike(f"%{term}%", escape="\\"))
 
     if sort is ModelSort.confidence:
         # Least-confident first — the review queue (web.md, and what the

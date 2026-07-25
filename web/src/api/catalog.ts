@@ -63,12 +63,13 @@ export async function getModelArtifacts(uid: string): Promise<ModelArtifacts> {
   );
 }
 
-/** GET /models — a page of models, optionally filtered by class and/or source. */
+/** GET /models — a page of models, optionally filtered by class, source, and/or title search. */
 export async function listModels(params: {
   page: number;
   pageSize: number;
   className?: ClassName;
   source?: LabelSource;
+  search?: string;
   sort?: ModelSort;
 }): Promise<ModelPage> {
   const query = new URLSearchParams({
@@ -77,6 +78,7 @@ export async function listModels(params: {
   });
   if (params.className !== undefined) query.set('class_name', params.className);
   if (params.source !== undefined) query.set('source', params.source);
+  if (params.search) query.set('search', params.search);
   if (params.sort !== undefined) query.set('sort', params.sort);
 
   const page = await request<ModelPageResponse>('GET', `/models?${query}`);
