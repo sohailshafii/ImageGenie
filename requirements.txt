@@ -1,3 +1,11 @@
 # Runtime deps. Milestone 1 (metadata exploration) needs only objaverse;
 # pandas/pyarrow/requests come in transitively. See ml/ml.md.
 objaverse==0.1.7
+
+# Milestone 6 training (ml/train.py). torch + torchvision (a compatible pair) for
+# the multi-view CNN and its resnet backbone. This installs the CPU/MPS build
+# locally — enough for the local-CPU smoke on a few hundred models; the cloud
+# training image installs the CUDA build for the real Vertex GPU run. Pillow
+# (PNG decode) and numpy already come from server/requirements.txt.
+torch==2.5.1
+torchvision==0.20.1
