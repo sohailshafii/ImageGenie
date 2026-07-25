@@ -805,6 +805,20 @@ objects` vs `drop and rebuild`) so neither is reachable by reflex.
    update on the four worker services (a provider cosmetic, `min_instance_count 0 → null`).
 4. `scripts/check_deploy.sh` — health, plus the signing-fallback log scan that confirms gotcha 2.
 
+**Subsequent deploys (code changes after the first cutover).** The steps above are the *first-time*
+setup — `adopt_schema.sh` drops and rebuilds, which you never want again once there's real data. A
+later code deploy is:
+
+1. `make deploy-image` — rebuild + push (same `:latest` tag).
+2. `scripts/migrate.sh` — **non-destructive** `alembic upgrade head` through the proxy, if the deploy
+   carries a new migration. Run it *before* step 3 so the new code never meets a DB missing a column.
+   It's idempotent (a no-op when already at head), so it's safe to run every time.
+3. `gcloud run services update imagegenie-api --region <region> --image
+   <region>-docker.pkg.dev/<project>/imagegenie/worker:latest` — roll a new revision. **Terraform won't
+   do this**: the image tag is unchanged (`:latest`), so a
+   `terraform apply` sees no diff on the service; the revision must be forced explicitly.
+4. `scripts/check_deploy.sh` — same health + signing check.
+
 **Email is required** — `mail_from` and `resend_api_key` are mandatory, because the deployed app must
 be able to send verification and invite mail or nobody but the seeded admin can get an account
 (server.md#email). Both are per-operator values kept out of the repo: set them in the gitignored `.env`
