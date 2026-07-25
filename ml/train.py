@@ -16,7 +16,15 @@ Run via `make train` (which sets PYTHONPATH=server so the DB layer imports).
 
 from __future__ import annotations
 
+import hashlib
+from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+
+from app.db import session_scope
+from app.models import Label, Model
 
 
 @dataclass
@@ -35,3 +43,47 @@ class Config:
     adam_beta2: float = 0.999
     adam_eps: float = 1e-8
     seed: int = 0
+
+
+def data_snapshot() -> dict:
+    """Capture *which labels* this run trains on, for reproducibility (NFR-4).
+
+    This is the ``training_run.data_snapshot`` blob. It records the current label
+    of every live, labeled model — "current" resolved exactly as the labeling API
+    does: the most-recent label per model, so a manual correction wins over the
+    weak label (see ``_latest_labels`` in ``app.api``). A content ``label_hash``
+    over the sorted (uid, class) pairs makes the training set identifiable: two
+    runs with the same hash trained on the same labels, and a changed hash flags
+    that the data moved underneath a comparison.
+
+    Only the label set is snapshotted for now — the model and dataset are still
+    placeholders. When the real multi-view dataset lands, this narrows to models
+    that also have renders in the processed bucket (an added ``filter`` clause).
+    """
+    with session_scope() as session:
+        # DISTINCT ON (model_uid) with created_at/id DESC keeps one row per model,
+        # the newest; joined to `model` so soft-deleted models drop out (FR-9).
+        current_label_stmt = (
+            select(Label.model_uid, Label.class_name)
+            .join(Model, Model.uid == Label.model_uid)
+            .where(Model.deleted_at.is_(None))
+            .distinct(Label.model_uid)
+            .order_by(Label.model_uid, Label.created_at.desc(), Label.id.desc())
+        )
+        # Rows arrive sorted by model_uid (the DISTINCT ON leading key), so the
+        # hash below is order-stable without an extra sort.
+        labeled_models = session.execute(current_label_stmt).all()
+
+    digest = hashlib.sha256()
+    class_to_count: Counter[str] = Counter()
+    for model_uid, class_name in labeled_models:
+        digest.update(f"{model_uid}\t{class_name}\n".encode())
+        class_to_count[class_name] += 1
+
+    return {
+        "label_count": len(labeled_models),
+        "label_hash": "sha256:" + digest.hexdigest(),
+        "as_of": datetime.now(UTC).isoformat(),
+        "filter": {"deleted": "excluded", "label": "current (manual over weak)"},
+        "class_counts": dict(sorted(class_to_count.items())),
+    }
