@@ -20,7 +20,7 @@ import hashlib
 import math
 import random
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -34,7 +34,26 @@ class Config:
     """Hyperparameters for one run. Persisted verbatim to `training_run.config`
     (JSONB), so adding a knob here needs no schema change (config-over-code)."""
 
-    arch: str = "mvcnn"  # model architecture (a label for now; no model yet)
+    # --- Architecture ---
+    # A multi-view CNN: a shared 2D backbone runs on each rendered view, the
+    # per-view features are pooled, then a small classifier head maps to the 12
+    # classes. Recorded per run so a result is reproducible (NFR-4). A backbone's
+    # own layer count is implied by its name (resnet18 = 18 layers) rather than
+    # re-listed; head_hidden_dims is the tunable part — the hidden layers of the
+    # head and their node counts. No model is built from these yet (the loop is a
+    # placeholder); they exist so the config already carries the real shape.
+    arch: str = "mvcnn"  # model family
+    backbone: str = "resnet18"  # shared per-view 2D CNN (torchvision)
+    pretrained: bool = True  # start from ImageNet-pretrained backbone weights
+    num_views: int = 12  # rendered views per model (matches the render stage)
+    view_pool: str = "max"  # how per-view features combine: "max" | "mean"
+    feature_dim: int = 512  # backbone output width fed to the head (resnet18 -> 512)
+    # classifier-head hidden layers, one int = nodes in that layer
+    head_hidden_dims: list[int] = field(default_factory=lambda: [256])
+    dropout: float = 0.5  # dropout in the classifier head
+    num_classes: int = 12  # the 12-class roster (ml/taxonomy.py)
+
+    # --- Optimization ---
     epochs: int = 20
     steps_per_epoch: int = 50  # batches per epoch (= len(dataloader) once real)
     log_every: int = 10  # write a loss point every N steps, to throttle DB writes

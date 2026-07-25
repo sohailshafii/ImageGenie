@@ -183,9 +183,16 @@ non-negotiable is NFR-4 bookkeeping.
 
 `ml/train.py` (`make train`) is built around that budget:
 
-- **`Config` dataclass** — all hyperparameters (arch, epochs, steps/epoch, batch size, learning
-  rate, optimizer, momentum, Adam betas/eps, seed, and `log_every`). Persisted verbatim to
-  `training_run.config`, so adding a knob needs no migration (config-over-code).
+- **`Config` dataclass** — all hyperparameters, persisted verbatim to `training_run.config` so
+  adding a knob needs no migration (config-over-code). Two groups:
+  - *Architecture* — the multi-view CNN's shape: `backbone` (the shared per-view 2D CNN, e.g.
+    `resnet18` — its own layer count is implied by the name, not re-listed), `pretrained`,
+    `num_views` (12, matching the render stage), `view_pool` (`max`/`mean`), `feature_dim`,
+    `head_hidden_dims` (the classifier head's hidden layers — one int = nodes in that layer),
+    `dropout`, and `num_classes` (12). Recorded per run so a result is reproducible even as the
+    architecture is tuned (NFR-4); no model is built from them yet.
+  - *Optimization* — `epochs`, `steps_per_epoch`, `batch_size`, `learning_rate`, `optimizer`,
+    `momentum`, Adam `beta1`/`beta2`/`eps`, `seed`, and `log_every`.
 - **`data_snapshot()`** — captures *which labels* the run trains on: the current label per live
   model (resolved manual-over-weak, exactly as the labeling API does), returned as
   `{label_count, label_hash, as_of, filter, class_counts}`. The `label_hash` (sha256 over the
