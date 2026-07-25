@@ -201,3 +201,10 @@ CLASS_TO_KEYWORDS: dict[str, list[str]] = {
 # is Sketchfab's `architecture`, a grab-bag that also holds benches, statues, and
 # streetlights (see ml.md#sketchfab-weak-labeling), so require a building keyword.
 CONFIRM_REQUIRED_CLASSES: set[str] = {"building"}
+
+# Canonical ordered class roster — the classifier's class-index map (index i is
+# ROSTER[i]). Derived from CLASS_TO_LVIS_CATEGORIES (the list-lock source of the
+# 12 classes) and sorted so the order is deterministic and stable across runs; a
+# training run records it, so predictions/metrics stay interpretable even if the
+# roster later changes. See ml.md#training.
+ROSTER: tuple[str, ...] = tuple(sorted(CLASS_TO_LVIS_CATEGORIES))
