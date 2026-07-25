@@ -58,6 +58,8 @@ from .models import (
     Label,
     LabelSource,
     Model,
+    TrainingMetric,
+    TrainingRun,
     User,
     UserRole,
 )
@@ -136,6 +138,41 @@ class ModelArtifactsOut(BaseModel):
     uid: str
     views: list[str]  # rendered view URLs, in view order; empty if not yet rendered
     mesh: str | None  # normalized PLY, or None if the stage hasn't run
+
+
+class TrainingRunSummaryOut(BaseModel):
+    """A training run as it appears in the dashboard list (FR-6)."""
+
+    id: int
+    status: str
+    arch: str | None  # config summary for the row; None if config lacks it
+    label_count: int | None  # how many labels the run trained on (from data_snapshot)
+    final_loss: float | None  # training loss at the last logged step; None if no metrics
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class TrainingRunDetailOut(BaseModel):
+    """One run's full bookkeeping for the detail page — the three NFR-4 blobs
+    verbatim plus status/timestamps. The loss curve is fetched separately."""
+
+    id: int
+    status: str
+    config: dict
+    data_snapshot: dict
+    metrics: dict | None  # dev-set eval; null until the run is evaluated (B4/M7)
+    weights_uri: str | None
+    notes: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class TrainingMetricOut(BaseModel):
+    """One point on a run's loss curve (B2/B3)."""
+
+    step: int
+    loss: float
+    val_loss: float | None  # null on steps where validation was not evaluated
 
 
 # Short by design: a signed URL is readable by anyone holding it, so it should
@@ -632,6 +669,98 @@ def retry_failure(dead_letter_id: int, admin: AdminUser) -> Response:
             raise HTTPException(status_code=404, detail="unknown dead letter")
         logger.info("replayed dead letter %d by %s", dead_letter_id, admin.email)
     return Response(status_code=204)
+
+
+def _latest_metric_loss():
+    """Subquery of each run's most-recent training loss — the headline for the
+    dashboard list. DISTINCT ON keeps one row per run, its highest step."""
+    return (
+        select(TrainingMetric.run_id, TrainingMetric.loss)
+        .distinct(TrainingMetric.run_id)
+        .order_by(TrainingMetric.run_id, TrainingMetric.step.desc())
+        .subquery()
+    )
+
+
+@app.get(
+    "/training-runs",
+    response_model=list[TrainingRunSummaryOut],
+    dependencies=LOGIN_REQUIRED,
+)
+def list_training_runs() -> list[TrainingRunSummaryOut]:
+    """All training runs, newest first — the dashboard list (FR-6).
+
+    Read-only and login-gated (viewing is open to any authenticated user, FR-8):
+    the training script writes these rows directly, so there are no write routes.
+    """
+    latest_loss = _latest_metric_loss()
+    with session_scope() as session:
+        rows = session.execute(
+            select(TrainingRun, latest_loss.c.loss)
+            .outerjoin(latest_loss, latest_loss.c.run_id == TrainingRun.id)
+            .order_by(TrainingRun.id.desc())
+        ).all()
+        return [
+            TrainingRunSummaryOut(
+                id=run.id,
+                status=run.status.value,
+                arch=run.config.get("arch"),
+                label_count=run.data_snapshot.get("label_count"),
+                final_loss=final_loss,
+                started_at=run.started_at,
+                finished_at=run.finished_at,
+            )
+            for run, final_loss in rows
+        ]
+
+
+@app.get(
+    "/training-runs/{run_id}",
+    response_model=TrainingRunDetailOut,
+    dependencies=LOGIN_REQUIRED,
+)
+def get_training_run(run_id: int) -> TrainingRunDetailOut:
+    """One run's full config/snapshot/metrics bookkeeping (404 if unknown)."""
+    with session_scope() as session:
+        run = session.get(TrainingRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="unknown training run")
+        return TrainingRunDetailOut(
+            id=run.id,
+            status=run.status.value,
+            config=run.config,
+            data_snapshot=run.data_snapshot,
+            metrics=run.metrics,
+            weights_uri=run.weights_uri,
+            notes=run.notes,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+        )
+
+
+@app.get(
+    "/training-runs/{run_id}/metrics",
+    response_model=list[TrainingMetricOut],
+    dependencies=LOGIN_REQUIRED,
+)
+def get_training_run_metrics(run_id: int) -> list[TrainingMetricOut]:
+    """A run's loss curve, in step order — the data behind the cost graph (B3).
+
+    Separate from the detail payload so the (potentially long) curve is fetched
+    on its own, mirroring the model/artifacts split.
+    """
+    with session_scope() as session:
+        if session.get(TrainingRun, run_id) is None:
+            raise HTTPException(status_code=404, detail="unknown training run")
+        points = session.execute(
+            select(TrainingMetric)
+            .where(TrainingMetric.run_id == run_id)
+            .order_by(TrainingMetric.step)
+        ).scalars()
+        return [
+            TrainingMetricOut(step=point.step, loss=point.loss, val_loss=point.val_loss)
+            for point in points
+        ]
 
 
 def _paginate_summaries(

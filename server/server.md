@@ -301,6 +301,9 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /models` | logged in | paginated; filter by `class_name` / `source`, `search` by title |
 | `GET /models/{uid}` | logged in | resolves the model's *current* label |
 | `PUT /models/{uid}/label` | **admin** | records a manual label, attributed to the calling admin |
+| `GET /training-runs` | logged in | all runs, newest first; headline = final training loss |
+| `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
+| `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
 
 - **Sessions, not JWTs.** Login mints an opaque random token stored in the `session` table and
   returned as an **httpOnly** cookie (`imagegenie_session`, 14-day TTL) that page JS can't read.
