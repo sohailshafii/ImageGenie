@@ -130,3 +130,43 @@ export interface DeadLetter {
   /** Set once an admin re-enqueued it; such rows are hidden from the list. */
   replayedAt: string | null;
 }
+
+// ── Training dashboard (FR-6) ────────────────────────────────────────────────
+/** Lifecycle of a training run (mirrors the server's TrainingStatus). */
+export type TrainingStatus = 'running' | 'completed' | 'failed';
+
+/** A training run as it appears in the dashboard list. */
+export interface TrainingRunSummary {
+  id: number;
+  status: TrainingStatus;
+  arch: string | null; // config summary for the row; null if config lacks it
+  labelCount: number | null; // how many labels the run trained on (from data_snapshot)
+  finalLoss: number | null; // training loss at the last logged step; null if no metrics
+  startedAt: string; // ISO 8601
+  finishedAt: string | null;
+}
+
+/**
+ * One run's full bookkeeping for the detail page — the three NFR-4 blobs
+ * (config, data snapshot, dev-set metrics) verbatim plus status/timestamps.
+ * The blobs are open records, hence `unknown`-valued: the config's keys grow
+ * with the hyperparameters and the page renders them generically.
+ */
+export interface TrainingRunDetail {
+  id: number;
+  status: TrainingStatus;
+  config: Record<string, unknown>;
+  dataSnapshot: Record<string, unknown>;
+  metrics: Record<string, unknown> | null; // dev-set eval; null until evaluated (B4/M7)
+  weightsUri: string | null;
+  notes: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** One point on a run's loss curve — the data behind the cost graph. */
+export interface TrainingMetricPoint {
+  step: number;
+  loss: number;
+  valLoss: number | null; // null on steps where validation was not evaluated
+}
