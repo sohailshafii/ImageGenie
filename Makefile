@@ -25,7 +25,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage migrate migration migration-status
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage migrate migration migration-status train
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -63,6 +63,11 @@ weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
 
 evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
 	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
+
+train: ## run a baseline training run (M6); writes training_run + metrics to the DB
+	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
+	# no cert shim needed — this run only touches Postgres, not the network.
+	PYTHONPATH=server $(BIN)/python ml/train.py
 
 migrate: ## apply pending schema migrations (alembic upgrade head)
 	cd server && ../$(BIN)/alembic upgrade head
