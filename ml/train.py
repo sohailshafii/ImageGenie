@@ -17,6 +17,8 @@ Run via `make train` (which sets PYTHONPATH=server so the DB layer imports).
 from __future__ import annotations
 
 import hashlib
+import math
+import random
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -35,6 +37,7 @@ class Config:
     arch: str = "mvcnn"  # model architecture (a label for now; no model yet)
     epochs: int = 20
     steps_per_epoch: int = 50  # batches per epoch (= len(dataloader) once real)
+    log_every: int = 10  # write a loss point every N steps, to throttle DB writes
     batch_size: int = 32
     learning_rate: float = 3e-4
     optimizer: str = "adam"  # "adam" | "sgd"
@@ -147,3 +150,40 @@ def finalize_run(
             run.metrics = metrics
         if weights_uri is not None:
             run.weights_uri = weights_uri
+
+
+# --- Training loop -----------------------------------------------------------
+
+
+def run_training(config: Config, run_id: int) -> None:
+    """The training loop — deliberately a plain double loop for now.
+
+    There is no model yet: it logs a *synthetic* decaying loss per step and a
+    validation loss once per epoch, so the bookkeeping and the dashboard's cost
+    curve are exercised end to end with a curve that actually goes down. A real
+    multi-view CNN forward/backward pass replaces the synthetic loss here later,
+    leaving the ``log_metric`` calls around it unchanged.
+    """
+    random_source = random.Random(config.seed)  # seeded so the curve reproduces
+    total_steps = config.epochs * config.steps_per_epoch
+    for epoch in range(config.epochs):
+        for step_in_epoch in range(config.steps_per_epoch):
+            global_step = epoch * config.steps_per_epoch + step_in_epoch
+            # Exponential decay from ~2.5 toward ~0.2 over the run, plus small
+            # noise — a stand-in for a real training loss until the model lands.
+            train_loss = 0.2 + 2.3 * math.exp(-3.0 * global_step / total_steps)
+            train_loss += random_source.uniform(-0.05, 0.05)
+            # Validation once per epoch (its last step), sitting a little above the
+            # train loss so the train/val gap B4 reads for bias-vs-variance shows.
+            is_last_step = step_in_epoch == config.steps_per_epoch - 1
+            val_loss = None
+            if is_last_step:
+                val_loss = train_loss + 0.15 + random_source.uniform(0.0, 0.1)
+            # Throttle DB writes: log every `log_every` steps, but always log the
+            # epoch's last step so its val_loss point is never dropped.
+            if is_last_step or global_step % config.log_every == 0:
+                log_metric(run_id, global_step, train_loss, val_loss)
+        print(
+            f"epoch {epoch + 1}/{config.epochs}  "
+            f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
+        )
