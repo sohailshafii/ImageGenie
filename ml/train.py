@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 
 from app.db import session_scope
-from app.models import Label, Model
+from app.models import Label, Model, TrainingMetric, TrainingRun, TrainingStatus
 
 
 @dataclass
@@ -87,3 +87,63 @@ def data_snapshot() -> dict:
         "filter": {"deleted": "excluded", "label": "current (manual over weak)"},
         "class_counts": dict(sorted(class_to_count.items())),
     }
+
+
+# --- Run bookkeeping (NFR-4) -------------------------------------------------
+# Three small helpers own the write path to `training_run` / `training_metric`.
+# Each opens its own `session_scope` and commits independently, on purpose: the
+# run row lands before the loop starts and each metric lands as it is produced,
+# so the dashboard shows a live run with a growing loss curve rather than
+# everything appearing at once when training finishes.
+
+
+def create_run(config: Config, snapshot: dict, notes: str | None = None) -> int:
+    """Insert the run row (status defaults to ``running``) and return its id.
+
+    Written before the training loop so the run is visible while it trains; the
+    loss curve (``log_metric``) and terminal state (``finalize_run``) attach to
+    the returned id.
+    """
+    with session_scope() as session:
+        run = TrainingRun(
+            config=asdict(config),  # dataclass -> JSONB blob (config-over-code)
+            data_snapshot=snapshot,
+            notes=notes,
+        )
+        session.add(run)
+        session.flush()  # assigns run.id from the DB before the scope commits
+        return run.id
+
+
+def log_metric(
+    run_id: int, step: int, loss: float, val_loss: float | None = None
+) -> None:
+    """Append one point to a run's loss curve (``training_metric``), committed on
+    its own so the dashboard's cost curve grows while the run is still going.
+    ``val_loss`` is null on steps where validation was not evaluated."""
+    with session_scope() as session:
+        session.add(
+            TrainingMetric(run_id=run_id, step=step, loss=loss, val_loss=val_loss)
+        )
+
+
+def finalize_run(
+    run_id: int,
+    status: TrainingStatus,
+    metrics: dict | None = None,
+    weights_uri: str | None = None,
+) -> None:
+    """Mark a run terminal: set its status and ``finished_at``, and optionally the
+    dev-set ``metrics`` blob and saved-weights path. Called once on success, or
+    with ``status=failed`` from the exception path so a crashed run does not sit
+    forever in ``running`` (chunk 5 wires that up)."""
+    with session_scope() as session:
+        run = session.get(TrainingRun, run_id)
+        if run is None:
+            raise ValueError(f"training_run {run_id} not found")
+        run.status = status
+        run.finished_at = datetime.now(UTC)
+        if metrics is not None:
+            run.metrics = metrics
+        if weights_uri is not None:
+            run.weights_uri = weights_uri
