@@ -609,24 +609,58 @@ select:focus {
   margin-top: 1rem;
 }
 
-.dlq-table {
+.dlq-table,
+.runs-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
 }
 
 .dlq-table th,
-.dlq-table td {
+.dlq-table td,
+.runs-table th,
+.runs-table td {
   padding: 0.6rem 0.75rem;
   text-align: left;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
-.dlq-table th {
+.dlq-table th,
+.runs-table th {
   font-size: 0.8rem;
   color: var(--text-muted);
   font-weight: 600;
+}
+
+.runs-time {
+  color: var(--text-muted);
+}
+
+/* Run lifecycle badge: in-progress (accent), completed (success), failed (danger). */
+.status-badge {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.status-badge.is-running {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.status-badge.is-completed {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.status-badge.is-failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
 .dlq-uid {
