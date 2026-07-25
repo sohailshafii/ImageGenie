@@ -214,9 +214,15 @@ Two dev sets:
 ## Coding Standards (ML)
 
 - **Language/framework:** Python 3.11+, PyTorch. Type hints on public functions.
-- **Reproducibility (NFR-4):** every run records config, data-split version, random seed, and
-  metrics; persist them to the `training_run` entity ([server.md](../server/server.md#database)) so the
-  [dashboard](../web/web.md#training-dashboard) can show them.
+- **Reproducibility (NFR-4):** every run records config, data snapshot, and metrics, persisted to the
+  `training_run` entity ([server.md](../server/server.md#database)) so the
+  [dashboard](../web/web.md#training-dashboard) can show them. The schema maps NFR-4's three pillars to
+  three JSONB blobs — `config` (hyperparameters), `data_snapshot` (which labels the run trained on:
+  count, content hash, as-of time, filter), and `metrics` (dev-set evaluation) — chosen over typed
+  columns so a new hyperparameter or metric needs no migration. The per-step loss curve lives in a
+  sibling `training_metric` table (`(run_id, step)` → `loss`, nullable `val_loss` for the train/val gap
+  that reveals variance). The **training script writes these rows directly through a DB session** (like
+  the pipeline workers); the API only *reads* them, so there are no training write endpoints.
 - **Config over code:** hyperparameters in config files, not hardcoded in scripts.
 - **Data loading:** stream renders/point clouds from object storage; never assume the full
   dataset fits in memory or on the local disk.

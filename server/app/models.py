@@ -12,6 +12,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import ARRAY, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -172,6 +173,68 @@ class Label(Base):
     confidence: Mapped[float | None] = mapped_column(default=None)  # weak labels only
     annotator: Mapped[str | None] = mapped_column(default=None)  # user email, for manual
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class TrainingStatus(str, enum.Enum):
+    """Lifecycle of a training run."""
+
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class TrainingRun(Base):
+    """One model-training run and its bookkeeping (FR-6, NFR-4).
+
+    Reproducibility rests on three JSON blobs that mirror NFR-4's three pillars:
+    ``config`` (the hyperparameters), ``data_snapshot`` (which labels the run
+    trained on), and ``metrics`` (dev-set evaluation). They are blobs rather than
+    typed columns so a new hyperparameter or metric needs no migration
+    (config-over-code — CLAUDE.md's M6 budget). The per-step loss curve lives in
+    ``training_metric``. The training script writes these rows directly through a
+    DB session, like the pipeline workers — the API only *reads* them for the
+    dashboard, so no write endpoints exist.
+    """
+
+    __tablename__ = "training_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    status: Mapped[TrainingStatus] = mapped_column(default=TrainingStatus.running)
+    # Hyperparameters: learning rate, momentum, Adam betas/eps, batch size, epochs,
+    # architecture, etc. A blob so adding a knob needs no schema change.
+    config: Mapped[dict] = mapped_column(JSONB)
+    # Which data the run trained on — count, content hash, as-of time, any filter —
+    # so a result is reproducible (NFR-4). A blob for the same reason as config.
+    data_snapshot: Mapped[dict] = mapped_column(JSONB)
+    # Dev-set evaluation: per-set accuracy, per-class precision/recall, confusion
+    # matrix. Null until the run is evaluated (bias/variance analysis, FR-7).
+    metrics: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    # GCS path to the saved weights; set when the run completes.
+    weights_uri: Mapped[str | None] = mapped_column(default=None)
+    # Free-text description for the dashboard, e.g. "mvcnn baseline, 20 epochs".
+    notes: Mapped[str | None] = mapped_column(default=None)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+
+class TrainingMetric(Base):
+    """One point on a run's loss curve — a row per logged step (B2).
+
+    ``val_loss`` is nullable because validation is typically evaluated less often
+    than the training loss (e.g. once per epoch), so steps without it store null.
+    The gap between ``loss`` and ``val_loss`` is what reveals variance (overfitting).
+    """
+
+    __tablename__ = "training_metric"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("training_run.id"), primary_key=True)
+    step: Mapped[int] = mapped_column(primary_key=True)  # epoch or step index
+    loss: Mapped[float] = mapped_column()  # training loss at this step
+    val_loss: Mapped[float | None] = mapped_column(default=None)  # validation loss, if computed
 
 
 class UserRole(str, enum.Enum):
