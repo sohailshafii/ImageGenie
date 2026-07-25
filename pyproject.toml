@@ -14,9 +14,10 @@ dev = ["ruff==0.6.9", "pytest==9.1.1", "testcontainers==4.14.2", "httpx==0.28.1"
 py-modules = []
 
 [tool.pytest.ini_options]
-# Server tests import the `app` package; put server/ on the path.
-pythonpath = ["server"]
-testpaths = ["server/tests"]
+# Server tests import the `app` package; ml tests import ml modules (dataset,
+# taxonomy, …) and also `app`. Put both dirs on the path.
+pythonpath = ["server", "ml"]
+testpaths = ["server/tests", "ml/tests"]
 
 [tool.ruff]
 line-length = 100
