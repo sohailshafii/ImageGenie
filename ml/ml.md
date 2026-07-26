@@ -181,40 +181,55 @@ weak labels, reading the rendered views from the processed bucket. Per CLAUDE.md
 budget, the script starts as a plain loop and grows only when a result demands it — the one
 non-negotiable is NFR-4 bookkeeping.
 
-`ml/train.py` (`make train`) is built around that budget:
+`ml/train.py` (`make train`) is built around that budget, in four small modules:
 
+- **Model** (`ml/model.py`, `MultiViewCNN`) — the shared 2D `backbone` (resnet18/resnet50, its final
+  fc swapped for `Identity` so it emits features) runs on each view; `forward` folds the views into
+  the batch so the shared backbone sees them all, then regroups and pools across views (`view_pool`
+  = `max`/`mean`) before a small head (`Linear→ReLU→Dropout→…→Linear`) maps to `num_classes`. Built
+  from the run `Config` via `from_config`; unknown backbone/pool and a `feature_dim` that doesn't
+  match the backbone are rejected up front.
+- **Dataset** (`ml/dataset.py`, `MultiViewDataset`) — one item per model: its 12 views loaded via
+  `view_keys` + `Storage.get_bytes`, decoded and ImageNet-normalized (the backbone is pretrained) to
+  a `[num_views, 3, H, W]` tensor, plus the class index from the canonical `ROSTER`
+  (`ml/taxonomy.py`, a sorted tuple so the index order is stable and recorded per run). Reads through
+  the `Storage` abstraction, so the same code trains local and cloud (NFR-5).
+- **Splits** (`ml/splits.py`, `stratified_split`) — the trainable set is partitioned **per class**
+  into train/val/test (~80/10/10), deterministic from `Config.seed` (sorted → seeded shuffle →
+  `floor` slice, train keeps the remainder), so a run reproduces (NFR-4); tiny classes fall back to
+  train. The test split is held for [evaluation](#evaluation) (M7).
 - **`Config` dataclass** — all hyperparameters, persisted verbatim to `training_run.config` so
-  adding a knob needs no migration (config-over-code). Two groups:
-  - *Architecture* — the multi-view CNN's shape: `backbone` (the shared per-view 2D CNN, e.g.
-    `resnet18` — its own layer count is implied by the name, not re-listed), `pretrained`,
-    `num_views` (12, matching the render stage), `view_pool` (`max`/`mean`), `feature_dim`,
-    `head_hidden_dims` (the classifier head's hidden layers — one int = nodes in that layer),
-    `dropout`, and `num_classes` (12). Recorded per run so a result is reproducible even as the
-    architecture is tuned (NFR-4); no model is built from them yet.
-  - *Optimization* — `epochs`, `steps_per_epoch`, `batch_size`, `learning_rate`, `optimizer`,
-    `momentum`, Adam `beta1`/`beta2`/`eps`, `seed`, and `log_every`.
-- **`data_snapshot()`** — captures *which labels* the run trains on: the current label per live
-  model (resolved manual-over-weak, exactly as the labeling API does), returned as
-  `{label_count, label_hash, as_of, filter, class_counts}`. The `label_hash` (sha256 over the
-  sorted `(uid, class)` pairs) identifies the training set, so a changed hash flags that the data
-  moved underneath a comparison.
-- **Bookkeeping helpers** — `create_run` / `log_metric` / `finalize_run`, each committing on its
-  own `session_scope` so the [dashboard](../web/web.md#training-dashboard) sees a **live** run with
-  a growing loss curve. Written directly through a DB session (like the pipeline workers); the API
-  only reads these rows. `log_every` throttles the `training_metric` writes — a point every N steps,
+  adding a knob needs no migration (config-over-code). Three groups: *Architecture* (`backbone`,
+  `pretrained`, `num_views`, `view_pool`, `feature_dim`, `head_hidden_dims` — one int = nodes in a
+  head layer, `dropout`, `num_classes`), *Optimization* (`epochs`, `batch_size`, `learning_rate`,
+  `optimizer`, `momentum`, Adam `beta1`/`beta2`/`eps`, `seed`, `log_every`), and *Runtime* (`device`
+  — default `cpu`, the cloud config sets `cuda`; `num_workers`).
+- **`load_trainable_samples()` + `data_snapshot()`** — the trainable set is the current label per
+  live model (manual-over-weak, as the labeling API resolves it) **that is also rendered** (joined to
+  a done `rendered` artifact), so training never faults on an unrendered model. The snapshot records
+  `{label_count, label_hash, as_of, filter, class_counts, splits}`; the `label_hash` (sha256 over
+  the sorted `(uid, class)` pairs) identifies the set, so a changed hash flags data drift.
+- **Bookkeeping helpers** — `create_run` / `log_metric` / `finalize_run`, each committing on its own
+  `session_scope` so the [dashboard](../web/web.md#training-dashboard) sees a **live** run with a
+  growing loss curve. Written directly through a DB session (like the pipeline workers); the API only
+  reads these rows. `log_every` throttles the `training_metric` writes — a point every N steps,
   always keeping each epoch's last step so its `val_loss` is never dropped.
-- **`run_training()`** — a plain epoch/step loop. **Current state:** the model and dataset are
-  deliberate placeholders (a synthetic decaying loss, seeded so it reproduces) — enough to exercise
-  the bookkeeping and the cost curve end to end. A real MVCNN forward/backward pass and a dataset
-  that streams renders from the processed bucket replace the synthetic loss here, leaving the
-  logging around it unchanged.
-- **`main()`** — snapshot → `create_run` → train → `finalize_run(completed)`; any exception marks
-  the run `failed` (so it never lingers as `running`) and re-raises.
+- **`run_training()`** — the real epoch/step loop: cross-entropy over the configured optimizer,
+  per-step train loss logged (throttled), and once per epoch the val split is evaluated for loss and
+  accuracy (val loss lands on the epoch's last step, so the dashboard shows the train/val gap; val
+  accuracy is printed for now — persisting it as a second curve series is a follow-up). Weights are
+  checkpointed to `processed/models/{run_id}.pt` after every epoch (overwriting), so a spot
+  preemption keeps the latest epoch; the key becomes the run's `weights_uri` on success.
+- **`main()`** — load samples → split → snapshot → `create_run` → train → `finalize_run(completed,
+  weights_uri)`; an empty trainable set exits early, and any exception marks the run `failed` (so it
+  never lingers as `running`) and re-raises.
 
 Run it with `make train`, which sets `PYTHONPATH=server` so the DB layer (`app.db`, `app.models`)
-imports; no cert shim, since training only touches Postgres. Dev-set `metrics` and `weights_uri`
-stay null until [evaluation](#evaluation) (B4 / M7) and a real saved model exist. The reproducibility
-schema this writes to is detailed under [Coding Standards](#coding-standards-ml).
+imports; no cert shim, since training only touches Postgres. `ml/smoke_train.py` (`make smoke-train`)
+seeds a small class-separable dataset and runs the loop end to end on CPU — a repeatable check that it
+learns and the bookkeeping/checkpoint land, without a GPU or the real renders. Dev-set `metrics` stay
+null until [evaluation](#evaluation) (B4 / M7). The reproducibility schema this writes to is detailed
+under [Coding Standards](#coding-standards-ml).
 
 ## Dataset Splits
 
