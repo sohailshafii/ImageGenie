@@ -1,4 +1,4 @@
-"""Baseline training loop for the multi-view classifier (M6, ml.md#training).
+"""Training loop for the multi-view classifier (M6, ml.md#training).
 
 Deliberately simple, per the M6 complexity budget (CLAUDE.md): a plain loop with a
 handful of hyperparameters in `Config`, plus the one non-negotiable — NFR-4
@@ -7,26 +7,42 @@ its per-step metrics to the `training_run` / `training_metric` tables, written
 directly through a DB session (like the pipeline workers), so the dashboard can
 compare runs and the loss curve is answerable.
 
-The model and the multi-view dataset are intentionally minimal placeholders here
-(a plain loop over a synthetic loss) — the bookkeeping backbone is the real part
-and grows a real model + GCS-render dataset next.
+The model (ml/model.py) is a multi-view CNN over the rendered views, which the
+dataset (ml/dataset.py) streams from the processed bucket; the trainable set is
+the models that are both labeled and rendered, split per class (ml/splits.py).
 
-Run via `make train` (which sets PYTHONPATH=server so the DB layer imports).
+Run via `make train` (which sets PYTHONPATH=server so the DB layer imports). The
+device defaults to CPU (the local-first path); the cloud config sets "cuda".
 """
 
 from __future__ import annotations
 
 import hashlib
-import math
-import random
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
+import torch
+from dataset import MultiViewDataset
+from model import MultiViewCNN
+from splits import DatasetSplit, split_sizes, stratified_split
 from sqlalchemy import select
+from torch import nn
+from torch.utils.data import DataLoader
 
+from app.config import get_settings
 from app.db import session_scope
-from app.models import Label, Model, TrainingMetric, TrainingRun, TrainingStatus
+from app.models import (
+    Artifact,
+    ArtifactStage,
+    ArtifactStatus,
+    Label,
+    Model,
+    TrainingMetric,
+    TrainingRun,
+    TrainingStatus,
+)
+from app.storage import build_storage
 
 
 @dataclass
@@ -40,8 +56,7 @@ class Config:
     # classes. Recorded per run so a result is reproducible (NFR-4). A backbone's
     # own layer count is implied by its name (resnet18 = 18 layers) rather than
     # re-listed; head_hidden_dims is the tunable part — the hidden layers of the
-    # head and their node counts. No model is built from these yet (the loop is a
-    # placeholder); they exist so the config already carries the real shape.
+    # head and their node counts.
     arch: str = "mvcnn"  # model family
     backbone: str = "resnet18"  # shared per-view 2D CNN (torchvision)
     pretrained: bool = True  # start from ImageNet-pretrained backbone weights
@@ -55,7 +70,6 @@ class Config:
 
     # --- Optimization ---
     epochs: int = 20
-    steps_per_epoch: int = 50  # batches per epoch (= len(dataloader) once real)
     log_every: int = 10  # write a loss point every N steps, to throttle DB writes
     batch_size: int = 32
     learning_rate: float = 3e-4
@@ -66,48 +80,64 @@ class Config:
     adam_eps: float = 1e-8
     seed: int = 0
 
+    # --- Runtime ---
+    # "cpu" is the default so the local smoke never depends on a GPU (the locked
+    # local-first decision); the cloud config sets "cuda". "auto" (cuda>mps>cpu)
+    # and "mps" are also accepted.
+    device: str = "cpu"
+    # DataLoader worker processes. 0 = load in the main process, which sidesteps
+    # having to pickle the storage client; raise it once at real scale.
+    num_workers: int = 0
 
-def data_snapshot() -> dict:
-    """Capture *which labels* this run trains on, for reproducibility (NFR-4).
 
-    This is the ``training_run.data_snapshot`` blob. It records the current label
-    of every live, labeled model — "current" resolved exactly as the labeling API
-    does: the most-recent label per model, so a manual correction wins over the
-    weak label (see ``_latest_labels`` in ``app.api``). A content ``label_hash``
-    over the sorted (uid, class) pairs makes the training set identifiable: two
-    runs with the same hash trained on the same labels, and a changed hash flags
-    that the data moved underneath a comparison.
+def load_trainable_samples() -> list[tuple[str, str]]:
+    """The trainable set: the current label of every live, *rendered* model.
 
-    Only the label set is snapshotted for now — the model and dataset are still
-    placeholders. When the real multi-view dataset lands, this narrows to models
-    that also have renders in the processed bucket (an added ``filter`` clause).
+    A model must be labeled **and** have finished rendering (its 12 views exist)
+    to be usable, so both are required: the join to `artifact` drops models the
+    pipeline hasn't rendered, the join to `model` + `deleted_at` drops soft-deleted
+    ones, and DISTINCT ON keeps the newest label (manual over weak), matching the
+    labeling API's resolution.
     """
     with session_scope() as session:
-        # DISTINCT ON (model_uid) with created_at/id DESC keeps one row per model,
-        # the newest; joined to `model` so soft-deleted models drop out (FR-9).
-        current_label_stmt = (
+        stmt = (
             select(Label.model_uid, Label.class_name)
             .join(Model, Model.uid == Label.model_uid)
+            .join(Artifact, Artifact.model_uid == Label.model_uid)
             .where(Model.deleted_at.is_(None))
+            .where(Artifact.stage == ArtifactStage.rendered)
+            .where(Artifact.status == ArtifactStatus.done)
             .distinct(Label.model_uid)
             .order_by(Label.model_uid, Label.created_at.desc(), Label.id.desc())
         )
-        # Rows arrive sorted by model_uid (the DISTINCT ON leading key), so the
-        # hash below is order-stable without an extra sort.
-        labeled_models = session.execute(current_label_stmt).all()
+        return [(uid, class_name) for uid, class_name in session.execute(stmt).all()]
 
+
+def data_snapshot(samples: list[tuple[str, str]], split: DatasetSplit) -> dict:
+    """Capture *which data* this run trained on, for reproducibility (NFR-4).
+
+    The `training_run.data_snapshot` blob: the count and per-class breakdown of the
+    trainable set, a content `label_hash` over the sorted (uid, class) pairs so the
+    set is identifiable (same hash → same data; a changed hash flags drift), the
+    filter that produced it, and the train/val/test split sizes.
+    """
     digest = hashlib.sha256()
     class_to_count: Counter[str] = Counter()
-    for model_uid, class_name in labeled_models:
+    for model_uid, class_name in sorted(samples):
         digest.update(f"{model_uid}\t{class_name}\n".encode())
         class_to_count[class_name] += 1
 
     return {
-        "label_count": len(labeled_models),
+        "label_count": len(samples),
         "label_hash": "sha256:" + digest.hexdigest(),
         "as_of": datetime.now(UTC).isoformat(),
-        "filter": {"deleted": "excluded", "label": "current (manual over weak)"},
+        "filter": {
+            "deleted": "excluded",
+            "label": "current (manual over weak)",
+            "renders": "required",
+        },
         "class_counts": dict(sorted(class_to_count.items())),
+        "splits": split_sizes(split),
     }
 
 
@@ -158,7 +188,7 @@ def finalize_run(
     """Mark a run terminal: set its status and ``finished_at``, and optionally the
     dev-set ``metrics`` blob and saved-weights path. Called once on success, or
     with ``status=failed`` from the exception path so a crashed run does not sit
-    forever in ``running`` (chunk 5 wires that up)."""
+    forever in ``running``."""
     with session_scope() as session:
         run = session.get(TrainingRun, run_id)
         if run is None:
@@ -174,37 +204,118 @@ def finalize_run(
 # --- Training loop -----------------------------------------------------------
 
 
-def run_training(config: Config, run_id: int) -> None:
-    """The training loop — deliberately a plain double loop for now.
+def _select_device(preference: str) -> torch.device:
+    """Resolve the training device. ``"auto"`` prefers CUDA, then Apple MPS, then
+    CPU; an explicit ``"cpu"``/``"cuda"``/``"mps"`` is honored as given."""
+    if preference != "auto":
+        return torch.device(preference)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
-    There is no model yet: it logs a *synthetic* decaying loss per step and a
-    validation loss once per epoch, so the bookkeeping and the dashboard's cost
-    curve are exercised end to end with a curve that actually goes down. A real
-    multi-view CNN forward/backward pass replaces the synthetic loss here later,
-    leaving the ``log_metric`` calls around it unchanged.
+
+def _build_optimizer(config: Config, model: nn.Module) -> torch.optim.Optimizer:
+    if config.optimizer == "adam":
+        return torch.optim.Adam(
+            model.parameters(),
+            lr=config.learning_rate,
+            betas=(config.adam_beta1, config.adam_beta2),
+            eps=config.adam_eps,
+        )
+    if config.optimizer == "sgd":
+        return torch.optim.SGD(
+            model.parameters(), lr=config.learning_rate, momentum=config.momentum
+        )
+    raise ValueError(f"unsupported optimizer {config.optimizer!r}; use 'adam' or 'sgd'")
+
+
+def _evaluate(
+    model: nn.Module, loader: DataLoader, loss_fn: nn.Module, device: torch.device
+) -> tuple[float | None, float | None]:
+    """Mean validation loss and accuracy over ``loader``, or ``(None, None)`` if
+    the validation split is empty (which a very small local smoke can produce)."""
+    if len(loader) == 0:
+        return None, None
+    model.eval()
+    total_loss = 0.0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for views, labels in loader:
+            views = views.to(device)
+            labels = labels.to(device)
+            logits = model(views)
+            total_loss += loss_fn(logits, labels).item() * labels.size(0)
+            correct += int((logits.argmax(dim=1) == labels).sum().item())
+            total += labels.size(0)
+    return total_loss / total, correct / total
+
+
+def _format_metric(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.4f}"
+
+
+def run_training(config: Config, run_id: int, split: DatasetSplit) -> None:
+    """Train the multi-view CNN over the rendered views.
+
+    Per-step training loss is logged (throttled by ``log_every``); once per epoch
+    the validation split is evaluated for loss and accuracy, and the epoch's final
+    step is logged with both its train loss and that val loss, so the dashboard's
+    cost curve shows the train/val gap. Validation accuracy is printed for the
+    smoke; persisting it as a second curve series is the accuracy follow-up. The
+    bookkeeping helpers (create_run / log_metric / finalize_run) are unchanged.
     """
-    random_source = random.Random(config.seed)  # seeded so the curve reproduces
-    total_steps = config.epochs * config.steps_per_epoch
+    torch.manual_seed(config.seed)  # seeded so shuffling/init are reproducible
+    storage = build_storage(get_settings())
+    device = _select_device(config.device)
+
+    train_loader = DataLoader(
+        MultiViewDataset(split.train, storage),
+        batch_size=config.batch_size,
+        shuffle=True,
+        num_workers=config.num_workers,
+    )
+    val_loader = DataLoader(
+        MultiViewDataset(split.val, storage),
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+    )
+
+    model = MultiViewCNN.from_config(config).to(device)
+    optimizer = _build_optimizer(config, model)
+    loss_fn = nn.CrossEntropyLoss()
+
+    global_step = 0
     for epoch in range(config.epochs):
-        for step_in_epoch in range(config.steps_per_epoch):
-            global_step = epoch * config.steps_per_epoch + step_in_epoch
-            # Exponential decay from ~2.5 toward ~0.2 over the run, plus small
-            # noise — a stand-in for a real training loss until the model lands.
-            train_loss = 0.2 + 2.3 * math.exp(-3.0 * global_step / total_steps)
-            train_loss += random_source.uniform(-0.05, 0.05)
-            # Validation once per epoch (its last step), sitting a little above the
-            # train loss so the train/val gap B4 reads for bias-vs-variance shows.
-            is_last_step = step_in_epoch == config.steps_per_epoch - 1
-            val_loss = None
-            if is_last_step:
-                val_loss = train_loss + 0.15 + random_source.uniform(0.0, 0.1)
-            # Throttle DB writes: log every `log_every` steps, but always log the
-            # epoch's last step so its val_loss point is never dropped.
-            if is_last_step or global_step % config.log_every == 0:
-                log_metric(run_id, global_step, train_loss, val_loss)
+        model.train()
+        batch_count = len(train_loader)
+        last_train_loss = 0.0
+        for batch_index, (views, labels) in enumerate(train_loader):
+            views = views.to(device)
+            labels = labels.to(device)
+            optimizer.zero_grad()
+            logits = model(views)
+            loss = loss_fn(logits, labels)
+            loss.backward()
+            optimizer.step()
+            last_train_loss = loss.item()
+            # Log on the interval, but skip the epoch's last step — it is logged
+            # below together with the epoch's val loss, so each step is one row.
+            is_last_batch = batch_index == batch_count - 1
+            if not is_last_batch and global_step % config.log_every == 0:
+                log_metric(run_id, global_step, last_train_loss)
+            global_step += 1
+        val_loss, val_accuracy = _evaluate(model, val_loader, loss_fn, device)
+        # The epoch's final step carries both its train loss and the val loss.
+        log_metric(run_id, global_step - 1, last_train_loss, val_loss)
         print(
             f"epoch {epoch + 1}/{config.epochs}  "
-            f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}"
+            f"train_loss={last_train_loss:.4f}  "
+            f"val_loss={_format_metric(val_loss)}  "
+            f"val_acc={_format_metric(val_accuracy)}"
         )
 
 
@@ -212,24 +323,34 @@ def run_training(config: Config, run_id: int) -> None:
 
 
 def main() -> None:
-    """Run one training run end to end: snapshot the data, open the run row,
-    train, and finalize. Any failure marks the run ``failed`` (so it never
-    lingers as ``running``) and re-raises so the traceback is visible.
+    """Train one multi-view CNN run end to end: load the trainable set (labeled ∩
+    rendered), split it, snapshot the data, open the run, train, and finalize. Any
+    failure marks the run ``failed`` (so it never lingers as ``running``) and
+    re-raises so the traceback is visible.
 
     Config is the ``Config`` defaults for now — CLI/config-file overrides can be
     added here later without touching the loop or the bookkeeping.
     """
     config = Config()
-    snapshot = data_snapshot()
+    samples = load_trainable_samples()
+    if not samples:
+        raise SystemExit(
+            "no trainable models: need models that are both labeled and rendered "
+            "(run the pipeline and the weak-label backfill first)"
+        )
+    split = stratified_split(samples, config.seed)
+    snapshot = data_snapshot(samples, split)
     run_id = create_run(
         config, snapshot, notes=f"{config.arch} baseline, {config.epochs} epochs"
     )
+    sizes = snapshot["splits"]
     print(
-        f"training_run {run_id}: {snapshot['label_count']} labels, "
-        f"{config.epochs} epochs x {config.steps_per_epoch} steps"
+        f"training_run {run_id}: {snapshot['label_count']} labeled+rendered models "
+        f"(train {sizes['train']} / val {sizes['val']} / test {sizes['test']}), "
+        f"{config.epochs} epochs on {config.device}"
     )
     try:
-        run_training(config, run_id)
+        run_training(config, run_id, split)
     except Exception:
         finalize_run(run_id, TrainingStatus.failed)
         raise
