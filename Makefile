@@ -17,7 +17,13 @@ GCP_REGION   ?= us-central1
 WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:latest
 # The training image (ml/Dockerfile) is a separate artifact from the worker image:
 # CUDA torch instead of CPU torch, and none of the mesh/web stack.
-TRAIN_IMAGE  := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/train:latest
+#
+# Tagged by COMMIT, never `:latest`. A training job is submitted by tag and then
+# runs unattended for hours, so a floating tag makes "the image is older than the
+# code" invisible — which is exactly how a paid GPU run once started with a stale
+# image, silently ignored every CLI flag, and trained the full set on CPU.
+GIT_SHA      := $(shell git rev-parse --short HEAD 2>/dev/null)
+TRAIN_IMAGE  := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/train:$(GIT_SHA)
 # Identities from infra/training.tf: BUILD_SA builds the image, TRAINER_SA runs
 # the Vertex job.
 BUILD_SA     ?= imagegenie-build@$(GCP_PROJECT).iam.gserviceaccount.com
@@ -150,6 +156,24 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	#   make train-cloud LIMIT=500
 	#   make train-cloud                      # the whole trainable set
 	#   make train-cloud ARGS='--epochs 5'
+	#
+	# Two preflight checks, both learned the expensive way. A job runs unattended
+	# for hours, so an image that doesn't match the code is not a slow failure —
+	# it is a *silent* one: the old entrypoint ignored every flag and trained the
+	# full set on CPU, looking like a healthy run the whole time.
+	@dirty=$$(git status --porcelain -- ml server/app); \
+	if [ -n "$$dirty" ]; then \
+		echo "ERROR: uncommitted changes in ml/ or server/app — the image is tagged by"; \
+		echo "commit ($(GIT_SHA)), so what would run is NOT what is in your tree:"; \
+		echo "$$dirty"; \
+		echo "Commit (or stash), then: make train-image"; \
+		exit 1; \
+	fi
+	@gcloud artifacts docker images describe $(TRAIN_IMAGE) --project $(GCP_PROJECT) >/dev/null 2>&1 || { \
+		echo "ERROR: no training image for commit $(GIT_SHA)."; \
+		echo "Build it first:  make train-image"; \
+		exit 1; \
+	}
 	@set -e; \
 	spec=$$(mktemp -t imagegenie-vertex); \
 	trap 'rm -f "$$spec"' EXIT; \
