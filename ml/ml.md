@@ -216,8 +216,10 @@ non-negotiable is NFR-4 bookkeeping.
   always keeping each epoch's last step so its `val_loss` is never dropped.
 - **`run_training()`** — the real epoch/step loop: cross-entropy over the configured optimizer,
   per-step train loss logged (throttled), and once per epoch the val split is evaluated for loss and
-  accuracy (val loss lands on the epoch's last step, so the dashboard shows the train/val gap; val
-  accuracy is printed for now — persisting it as a second curve series is a follow-up). Weights are
+  accuracy — both persisted onto the epoch's last step, so the dashboard shows the train/val gap
+  and the accuracy curve. Accuracy is stored rather than derived because on a ~7.7:1 skewed
+  corpus a falling loss can hide a model that has collapsed onto the majority class; the
+  accuracy sitting flat at that rate is what makes it visible. Weights are
   checkpointed to `processed/models/{run_id}.pt` after every epoch (overwriting), so a spot
   preemption keeps the latest epoch; the key becomes the run's `weights_uri` on success.
 - **`main()`** — load samples → split → snapshot → `create_run` → train → `finalize_run(completed,

@@ -57,16 +57,28 @@ def _seed_run(
     config: dict,
     data_snapshot: dict,
     status: TrainingStatus = TrainingStatus.completed,
-    losses: list[tuple[int, float, float | None]] | None = None,
+    losses: list[tuple] | None = None,
 ) -> int:
-    """Insert a run plus its metric points; return the run id."""
+    """Insert a run plus its metric points; return the run id.
+
+    Each point is ``(step, loss, val_loss)`` or ``(step, loss, val_loss,
+    val_accuracy)`` — the short form keeps the pre-accuracy cases readable.
+    """
     with db.session_scope() as session:
         run = TrainingRun(config=config, data_snapshot=data_snapshot, status=status)
         session.add(run)
         session.flush()
-        for step, loss, val_loss in losses or []:
+        for point in losses or []:
+            step, loss, val_loss = point[:3]
+            val_accuracy = point[3] if len(point) > 3 else None
             session.add(
-                TrainingMetric(run_id=run.id, step=step, loss=loss, val_loss=val_loss)
+                TrainingMetric(
+                    run_id=run.id,
+                    step=step,
+                    loss=loss,
+                    val_loss=val_loss,
+                    val_accuracy=val_accuracy,
+                )
             )
         return run.id
 
@@ -139,3 +151,64 @@ def test_anonymous_access_is_refused(anon_client: TestClient) -> None:
     assert anon_client.get("/training-runs").status_code == 401
     assert anon_client.get("/training-runs/1").status_code == 401
     assert anon_client.get("/training-runs/1/metrics").status_code == 401
+
+
+# ── Validation accuracy (M6 #2) ─────────────────────────────────────────────
+
+
+def test_final_accuracy_is_the_last_measured_one(viewer_client: TestClient) -> None:
+    run_id = _seed_run(
+        config={"arch": "mvcnn"},
+        data_snapshot={"label_count": 5},
+        losses=[(0, 2.0, 2.1, 0.10), (10, 1.0, 1.2, 0.42)],
+    )
+
+    [row] = [r for r in viewer_client.get("/training-runs").json() if r["id"] == run_id]
+
+    assert row["final_accuracy"] == pytest.approx(0.42)
+
+
+def test_final_accuracy_survives_a_run_caught_mid_epoch(
+    viewer_client: TestClient,
+) -> None:
+    """Validation runs once per epoch, so a live run has interval rows on top with
+    no accuracy. Reading the plain highest step would report "no accuracy" for a
+    run that has perfectly good numbers from the epoch before."""
+    run_id = _seed_run(
+        config={"arch": "mvcnn"},
+        data_snapshot={"label_count": 5},
+        status=TrainingStatus.running,
+        losses=[(10, 1.0, 1.2, 0.42), (20, 0.9, None, None)],
+    )
+
+    [row] = [r for r in viewer_client.get("/training-runs").json() if r["id"] == run_id]
+
+    assert row["final_accuracy"] == pytest.approx(0.42)
+    assert row["final_loss"] == pytest.approx(0.9)  # loss still tracks the latest step
+
+
+def test_a_run_that_never_measured_accuracy_reports_null(
+    viewer_client: TestClient,
+) -> None:
+    """Runs predating the column, and any run stopped before its first epoch ended."""
+    run_id = _seed_run(
+        config={"arch": "mvcnn"},
+        data_snapshot={"label_count": 5},
+        losses=[(0, 2.0, None), (10, 1.5, None)],
+    )
+
+    [row] = [r for r in viewer_client.get("/training-runs").json() if r["id"] == run_id]
+
+    assert row["final_accuracy"] is None
+
+
+def test_the_curve_carries_accuracy_per_point(viewer_client: TestClient) -> None:
+    run_id = _seed_run(
+        config={"arch": "mvcnn"},
+        data_snapshot={"label_count": 5},
+        losses=[(0, 2.0, None), (10, 1.0, 1.2, 0.42)],
+    )
+
+    points = viewer_client.get(f"/training-runs/{run_id}/metrics").json()
+
+    assert [point["val_accuracy"] for point in points] == [None, pytest.approx(0.42)]

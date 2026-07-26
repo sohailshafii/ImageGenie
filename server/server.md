@@ -321,7 +321,7 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `PUT /models/{uid}/label` | **admin** | records a manual label, attributed to the calling admin |
 | `GET /models/{uid}/download/source` | logged in | the original ingested mesh, as an attachment |
 | `GET /models/{uid}/download/normalized` | logged in | the centered/unit-scaled PLY, as an attachment |
-| `GET /training-runs` | logged in | all runs, newest first; headline = final training loss |
+| `GET /training-runs` | logged in | all runs, newest first; headline = final training loss + val accuracy |
 | `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
 | `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |

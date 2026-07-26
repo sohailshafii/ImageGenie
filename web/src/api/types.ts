@@ -143,6 +143,9 @@ export interface TrainingRunSummary {
   arch: string | null; // config summary for the row; null if config lacks it
   labelCount: number | null; // how many labels the run trained on (from data_snapshot)
   finalLoss: number | null; // training loss at the last logged step; null if no metrics
+  // Top-1 val accuracy at the last step that measured it. Shown beside the loss
+  // because on this skewed corpus a falling loss can hide a collapsed model.
+  finalAccuracy: number | null;
   startedAt: string; // ISO 8601
   finishedAt: string | null;
 }
@@ -170,4 +173,5 @@ export interface TrainingMetricPoint {
   step: number;
   loss: number;
   valLoss: number | null; // null on steps where validation was not evaluated
+  valAccuracy: number | null; // top-1 on the val split, 0..1; null when not evaluated
 }

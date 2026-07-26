@@ -149,6 +149,10 @@ class TrainingRunSummaryOut(BaseModel):
     arch: str | None  # config summary for the row; None if config lacks it
     label_count: int | None  # how many labels the run trained on (from data_snapshot)
     final_loss: float | None  # training loss at the last logged step; None if no metrics
+    # Top-1 val accuracy at the last step that measured it. Reported next to the
+    # loss because on a ~7.7:1 skewed corpus a falling loss can hide a model that
+    # has collapsed onto the majority class.
+    final_accuracy: float | None
     started_at: datetime
     finished_at: datetime | None
 
@@ -174,6 +178,7 @@ class TrainingMetricOut(BaseModel):
     step: int
     loss: float
     val_loss: float | None  # null on steps where validation was not evaluated
+    val_accuracy: float | None  # top-1 on the val split, 0..1; null when not evaluated
 
 
 # Short by design: a signed URL is readable by anyone holding it, so it should
@@ -683,6 +688,23 @@ def _latest_metric_loss():
     )
 
 
+def _latest_val_accuracy():
+    """Subquery of each run's most-recent *measured* validation accuracy.
+
+    Filtered to non-null rather than simply taking the highest step, because
+    validation runs once per epoch: a run caught mid-epoch has interval rows on
+    top with no accuracy, and reading the plain maximum would report "no
+    accuracy" for a run that has perfectly good numbers from earlier epochs.
+    """
+    return (
+        select(TrainingMetric.run_id, TrainingMetric.val_accuracy)
+        .where(TrainingMetric.val_accuracy.is_not(None))
+        .distinct(TrainingMetric.run_id)
+        .order_by(TrainingMetric.run_id, TrainingMetric.step.desc())
+        .subquery()
+    )
+
+
 @app.get(
     "/training-runs",
     response_model=list[TrainingRunSummaryOut],
@@ -695,10 +717,12 @@ def list_training_runs() -> list[TrainingRunSummaryOut]:
     the training script writes these rows directly, so there are no write routes.
     """
     latest_loss = _latest_metric_loss()
+    latest_accuracy = _latest_val_accuracy()
     with session_scope() as session:
         rows = session.execute(
-            select(TrainingRun, latest_loss.c.loss)
+            select(TrainingRun, latest_loss.c.loss, latest_accuracy.c.val_accuracy)
             .outerjoin(latest_loss, latest_loss.c.run_id == TrainingRun.id)
+            .outerjoin(latest_accuracy, latest_accuracy.c.run_id == TrainingRun.id)
             .order_by(TrainingRun.id.desc())
         ).all()
         return [
@@ -708,10 +732,11 @@ def list_training_runs() -> list[TrainingRunSummaryOut]:
                 arch=run.config.get("arch"),
                 label_count=run.data_snapshot.get("label_count"),
                 final_loss=final_loss,
+                final_accuracy=final_accuracy,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
             )
-            for run, final_loss in rows
+            for run, final_loss, final_accuracy in rows
         ]
 
 
@@ -759,7 +784,12 @@ def get_training_run_metrics(run_id: int) -> list[TrainingMetricOut]:
             .order_by(TrainingMetric.step)
         ).scalars()
         return [
-            TrainingMetricOut(step=point.step, loss=point.loss, val_loss=point.val_loss)
+            TrainingMetricOut(
+                step=point.step,
+                loss=point.loss,
+                val_loss=point.val_loss,
+                val_accuracy=point.val_accuracy,
+            )
             for point in points
         ]
 

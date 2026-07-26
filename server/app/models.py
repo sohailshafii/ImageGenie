@@ -224,9 +224,17 @@ class TrainingRun(Base):
 class TrainingMetric(Base):
     """One point on a run's loss curve — a row per logged step (B2).
 
-    ``val_loss`` is nullable because validation is typically evaluated less often
-    than the training loss (e.g. once per epoch), so steps without it store null.
-    The gap between ``loss`` and ``val_loss`` is what reveals variance (overfitting).
+    ``val_loss`` and ``val_accuracy`` are nullable because validation is typically
+    evaluated less often than the training loss (e.g. once per epoch), so steps
+    without it store null. The gap between ``loss`` and ``val_loss`` is what
+    reveals variance (overfitting).
+
+    ``val_accuracy`` is stored alongside the losses rather than derived from them:
+    it is the number a human actually judges a run by, and on this corpus it is
+    the one that exposes a failure loss hides. The classes are skewed ~7.7:1
+    (`weapon` alone is ~18%), so a model that collapses onto the majority class
+    still posts a falling loss while being useless — the accuracy sitting flat at
+    the majority-class rate is what makes that visible.
     """
 
     __tablename__ = "training_metric"
@@ -235,6 +243,8 @@ class TrainingMetric(Base):
     step: Mapped[int] = mapped_column(primary_key=True)  # epoch or step index
     loss: Mapped[float] = mapped_column()  # training loss at this step
     val_loss: Mapped[float | None] = mapped_column(default=None)  # validation loss, if computed
+    # Top-1 accuracy on the val split, 0..1. Null on steps without validation.
+    val_accuracy: Mapped[float | None] = mapped_column(default=None)
 
 
 class UserRole(str, enum.Enum):

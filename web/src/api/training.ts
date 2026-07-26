@@ -18,6 +18,7 @@ interface TrainingRunSummaryResponse {
   arch: string | null;
   label_count: number | null;
   final_loss: number | null;
+  final_accuracy: number | null;
   started_at: string;
   finished_at: string | null;
 }
@@ -38,6 +39,7 @@ interface TrainingMetricResponse {
   step: number;
   loss: number;
   val_loss: number | null;
+  val_accuracy: number | null;
 }
 
 function toSummary(run: TrainingRunSummaryResponse): TrainingRunSummary {
@@ -47,6 +49,7 @@ function toSummary(run: TrainingRunSummaryResponse): TrainingRunSummary {
     arch: run.arch,
     labelCount: run.label_count,
     finalLoss: run.final_loss,
+    finalAccuracy: run.final_accuracy,
     startedAt: run.started_at,
     finishedAt: run.finished_at,
   };
@@ -84,6 +87,7 @@ export async function getTrainingRunMetrics(id: number): Promise<TrainingMetricP
     step: point.step,
     loss: point.loss,
     valLoss: point.val_loss,
+    valAccuracy: point.val_accuracy,
   }));
 }
 
