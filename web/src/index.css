@@ -637,6 +637,36 @@ select:focus {
   color: var(--text-muted);
 }
 
+/* Sortable column header: a real button inside the <th>, so the whole label is
+   keyboard-reachable, styled to read as the header text rather than a control. */
+.column-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.column-sort:hover {
+  color: var(--text);
+}
+
+.column-sort.is-sorted {
+  color: var(--text);
+}
+
+/* Reserves the caret's width at all times, so sorting a column doesn't shift
+   the header row sideways. */
+.sort-caret {
+  display: inline-block;
+  min-width: 0.7em;
+  font-size: 0.85em;
+}
+
 /* Run lifecycle badge: in-progress (accent), completed (success), failed (danger). */
 .status-badge {
   padding: 0.1rem 0.5rem;
