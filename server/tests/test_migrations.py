@@ -6,6 +6,8 @@ migrations differs from the one the tests run against — and nothing else would
 notice, because the test suite builds its schema with `create_all`.
 """
 
+from pathlib import Path
+
 import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -17,9 +19,13 @@ from testcontainers.postgres import PostgresContainer
 from app import db
 from app.db import Base
 
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+
 
 def _alembic_config(database_url: str) -> Config:
-    config = Config("alembic.ini")
+    # Located relative to this file, not the cwd, so `make test` works from the
+    # repo root as well as from server/.
+    config = Config(str(ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", database_url)
     return config
 
