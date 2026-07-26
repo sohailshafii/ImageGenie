@@ -304,6 +304,8 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /models` | logged in | paginated; filter by `class_name` / `source`, `search` by title |
 | `GET /models/{uid}` | logged in | resolves the model's *current* label |
 | `PUT /models/{uid}/label` | **admin** | records a manual label, attributed to the calling admin |
+| `GET /models/{uid}/download/source` | logged in | the original ingested mesh, as an attachment |
+| `GET /models/{uid}/download/normalized` | logged in | the centered/unit-scaled PLY, as an attachment |
 | `GET /training-runs` | logged in | all runs, newest first; headline = final training loss |
 | `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
 | `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
@@ -356,6 +358,35 @@ writer and reader drifts silently, as a missing image rather than an error.
   `/artifacts/{key}`, which needs no CORS). `infra/storage.tf` grants the bucket `GET`/`HEAD` from
   `app_base_url`; like `app_base_url` itself it lands on the phase-2 re-apply once the Cloud Run URL is
   known.
+
+### Downloads
+
+Two per-model downloads on the detail page (web.md#downloads): the **source mesh** from the raw
+bucket, and the **normalized PLY** the viewer shows. Login-gated, not admin-gated, matching
+`GET /artifacts/{key}` — every authenticated user can already stream any artifact key, so an admin
+gate here would express an intent the surrounding routes don't enforce.
+
+- **Proxied, not signed** — the opposite of [Serving artifacts](#serving-artifacts) above, because
+  the trade-off inverts on both counts:
+  - *Filenames.* A saved file is named by either the `download` attribute on the link or the
+    response's `Content-Disposition` header. Browsers **ignore `download` on a cross-origin link**,
+    and a signed `storage.googleapis.com` URL is cross-origin — so under signed URLs the name has to
+    come from the header, i.e. from GCS. GCS can do that (`response_disposition` is baked into the
+    V4 signature), but it is a GCS-only capability the `Storage` protocol doesn't expose, and local
+    dev can't sign at all, so a single button would fork into two code paths. Serving the bytes
+    ourselves sets the header directly and behaves the same locally and in cloud.
+  - *Volume.* Proxying is ruled out for artifacts because a paginated grid means 12 view images per
+    card. A download is one deliberate click on one model; that pressure doesn't exist here.
+- **The source suffix comes off `model.raw_key`**, never assumed. Ingestion only produces GLB, but an
+  admin [upload](#data-upload) may be STL or OBJ, and handing back an STL named `.glb` produces a
+  file nothing can open. A model with no `raw_key` (queued, never fetched) is a 404.
+- **Missing blob → 404, not 500.** A model part-way through the pipeline has no normalized mesh; that
+  is an absent file, not an error.
+- **Soft-deleted models are not downloadable.** Both routes go through `_require_live_model`, so the
+  download can't be a way around a deletion.
+- ⚠️ **The whole blob is buffered in memory** (`Storage.get_bytes`), so a large mesh is briefly held
+  in the API instance's 2Gi. Acceptable for human-initiated, one-at-a-time downloads; a bulk export
+  would need a streaming read on the `Storage` protocol.
 
 ### Dead letters
 
