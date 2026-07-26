@@ -72,9 +72,22 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
 `ml/train.py` writing to the DB directly, so the dashboard only *reads*; there are no write flows.
 **Viewable by any authenticated user** (not admin-only) — it's a view, like browse (FR-8).
 
-- **List view** (`/training`, `TrainingRunsPage`) — all runs, newest first: run id, status badge
+- **List view** (`/training`, `TrainingRunsPage`) — all runs: run id, status badge
   (running / completed / failed), architecture, label count, headline **final training loss**, and
   start time. Each row links to the run's detail page. A "Training" nav link is shown to every user.
+  - **Sortable by any column**, defaulting to newest-first (the server's own order, so the first
+    paint doesn't reshuffle). Sorting by final loss ascending is the "which run went best" view.
+    **Nulls sort last in both directions** — same rule as browse's least-confidence sort: a run
+    with no recorded loss is missing data, and floating it to the top of an ascending sort would
+    read as the best result.
+  - **Filterable by status** via chips carrying live counts. Counts come from the *unfiltered*
+    list, so each chip still shows what it would match while another filter is active. Filtering
+    to an empty set says "No completed runs" rather than the empty-state's "start one with
+    `make train`" — the two mean different things.
+  - Both are **client-side**: `GET /training-runs` returns every run unpaginated and runs are
+    minted one per `make train`, so each costs a re-render, not a round-trip. **If that endpoint
+    ever grows pagination, both must move server-side with it** — otherwise they would silently
+    apply to the current page alone.
 - **Detail view** (`/training/:id`, `TrainingRunDetailPage`) — distinct from the per-*model*
   labeling detail page. Shows:
   - the **cost curve** — an inline-SVG line chart (`CostCurve`, no charting dependency) of training
