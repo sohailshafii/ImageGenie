@@ -45,10 +45,13 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   and a keyboard sweep for fast review, an admin dead-letter view over recorded pipeline failures, and
   Alembic migrations. The API and SPA ship as one image on one origin; `scripts/adopt_schema.sh`
   rebuilds the database from the buckets on deploy.
-- 🚧 **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU). **Under
-  construction.** The bookkeeping backbone is landing first: a `training_run` / `training_metric`
-  schema (per-run config, data snapshot, metrics, and the loss curve — NFR-4) and a deliberately
-  simple `ml/train.py` that starts as a plain loop and grows a real model + dataset from there.
+- 🚧 **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU). **In progress.**
+  The `training_run` / `training_metric` schema (NFR-4 bookkeeping) and the training **dashboard**
+  (run list + per-run cost curve) are done and deployed. `ml/train.py` now trains a real multi-view
+  CNN (resnet18 over the 12 rendered views → pool → head), reading renders from the processed bucket,
+  with reproducible per-class stratified splits and per-epoch weight checkpoints — verified learning
+  end-to-end on CPU via `make smoke-train`. Remaining: the spot-GPU (Vertex) run at scale, dev-set
+  metrics, and an accuracy series on the cost curve.
 - ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
 
 ## Layout

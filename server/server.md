@@ -130,7 +130,10 @@ the [metadata DB](#database) stores only the object keys, never the blobs themse
 **Layout — two same-region buckets:**
 
 - `imagegenie-raw` — source meshes: `raw/<uid>.<ext>`.
-- `imagegenie-processed` — converted / normalized / rendered outputs, separated by prefix.
+- `imagegenie-processed` — converted / normalized / rendered outputs, separated by prefix, **plus
+  trained model weights** at `processed/models/<run_id>.pt` (`artifact_keys.weights_key`, referenced
+  by `training_run.weights_uri`). The weights are deliberately *not* one of the reconcile "families",
+  since they're training output, not a per-model pipeline artifact.
 
 **The source mesh's format is carried by its key**, not assumed. Ingestion only ever writes GLB
 (that is what Objaverse serves), but an [admin upload](../web/web.md#data-upload) may be STL or OBJ,
