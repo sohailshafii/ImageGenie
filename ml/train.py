@@ -17,8 +17,10 @@ device defaults to CPU (the local-first path); the cloud config sets "cuda".
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import io
+import random
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -339,26 +341,82 @@ def run_training(config: Config, run_id: int, split: DatasetSplit) -> str:
 # --- Entry point -------------------------------------------------------------
 
 
+def _parse_args() -> argparse.Namespace:
+    """Run-time overrides for `Config`.
+
+    Deliberately a short list: the knobs a *run* varies (where it runs, how big,
+    how much data), not every hyperparameter. The rest stay `Config` defaults,
+    edited in code — config-over-code, per CLAUDE.md's M6 budget. Every flag
+    defaults to None so an unset one leaves the `Config` default alone rather
+    than overwriting it with argparse's idea of a default.
+    """
+    parser = argparse.ArgumentParser(description="Train the multi-view CNN (M6).")
+    parser.add_argument("--device", help='"cpu" | "cuda" | "mps" | "auto"')
+    parser.add_argument("--num-workers", type=int, help="DataLoader worker processes")
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--learning-rate", type=float)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help=(
+            "train on a random subset of N models. The cost guardrail for a first "
+            "cloud run: prove the wiring on a few hundred before paying for ~12k."
+        ),
+    )
+    parser.add_argument("--notes", help="free-text description shown on the dashboard")
+    return parser.parse_args()
+
+
+def _subsample(samples: list[tuple[str, str]], limit: int, seed: int) -> list[tuple[str, str]]:
+    """A seeded random subset of `limit` samples.
+
+    Proportional, not per-class balanced: it preserves the real class
+    distribution (which is skewed ~7.7:1), so a small run rehearses the actual
+    problem rather than an easier balanced version of it. Sorted first so the
+    result depends on the sample *set* and the seed, never on query order.
+    """
+    if limit >= len(samples):
+        return samples
+    return random.Random(seed).sample(sorted(samples), limit)
+
+
 def main() -> None:
     """Train one multi-view CNN run end to end: load the trainable set (labeled ∩
     rendered), split it, snapshot the data, open the run, train, and finalize. Any
     failure marks the run ``failed`` (so it never lingers as ``running``) and
     re-raises so the traceback is visible.
 
-    Config is the ``Config`` defaults for now — CLI/config-file overrides can be
-    added here later without touching the loop or the bookkeeping.
+    Flags override the ``Config`` defaults; the loop and the bookkeeping are
+    untouched by them, and whatever the flags resolve to is what gets recorded
+    (NFR-4), so a cloud run stays as reproducible as a local one.
     """
-    config = Config()
+    args = _parse_args()
+    config = Config(
+        **{
+            name: value
+            for name, value in vars(args).items()
+            if name not in ("limit", "notes") and value is not None
+        }
+    )
     samples = load_trainable_samples()
     if not samples:
         raise SystemExit(
             "no trainable models: need models that are both labeled and rendered "
             "(run the pipeline and the weak-label backfill first)"
         )
+    if args.limit is not None:
+        samples = _subsample(samples, args.limit, config.seed)
     split = stratified_split(samples, config.seed)
     snapshot = data_snapshot(samples, split)
+    if args.limit is not None:
+        # The snapshot must say the run saw a *subset*, or its label_count reads
+        # as the whole trainable set and two runs become falsely comparable.
+        snapshot["limit"] = args.limit
     run_id = create_run(
-        config, snapshot, notes=f"{config.arch} baseline, {config.epochs} epochs"
+        config,
+        snapshot,
+        notes=args.notes or f"{config.arch} baseline, {config.epochs} epochs",
     )
     sizes = snapshot["splits"]
     print(

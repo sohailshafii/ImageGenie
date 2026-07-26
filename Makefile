@@ -32,7 +32,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train train-image
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -143,6 +143,29 @@ train-image: ## build + push the CUDA training image via Cloud Build (M6 chunk G
 		--config ml/cloudbuild.yaml \
 		--substitutions=_IMAGE=$(TRAIN_IMAGE),_LOGS_BUCKET=$(GCP_PROJECT)-build-logs \
 		--service-account=projects/$(GCP_PROJECT)/serviceAccounts/$(BUILD_SA)
+
+train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset; ARGS='...' to pass more)
+	# Cost guardrail (CLAUDE.md): the FIRST cloud run should pass LIMIT to prove
+	# the wiring on a few hundred models before paying for the full ~11.8k.
+	#   make train-cloud LIMIT=500
+	#   make train-cloud                      # the whole trainable set
+	#   make train-cloud ARGS='--epochs 5'
+	@set -e; \
+	spec=$$(mktemp -t imagegenie-vertex); \
+	trap 'rm -f "$$spec"' EXIT; \
+	: "$${DEVICE:=cuda}"; : "$${WORKERS:=4}"; \
+	args=$$($(BIN)/python -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \
+		--device "$$DEVICE" --num-workers "$$WORKERS" \
+		$(if $(LIMIT),--limit $(LIMIT),) $(ARGS)); \
+	sed -e 's|__IMAGE__|$(TRAIN_IMAGE)|' \
+	    -e 's|__SERVICE_ACCOUNT__|$(TRAINER_SA)|' \
+	    -e 's|__INSTANCE__|$(GCP_PROJECT):$(GCP_REGION):imagegenie-pg|' \
+	    -e 's|__SECRET__|projects/$(GCP_PROJECT)/secrets/imagegenie-database-url/versions/latest|' \
+	    -e "s|__ARGS__|$$args|" \
+	    ml/vertex_job.yaml > "$$spec"; \
+	echo "--- job spec ---"; cat "$$spec"; echo "----------------"; \
+	gcloud ai custom-jobs create --project $(GCP_PROJECT) --region $(GCP_REGION) \
+		--display-name=imagegenie-train --config="$$spec"
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache
