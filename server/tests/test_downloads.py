@@ -1,9 +1,13 @@
-"""Downloading a model's meshes (server.md#downloads).
+"""Downloading meshes and trained weights (server.md#downloads).
 
 The interesting cases are the *absent* ones. A model part-way through the
-pipeline has no normalized mesh, and one whose raw blob was never recorded has
-no source mesh — both must read as "not available", not as a server error, and
-neither may leak a soft-deleted model.
+pipeline has no normalized mesh, one whose raw blob was never recorded has no
+source mesh, and a still-running training run has no checkpoint — all must read
+as "not available" rather than as a server error, and none may leak a
+soft-deleted model.
+
+The two gates differ deliberately and are pinned here: meshes are login-gated
+(matching `/artifacts/{key}`), weights are admin-only (NFR-6).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -13,12 +17,20 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import api, db
-from app.artifact_keys import normalized_key, raw_key
-from app.models import DownloadStatus, Model, User, UserRole
+from app.artifact_keys import normalized_key, raw_key, weights_key
+from app.models import (
+    DownloadStatus,
+    Model,
+    TrainingRun,
+    TrainingStatus,
+    User,
+    UserRole,
+)
 from app.security import CSRF_COOKIE, CSRF_HEADER, hash_password
 
 VIEWER_EMAIL = "viewer@imagegenie.dev"
-PASSWORD = "genie-viewer"
+ADMIN_EMAIL = "admin@imagegenie.dev"
+PASSWORD = "genie-secret"
 
 
 class FakeStorage:
@@ -48,25 +60,25 @@ def storage(monkeypatch: pytest.MonkeyPatch) -> FakeStorage:
 
 
 @pytest.fixture
-def client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """A **viewer** session — downloads are login-gated, not admin-gated."""
+def anon_client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(db, "get_engine", lambda: pg_engine)
     with pg_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE email_verification, invite, session, label, artifact, model,"
-                " app_user RESTART IDENTITY CASCADE"
+                "TRUNCATE training_metric, training_run, email_verification, invite,"
+                " session, label, artifact, model, app_user RESTART IDENTITY CASCADE"
             )
         )
     with db.session_scope() as session:
-        session.add(
-            User(
-                email=VIEWER_EMAIL,
-                role=UserRole.user,
-                password_hash=hash_password(PASSWORD),
-                verified=True,
+        for email, role in ((VIEWER_EMAIL, UserRole.user), (ADMIN_EMAIL, UserRole.admin)):
+            session.add(
+                User(
+                    email=email,
+                    role=role,
+                    password_hash=hash_password(PASSWORD),
+                    verified=True,
+                )
             )
-        )
         session.add(
             Model(
                 uid="glb-model",
@@ -84,10 +96,37 @@ def client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         )
         # Queued but never fetched: no raw blob, so no key.
         session.add(Model(uid="no-raw", download_status=DownloadStatus.pending))
-    test_client = TestClient(api.app)
-    test_client.post("/auth/login", json={"email": VIEWER_EMAIL, "password": PASSWORD})
-    test_client.headers[CSRF_HEADER] = test_client.cookies[CSRF_COOKIE]
-    return test_client
+    return TestClient(api.app)
+
+
+def _login(client: TestClient, email: str) -> TestClient:
+    client.post("/auth/login", json={"email": email, "password": PASSWORD})
+    client.headers[CSRF_HEADER] = client.cookies[CSRF_COOKIE]
+    return client
+
+
+@pytest.fixture
+def client(anon_client: TestClient) -> TestClient:
+    """A **viewer** session — mesh downloads are login-gated, not admin-gated."""
+    return _login(anon_client, VIEWER_EMAIL)
+
+
+@pytest.fixture
+def admin_client(anon_client: TestClient) -> TestClient:
+    return _login(anon_client, ADMIN_EMAIL)
+
+
+def _seed_run(*, status: TrainingStatus, weights_uri: str | None) -> int:
+    with db.session_scope() as session:
+        run = TrainingRun(
+            config={"arch": "mvcnn"},
+            data_snapshot={"label_count": 3},
+            status=status,
+            weights_uri=weights_uri,
+        )
+        session.add(run)
+        session.flush()
+        return run.id
 
 
 def test_source_mesh_downloads_with_its_own_extension(
@@ -160,9 +199,64 @@ def test_a_soft_deleted_model_cannot_be_downloaded(
     assert client.get("/models/glb-model/download/source").status_code == 404
 
 
-def test_downloads_require_login(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_downloads_require_login(anon_client: TestClient, storage: FakeStorage) -> None:
     """The meshes are the dataset (NFR-7)."""
-    monkeypatch.setattr(db, "get_engine", lambda: pg_engine)
-    anonymous = TestClient(api.app)
-    assert anonymous.get("/models/glb-model/download/source").status_code == 401
-    assert anonymous.get("/models/glb-model/download/normalized").status_code == 401
+    assert anon_client.get("/models/glb-model/download/source").status_code == 401
+    assert anon_client.get("/models/glb-model/download/normalized").status_code == 401
+
+
+# ── Trained weights ─────────────────────────────────────────────────────────
+
+
+def test_weights_download(admin_client: TestClient, storage: FakeStorage) -> None:
+    run_id = _seed_run(status=TrainingStatus.completed, weights_uri=None)
+    key = weights_key(run_id)
+    storage.put_bytes(key, b"torch-checkpoint")
+    with db.session_scope() as session:
+        session.get(TrainingRun, run_id).weights_uri = key
+
+    response = admin_client.get(f"/training-runs/{run_id}/weights")
+
+    assert response.status_code == 200
+    assert response.content == b"torch-checkpoint"
+    assert (
+        response.headers["content-disposition"]
+        == f'attachment; filename="imagegenie-run-{run_id}.pt"'
+    )
+
+
+def test_a_viewer_cannot_download_weights(
+    client: TestClient, storage: FakeStorage
+) -> None:
+    """A trained model is the artifact NFR-6 calls non-redistributable, so this
+    is the one part of the training dashboard a viewer cannot reach."""
+    run_id = _seed_run(status=TrainingStatus.completed, weights_uri=weights_key(1))
+    storage.put_bytes(weights_key(1), b"torch-checkpoint")
+
+    assert client.get(f"/training-runs/{run_id}/weights").status_code == 403
+    # …while the rest of the run stays readable.
+    assert client.get(f"/training-runs/{run_id}").status_code == 200
+
+
+def test_weights_require_login(anon_client: TestClient, storage: FakeStorage) -> None:
+    run_id = _seed_run(status=TrainingStatus.completed, weights_uri=weights_key(1))
+    assert anon_client.get(f"/training-runs/{run_id}/weights").status_code == 401
+
+
+def test_a_run_with_no_checkpoint_is_404(
+    admin_client: TestClient, storage: FakeStorage
+) -> None:
+    """Still running, or failed before its first epoch finished."""
+    run_id = _seed_run(status=TrainingStatus.running, weights_uri=None)
+    assert admin_client.get(f"/training-runs/{run_id}/weights").status_code == 404
+
+
+def test_a_recorded_checkpoint_whose_blob_is_gone_is_404(
+    admin_client: TestClient, storage: FakeStorage
+) -> None:
+    run_id = _seed_run(status=TrainingStatus.completed, weights_uri=weights_key(1))
+    assert admin_client.get(f"/training-runs/{run_id}/weights").status_code == 404
+
+
+def test_unknown_run_is_404(admin_client: TestClient, storage: FakeStorage) -> None:
+    assert admin_client.get("/training-runs/9999/weights").status_code == 404
