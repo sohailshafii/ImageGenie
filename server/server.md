@@ -309,6 +309,7 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs` | logged in | all runs, newest first; headline = final training loss |
 | `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
 | `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
+| `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
 
 - **Sessions, not JWTs.** Login mints an opaque random token stored in the `session` table and
   returned as an **httpOnly** cookie (`imagegenie_session`, 14-day TTL) that page JS can't read.
@@ -361,10 +362,16 @@ writer and reader drifts silently, as a missing image rather than an error.
 
 ### Downloads
 
-Two per-model downloads on the detail page (web.md#downloads): the **source mesh** from the raw
-bucket, and the **normalized PLY** the viewer shows. Login-gated, not admin-gated, matching
-`GET /artifacts/{key}` — every authenticated user can already stream any artifact key, so an admin
-gate here would express an intent the surrounding routes don't enforce.
+Three downloads, all sharing one `_attachment` helper. Two are per-model, on the model detail page
+(web.md#downloads): the **source mesh** from the raw bucket, and the **normalized PLY** the viewer
+shows. The third is per-run, on the training-run detail page: the saved **`.pt` weights**.
+
+**The gates differ on purpose.** Meshes are login-gated, matching `GET /artifacts/{key}` — every
+authenticated user can already stream any artifact key, so an admin gate there would express an
+intent the surrounding routes don't enforce. Weights are **admin-only**: a trained model is the
+artifact NFR-6 names as non-redistributable, so the file is kept to the role that could launch the
+run that produced it. The run's *numbers* stay readable by anyone logged in; it is the weights
+themselves that are restricted, not the fact of the run.
 
 - **Proxied, not signed** — the opposite of [Serving artifacts](#serving-artifacts) above, because
   the trade-off inverts on both counts:
@@ -380,8 +387,11 @@ gate here would express an intent the surrounding routes don't enforce.
 - **The source suffix comes off `model.raw_key`**, never assumed. Ingestion only produces GLB, but an
   admin [upload](#data-upload) may be STL or OBJ, and handing back an STL named `.glb` produces a
   file nothing can open. A model with no `raw_key` (queued, never fetched) is a 404.
-- **Missing blob → 404, not 500.** A model part-way through the pipeline has no normalized mesh; that
-  is an absent file, not an error.
+- **Missing blob → 404, not 500.** A model part-way through the pipeline has no normalized mesh, and
+  a run that is still going (or that failed before finishing an epoch) has a null `weights_uri` —
+  absent files, not errors.
+- **`weights_uri` holds a key, not a URL** (`artifact_keys.weights_key` → `processed/models/{id}.pt`),
+  so the same storage lookup serves it as serves a mesh.
 - **Soft-deleted models are not downloadable.** Both routes go through `_require_live_model`, so the
   download can't be a way around a deletion.
 - ⚠️ **The whole blob is buffered in memory** (`Storage.get_bytes`), so a large mesh is briefly held

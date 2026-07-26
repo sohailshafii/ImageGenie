@@ -1180,6 +1180,32 @@ def download_normalized_mesh(uid: str) -> Response:
     )
 
 
+@app.get("/training-runs/{run_id}/weights", dependencies=[Depends(require_admin)])
+def download_training_weights(run_id: int) -> Response:
+    """A finished run's saved weights — the `.pt` checkpoint written by `ml/train.py`.
+
+    **Admin-only**, unlike the mesh downloads and the rest of the training
+    dashboard, which any authenticated user may read. A trained model is the one
+    artifact NFR-6 names as non-redistributable, so pulling the file down is kept
+    to the role that could already launch the run that produced it. Reading the
+    dashboard's numbers stays open — it is the weights themselves that are
+    restricted, not the fact of the run.
+
+    `weights_uri` holds a storage **key** (`artifact_keys.weights_key`), not a
+    URL. It is null until a run checkpoints, so a still-running run — or one that
+    failed before its first epoch finished — reads as "not available".
+    """
+    with session_scope() as session:
+        run = session.get(TrainingRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="unknown training run")
+        key = run.weights_uri
+    if key is None:
+        raise HTTPException(status_code=404, detail="artifact not available")
+    storage = build_storage(get_settings())
+    return _attachment(storage, key, _safe_filename(f"imagegenie-run-{run_id}", ".pt"))
+
+
 @app.put("/models/{uid}/label", response_model=ModelSummaryOut)
 def set_label(
     request: Request, uid: str, body: LabelIn, admin: AdminUser
