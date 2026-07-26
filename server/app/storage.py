@@ -47,6 +47,25 @@ class Storage(Protocol):
         """
         ...
 
+    def list_sizes(self, prefix: str) -> Iterator[tuple[str, int]]:
+        """Every key under `prefix` with its size in bytes.
+
+        Separate from `list_keys` because the size is only worth asking for when
+        something reports on storage *cost* (`app.cleanup_raw`). Object stores
+        return the size in the listing itself, so this is the same single
+        metadata pass — never a per-object request, which over ~165k objects is
+        the difference between one listing and 165k round-trips.
+        """
+        ...
+
+    def delete(self, key: str) -> None:
+        """Remove the blob at `key`. Deleting a missing key is not an error.
+
+        Tolerating the missing case keeps deletion idempotent (NFR-2), so an
+        interrupted cleanup can simply be re-run.
+        """
+        ...
+
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         """A time-limited URL a browser can fetch `key` from directly.
 
@@ -98,6 +117,13 @@ class LocalStorage:
             key = path.relative_to(self._root).as_posix()
             if key.startswith(prefix):
                 yield key
+
+    def list_sizes(self, prefix: str) -> Iterator[tuple[str, int]]:
+        for key in self.list_keys(prefix):
+            yield key, self._path(key).stat().st_size
+
+    def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
 
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         """None — a local file has no URL, so the API streams the bytes itself."""
@@ -157,6 +183,24 @@ class GcsStorage:
         """Stream object names under `prefix` (the client paginates internally)."""
         for blob in self._bucket.list_blobs(prefix=prefix):
             yield blob.name
+
+    def list_sizes(self, prefix: str) -> Iterator[tuple[str, int]]:
+        """Names and sizes from the same listing — GCS returns `size` inline."""
+        for blob in self._bucket.list_blobs(prefix=prefix):
+            yield blob.name, blob.size or 0
+
+    def delete(self, key: str) -> None:
+        """Delete the object, treating an already-absent one as success.
+
+        `NotFound` is imported lazily for the same reason the client is: callers
+        on the local backend must not need the GCS package installed.
+        """
+        from google.api_core.exceptions import NotFound
+
+        try:
+            self._bucket.blob(key).delete()
+        except NotFound:
+            pass
 
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         """A V4 signed GET URL, so the browser reads GCS without proxying us.
@@ -222,6 +266,12 @@ class RoutedGcsStorage:
         ``raw/`` segment, so no listing ever needs to span both.
         """
         return self._backend(prefix).list_keys(prefix)
+
+    def list_sizes(self, prefix: str) -> Iterator[tuple[str, int]]:
+        return self._backend(prefix).list_sizes(prefix)
+
+    def delete(self, key: str) -> None:
+        self._backend(key).delete(key)
 
     def signed_url(self, key: str, ttl: timedelta) -> str | None:
         return self._backend(key).signed_url(key, ttl)
