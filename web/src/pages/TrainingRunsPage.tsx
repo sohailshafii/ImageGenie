@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listTrainingRuns } from '../api/training';
-import type { TrainingRunSummary } from '../api/types';
+import type { TrainingRunSummary, TrainingStatus } from '../api/types';
 import { AppLayout } from '../components/AppLayout';
 
 // Training dashboard list (FR-6): every training run with its status and
@@ -9,15 +9,20 @@ import { AppLayout } from '../components/AppLayout';
 // (config, data snapshot, cost curve). Read-only — runs are produced by
 // ml/train.py writing directly to the DB, not by the app.
 //
-// Sorting is **client-side**. `GET /training-runs` returns every run in one
-// unpaginated response and runs are minted one per `make train`, so there is
-// nothing to page through and re-sorting costs a re-render rather than a
-// round-trip. If the endpoint ever grows pagination, the ordering has to move to
-// the server with it — sorting one page of many client-side would silently sort
-// only that page.
+// Sorting and filtering are both **client-side**. `GET /training-runs` returns
+// every run in one unpaginated response and runs are minted one per `make train`,
+// so there is nothing to page through and either operation costs a re-render
+// rather than a round-trip. If the endpoint ever grows pagination, both have to
+// move to the server with it — sorting or filtering one page of many
+// client-side would silently apply to that page alone.
 
 type SortColumn = 'id' | 'status' | 'arch' | 'labelCount' | 'finalLoss' | 'startedAt';
 type SortDirection = 'asc' | 'desc';
+
+/** Status filter — `all` is the absence of a filter, not a status. */
+type StatusFilter = TrainingStatus | 'all';
+
+const STATUS_FILTERS: StatusFilter[] = ['all', 'running', 'completed', 'failed'];
 
 const COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'id', label: 'Run' },
@@ -63,6 +68,7 @@ export function TrainingRunsPage() {
   // Newest first — the server's own order, so the first paint doesn't reshuffle.
   const [sortColumn, setSortColumn] = useState<SortColumn>('startedAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   useEffect(() => {
     let active = true;
@@ -74,10 +80,22 @@ export function TrainingRunsPage() {
     };
   }, []);
 
-  const sorted = useMemo(
-    () => (runs === null ? null : sortRuns(runs, sortColumn, sortDirection)),
-    [runs, sortColumn, sortDirection],
-  );
+  // Counts come from the unfiltered list, so a filter chip still shows how many
+  // it would match while another filter is active.
+  const statusCounts = useMemo(() => {
+    const counts = new Map<StatusFilter, number>([['all', runs?.length ?? 0]]);
+    for (const run of runs ?? []) {
+      counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
+    }
+    return counts;
+  }, [runs]);
+
+  const visible = useMemo(() => {
+    if (runs === null) return null;
+    const filtered =
+      statusFilter === 'all' ? runs : runs.filter((run) => run.status === statusFilter);
+    return sortRuns(filtered, sortColumn, sortDirection);
+  }, [runs, statusFilter, sortColumn, sortDirection]);
 
   function onSort(column: SortColumn) {
     if (column === sortColumn) {
@@ -94,17 +112,38 @@ export function TrainingRunsPage() {
     <AppLayout>
       <h1>Training runs</h1>
       <p className="page-lead">
-        Every training run. Sort by any column — final loss ascending is the "which run went
-        best" view. Open one to see its configuration, the labels it trained on, and whether
-        the loss went down.
+        Every training run. Filter by status, and sort by any column — final loss ascending is
+        the "which run went best" view. Open one to see its configuration, the labels it
+        trained on, and whether the loss went down.
       </p>
 
-      {sorted === null ? (
+      {runs !== null && runs.length > 0 && (
+        <div className="filter-row" role="group" aria-label="Filter by status">
+          {STATUS_FILTERS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={`filter-chip${statusFilter === option ? ' is-active' : ''}`}
+              aria-pressed={statusFilter === option}
+              onClick={() => setStatusFilter(option)}
+            >
+              {option === 'all' ? 'All' : option}
+              <span className="filter-count">{statusCounts.get(option) ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {visible === null ? (
         <p className="page-lead">Loading…</p>
-      ) : sorted.length === 0 ? (
+      ) : runs !== null && runs.length === 0 ? (
         <p className="page-lead">
           No training runs yet. Start one with <code>make train</code>.
         </p>
+      ) : visible.length === 0 ? (
+        // Filtered to nothing — distinct from having no runs at all, so the
+        // message points at the filter rather than at `make train`.
+        <p className="page-lead">No {statusFilter} runs.</p>
       ) : (
         <div className="table-wrap">
           <table className="runs-table">
@@ -136,7 +175,7 @@ export function TrainingRunsPage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((run) => (
+              {visible.map((run) => (
                 <tr key={run.id}>
                   <td>
                     <Link to={`/training/${run.id}`}>#{run.id}</Link>

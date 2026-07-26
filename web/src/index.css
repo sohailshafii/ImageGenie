@@ -637,6 +637,52 @@ select:focus {
   color: var(--text-muted);
 }
 
+/* Status filter chips above the runs table. Chips rather than the <select> the
+   browse filters use: there are only four options and the counts are worth
+   showing, which a select can't do legibly. */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.filter-chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.filter-chip.is-active {
+  color: var(--text);
+  border-color: var(--accent-strong);
+}
+
+.filter-count {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
 /* Sortable column header: a real button inside the <th>, so the whole label is
    keyboard-reachable, styled to read as the header text rather than a control. */
 .column-sort {
