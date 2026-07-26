@@ -18,6 +18,10 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # The training image (ml/Dockerfile) is a separate artifact from the worker image:
 # CUDA torch instead of CPU torch, and none of the mesh/web stack.
 TRAIN_IMAGE  := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/train:latest
+# Identities from infra/training.tf: BUILD_SA builds the image, TRAINER_SA runs
+# the Vertex job.
+BUILD_SA     ?= imagegenie-build@$(GCP_PROJECT).iam.gserviceaccount.com
+TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 
 # Run a script through the venv Python ($(BIN)/python, which has the deps — not
 # $(PYTHON), the system interpreter used only to bootstrap the venv in `setup`).
@@ -129,8 +133,16 @@ train-image: ## build + push the CUDA training image via Cloud Build (M6 chunk G
 	# arm64, so a local linux/amd64 build runs under emulation and then pushes
 	# those gigabytes back up. Context is the repo root — the image needs both
 	# server/app and ml/ (see ml/Dockerfile).
+	# --service-account is required, not optional: this project has no
+	# <number>@cloudbuild.gserviceaccount.com (Google stopped auto-creating that
+	# legacy default for newer projects), so a build without one has no identity
+	# and fails with PERMISSION_DENIED before it starts. The SA is created in
+	# infra/training.tf. A user-specified SA also has no default log bucket, hence
+	# --default-buckets-behavior.
 	gcloud builds submit . --project $(GCP_PROJECT) \
-		--config ml/cloudbuild.yaml --substitutions=_IMAGE=$(TRAIN_IMAGE)
+		--config ml/cloudbuild.yaml \
+		--substitutions=_IMAGE=$(TRAIN_IMAGE),_LOGS_BUCKET=$(GCP_PROJECT)-build-logs \
+		--service-account=projects/$(GCP_PROJECT)/serviceAccounts/$(BUILD_SA)
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache

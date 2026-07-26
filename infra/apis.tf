@@ -15,6 +15,8 @@ locals {
     "iam.googleapis.com",                  # service accounts / IAM
     "iamcredentials.googleapis.com",       # signBlob for signed GCS URLs (API)
     "secretmanager.googleapis.com",        # DB connection secret
+    "cloudbuild.googleapis.com",           # builds the CUDA training image (make train-image)
+    "aiplatform.googleapis.com",           # Vertex AI custom training job (M6 chunk G)
   ]
 }
 

@@ -13,6 +13,11 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args: ['build', '-f', 'ml/Dockerfile', '-t', '${_IMAGE}', '.']
 images: ['${_IMAGE}']
+# A bucket we own (infra/training.tf). A build running as a user-specified service
+# account needs storage.admin on its log bucket, and Cloud Build only creates its
+# own on a first successful build — which cannot happen while that permission is
+# missing. Owning it breaks the circle.
+logsBucket: 'gs://${_LOGS_BUCKET}'
 # The default machine type keeps this inside Cloud Build's free daily tier; the
 # default 10-minute timeout does not survive pulling and pushing a CUDA image.
 timeout: 3600s

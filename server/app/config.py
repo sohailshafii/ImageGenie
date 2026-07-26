@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     # off and run `alembic upgrade head` as a deploy step.
     auto_create_schema: bool = False
 
+    # Cloud SQL instance to reach through the Python connector, e.g.
+    # "imagegenie-pipeline:us-central1:imagegenie-pg". Set ONLY by the Vertex
+    # training job (server.md#training-gpu): the workers and API reach Cloud SQL
+    # over its Unix socket, which Vertex has no equivalent of, and Vertex's egress
+    # IP is dynamic so authorized networks cannot cover it. Left None, the engine
+    # is built from `database_url` exactly as before.
+    cloudsql_instance: str | None = None
+    # Secret Manager resource holding the DB URL, e.g.
+    # "projects/<n>/secrets/imagegenie-database-url/versions/latest". Read at
+    # startup rather than passed as an env var, because a Vertex job's env is
+    # visible in its metadata and the URL carries the password.
+    database_url_secret: str | None = None
+
     # Blob storage: "local" (LocalStorage over storage_root, skeleton) or "gcs"
     # (routes raw/* → raw_bucket, processed/* → processed_bucket, cloud). See
     # server.md#object-storage.
