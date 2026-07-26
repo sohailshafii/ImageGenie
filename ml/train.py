@@ -18,6 +18,7 @@ device defaults to CPU (the local-first path); the cloud config sets "cuda".
 from __future__ import annotations
 
 import hashlib
+import io
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ from sqlalchemy import select
 from torch import nn
 from torch.utils.data import DataLoader
 
+from app.artifact_keys import weights_key
 from app.config import get_settings
 from app.db import session_scope
 from app.models import (
@@ -42,7 +44,7 @@ from app.models import (
     TrainingRun,
     TrainingStatus,
 )
-from app.storage import build_storage
+from app.storage import Storage, build_storage
 
 
 @dataclass
@@ -257,7 +259,15 @@ def _format_metric(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
 
-def run_training(config: Config, run_id: int, split: DatasetSplit) -> None:
+def _save_weights(storage: Storage, key: str, model: nn.Module) -> None:
+    """Write the model's state_dict to ``key`` (torch.save into an in-memory
+    buffer, then one blob write through the storage abstraction)."""
+    buffer = io.BytesIO()
+    torch.save(model.state_dict(), buffer)
+    storage.put_bytes(key, buffer.getvalue())
+
+
+def run_training(config: Config, run_id: int, split: DatasetSplit) -> str:
     """Train the multi-view CNN over the rendered views.
 
     Per-step training loss is logged (throttled by ``log_every``); once per epoch
@@ -266,10 +276,15 @@ def run_training(config: Config, run_id: int, split: DatasetSplit) -> None:
     cost curve shows the train/val gap. Validation accuracy is printed for the
     smoke; persisting it as a second curve series is the accuracy follow-up. The
     bookkeeping helpers (create_run / log_metric / finalize_run) are unchanged.
+
+    Weights are checkpointed to the same key after every epoch (overwriting), so a
+    spot preemption keeps the latest epoch. Returns that key — the run's
+    ``weights_uri``, set on success by ``main``.
     """
     torch.manual_seed(config.seed)  # seeded so shuffling/init are reproducible
     storage = build_storage(get_settings())
     device = _select_device(config.device)
+    weights = weights_key(run_id)
 
     train_loader = DataLoader(
         MultiViewDataset(split.train, storage),
@@ -311,12 +326,14 @@ def run_training(config: Config, run_id: int, split: DatasetSplit) -> None:
         val_loss, val_accuracy = _evaluate(model, val_loader, loss_fn, device)
         # The epoch's final step carries both its train loss and the val loss.
         log_metric(run_id, global_step - 1, last_train_loss, val_loss)
+        _save_weights(storage, weights, model)  # checkpoint (overwrite) each epoch
         print(
             f"epoch {epoch + 1}/{config.epochs}  "
             f"train_loss={last_train_loss:.4f}  "
             f"val_loss={_format_metric(val_loss)}  "
             f"val_acc={_format_metric(val_accuracy)}"
         )
+    return weights
 
 
 # --- Entry point -------------------------------------------------------------
@@ -350,12 +367,12 @@ def main() -> None:
         f"{config.epochs} epochs on {config.device}"
     )
     try:
-        run_training(config, run_id, split)
+        weights_uri = run_training(config, run_id, split)
     except Exception:
         finalize_run(run_id, TrainingStatus.failed)
         raise
-    finalize_run(run_id, TrainingStatus.completed)
-    print(f"training_run {run_id}: completed")
+    finalize_run(run_id, TrainingStatus.completed, weights_uri=weights_uri)
+    print(f"training_run {run_id}: completed, weights at {weights_uri}")
 
 
 if __name__ == "__main__":
