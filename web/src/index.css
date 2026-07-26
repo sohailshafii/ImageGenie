@@ -663,11 +663,37 @@ select:focus {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
+/* ── Downloads ─────────────────────────────────────────────────────────────── */
+/* Shared by the model detail page and the training-run header. The button and
+   its error message stack, so a failure doesn't reflow the row it sits in. */
+.download-action {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
+}
+
+.download-error {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.detail-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 /* ── Training-run detail ───────────────────────────────────────────────────── */
 .run-header {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+/* Pushes the weights download to the far end, away from the title + status. */
+.run-header .download-action {
+  margin-left: auto;
 }
 
 .run-section {

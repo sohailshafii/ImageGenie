@@ -52,6 +52,9 @@ const STATUS_CODES: Record<number, ApiErrorCode> = {
   400: 'validation_error',
   401: 'unauthorized',
   403: 'forbidden',
+  // Distinct from server_error because for a download it is not an error at all:
+  // an artifact the pipeline hasn't produced yet 404s, and the UI says so.
+  404: 'not_found',
   409: 'email_taken',
   413: 'payload_too_large', // upload over the server's cap
   415: 'unsupported_media_type', // upload of a format the pipeline can't ingest
@@ -112,6 +115,49 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   if (!response.ok) throw await toApiError(response);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/** The filename the server chose, out of a `Content-Disposition` header. */
+function filenameFrom(disposition: string | null): string | null {
+  const match = disposition?.match(/filename="([^"]+)"/);
+  return match ? match[1] : null;
+}
+
+/**
+ * GET a blob and save it to the user's downloads.
+ *
+ * Fetched rather than pointed at with a plain `<a href>`, for the error cases:
+ * "not rendered yet" is a 404 and a viewer asking for weights is a 403, and a
+ * bare link would hand the browser a JSON error body to save as a file. Going
+ * through fetch means those surface as typed ApiErrors the page can show.
+ *
+ * The `download` attribute works here — and not on a signed GCS link, which is
+ * why the server proxies these (server.md#downloads) — because a `blob:` URL is
+ * same-origin. The server's filename is preferred over `fallbackName`; it knows
+ * the source format, which the caller may not.
+ */
+export async function download(path: string, fallbackName: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { credentials: 'same-origin' });
+  } catch {
+    throw new ApiError('network_error', 'Could not reach the server');
+  }
+  if (!response.ok) throw await toApiError(response);
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filenameFrom(response.headers.get('Content-Disposition')) ?? fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    // Releases the blob; the click above has already handed the data off.
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 /**
