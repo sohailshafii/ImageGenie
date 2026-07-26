@@ -17,6 +17,9 @@ from app.cleanup_raw import (
     REASON_ORPHAN,
     REASON_OUT_OF_SCOPE,
     REASON_UNLABELED,
+    Candidate,
+    delete_candidates,
+    human_bytes,
     select_candidates,
     summarize,
 )
@@ -181,3 +184,75 @@ def test_summarize_groups_by_reason(storage: FakeStorage) -> None:
     assert total_bytes[REASON_UNLABELED] == 20
     assert total_bytes[REASON_ORPHAN] == 5
     assert sum(counts.values()) == 4  # the keeper is not among them
+
+
+# ── Deleting ────────────────────────────────────────────────────────────────
+
+
+def test_delete_removes_only_the_candidates(storage: FakeStorage) -> None:
+    _add_model("keeper", class_name="chair")
+    _add_model("unlabeled")
+    for uid in ("keeper", "unlabeled"):
+        storage.put_bytes(raw_key(uid), b"mesh")
+    storage.put_bytes("processed/renders/keeper/view_00.png", b"png")
+
+    deleted_count, reclaimed = delete_candidates(storage, _candidates(storage))
+
+    assert deleted_count == 1
+    assert reclaimed == 4
+    assert storage.deleted == [raw_key("unlabeled")]
+    assert storage.exists(raw_key("keeper"))
+    assert storage.exists("processed/renders/keeper/view_00.png")
+
+
+def test_delete_is_rerunnable_after_an_interruption(storage: FakeStorage) -> None:
+    """Storage.delete tolerates an absent key, so a half-finished run can just be
+    repeated rather than needing to know where it stopped (NFR-2)."""
+    _add_model("unlabeled")
+    storage.put_bytes(raw_key("unlabeled"), b"mesh")
+    candidates = _candidates(storage)
+
+    delete_candidates(storage, candidates)
+    deleted_count, reclaimed = delete_candidates(storage, candidates)  # same list again
+
+    assert deleted_count == 1  # reported as deleted; the blob was already gone
+    assert not storage.exists(raw_key("unlabeled"))
+
+
+def test_one_failure_does_not_abort_the_run(
+    storage: FakeStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finishing the rest and re-running beats stopping halfway with no record."""
+    candidates = [
+        Candidate(raw_key("first"), "first", REASON_ORPHAN, 10),
+        Candidate(raw_key("boom"), "boom", REASON_ORPHAN, 10),
+        Candidate(raw_key("third"), "third", REASON_ORPHAN, 10),
+    ]
+
+    def explode_on_boom(key: str) -> None:
+        if "boom" in key:
+            raise RuntimeError("storage is having a day")
+        storage.deleted.append(key)
+
+    monkeypatch.setattr(storage, "delete", explode_on_boom)
+
+    deleted_count, reclaimed = delete_candidates(storage, candidates)
+
+    assert deleted_count == 2
+    assert reclaimed == 20
+    assert storage.deleted == [raw_key("first"), raw_key("third")]
+
+
+def test_nothing_to_delete_is_not_an_error(storage: FakeStorage) -> None:
+    _add_model("keeper", class_name="chair")
+    storage.put_bytes(raw_key("keeper"), b"mesh")
+
+    assert delete_candidates(storage, _candidates(storage)) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [(0, "0 B"), (512, "512 B"), (1536, "1.5 KB"), (5 * 1024**3, "5.0 GB")],
+)
+def test_human_bytes(size: int, expected: str) -> None:
+    assert human_bytes(size) == expected

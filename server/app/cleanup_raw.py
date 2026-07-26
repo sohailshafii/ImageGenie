@@ -29,6 +29,7 @@ PYTHONPATH — mirroring how `make train` puts ``server/`` on the path for
 
 from __future__ import annotations
 
+import argparse
 import logging
 from collections import Counter
 from collections.abc import Iterable, Iterator
@@ -39,8 +40,9 @@ from sqlalchemy.orm import Session
 from taxonomy import ROSTER
 
 from .artifact_keys import RAW_PREFIX, uid_from_key
+from .db import session_scope
 from .models import Label, Model
-from .storage import Storage
+from .storage import Storage, build_storage
 
 logger = logging.getLogger(__name__)
 
@@ -151,3 +153,126 @@ def summarize(candidates: Iterable[Candidate]) -> tuple[Counter, Counter]:
         counts[candidate.reason] += 1
         total_bytes[candidate.reason] += candidate.size_bytes
     return counts, total_bytes
+
+
+def human_bytes(size: int) -> str:
+    """`1536` → `1.5 KB`. For the report only; never used in a comparison."""
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"  # unreachable; keeps the return type total
+
+
+CONFIRMATION_PHRASE = "delete excluded raw meshes"
+
+# How often the delete loop reports. Deleting is one request per object, so a
+# large run is minutes long — silence for that stretch is indistinguishable from
+# a hang.
+_PROGRESS_EVERY = 250
+
+
+def delete_candidates(storage: Storage, candidates: Iterable[Candidate]) -> tuple[int, int]:
+    """Delete each candidate blob; return (objects deleted, bytes reclaimed).
+
+    Deletion is per object rather than a prefix wipe, because the excluded set is
+    scattered through ``raw/`` — the keeping and the deleting live side by side
+    under one prefix, so there is no prefix that selects only the excluded.
+
+    A failure on one object is logged and skipped rather than aborting: the run
+    is idempotent, so finishing the rest and re-running beats stopping halfway
+    with no record of where.
+    """
+    deleted_count = 0
+    reclaimed_bytes = 0
+    for candidate in candidates:
+        try:
+            storage.delete(candidate.key)
+        except Exception:
+            logger.warning("could not delete %s — skipping", candidate.key, exc_info=True)
+            continue
+        deleted_count += 1
+        reclaimed_bytes += candidate.size_bytes
+        if deleted_count % _PROGRESS_EVERY == 0:
+            logger.info(
+                "deleted %d objects (%s)", deleted_count, human_bytes(reclaimed_bytes)
+            )
+    return deleted_count, reclaimed_bytes
+
+
+def _report(counts: Counter, total_bytes: Counter) -> int:
+    """Print the per-reason table; return the total bytes it accounts for."""
+    logger.info("%-28s %8s %12s", "reason", "objects", "size")
+    for reason in (REASON_ORPHAN, REASON_DELETED, REASON_UNLABELED, REASON_OUT_OF_SCOPE):
+        logger.info(
+            "%-28s %8d %12s", reason, counts[reason], human_bytes(total_bytes[reason])
+        )
+    total = sum(total_bytes.values())
+    logger.info("%-28s %8d %12s", "TOTAL", sum(counts.values()), human_bytes(total))
+    return total
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually delete (default is a dry run that changes nothing)",
+    )
+    args = parser.parse_args()
+
+    from .config import get_settings
+
+    storage = build_storage(get_settings())
+    # Materialised, not streamed: the report has to be shown and confirmed
+    # *before* anything is deleted, and re-listing afterwards would race the
+    # pipeline — a model labeled between the two passes would be deleted without
+    # having appeared in the table the operator agreed to.
+    with session_scope() as session:
+        candidates = list(select_candidates(session, storage))
+
+    counts, total_bytes = summarize(candidates)
+    total = _report(counts, total_bytes)
+
+    if not candidates:
+        logger.info("nothing to delete — no excluded raw meshes.")
+        return
+
+    if not args.apply:
+        logger.info(
+            "\nDry run — nothing was deleted. Re-run with --apply to reclaim %s.\n"
+            "Restoring these meshes afterwards means re-downloading them from "
+            "Objaverse; the renders cannot rebuild them.",
+            human_bytes(total),
+        )
+        return
+
+    logger.warning(
+        "\nAbout to PERMANENTLY DELETE %d raw meshes (%s) from the raw bucket.\n"
+        "This is the only copy — restoring them means re-downloading from Objaverse.",
+        len(candidates),
+        human_bytes(total),
+    )
+    reply = input(f"  Type '{CONFIRMATION_PHRASE}' to proceed: ")
+    if reply.strip() != CONFIRMATION_PHRASE:
+        logger.error("aborted — nothing was deleted.")
+        raise SystemExit(1)
+
+    deleted_count, reclaimed_bytes = delete_candidates(storage, candidates)
+    logger.info("deleted %d objects, reclaimed %s", deleted_count, human_bytes(reclaimed_bytes))
+    # The `model` rows are deliberately left alone: object storage is the durable
+    # record and the rows are an index over it, so the next `make reconcile-storage`
+    # will mark these `pending` on its own (server.md#rebuilding-the-tables-from-storage).
+    # Clearing `download_status` here would be worse than leaving it — a model
+    # reset to `pending` is one a re-seed would happily download again, which is
+    # precisely what excluding it was meant to avoid.
+    logger.info(
+        "`model` rows left untouched — the download endpoints already 404 on a "
+        "missing blob, and a re-seed must not re-download an excluded model."
+    )
+
+
+if __name__ == "__main__":
+    main()

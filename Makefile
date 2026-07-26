@@ -25,7 +25,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage migrate migration migration-status train smoke-train
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -90,6 +90,15 @@ backfill-metadata: ## fetch Objaverse titles/tags for models missing them (LIMIT
 
 reconcile-storage: ## rebuild the model/artifact tables from object storage (DRYRUN=1 to preview)
 	cd server && ../$(BIN)/python -m app.reconcile_from_storage $(if $(DRYRUN),--dry-run,)
+
+cleanup-raw: ## delete raw meshes for models excluded from the dataset (dry run; APPLY=1 to delete)
+	# Runs from the repo root, unlike `reconcile-storage`: on the local backend
+	# `storage_root` is cwd-relative, so `cd server` would point it at an empty
+	# server/data/storage and report nothing to delete. (Against GCS the cwd is
+	# irrelevant, which is how that trap stays hidden until someone tests locally.)
+	# PYTHONPATH carries both packages — ml/ for the class roster, mirroring how
+	# `train` adds server/ so ml code can reach the DB layer.
+	PYTHONPATH=server:ml $(BIN)/python -m app.cleanup_raw $(if $(APPLY),--apply,)
 
 backfill-labels: ## load weak_labels.csv into the DB's label table (idempotent; DRYRUN=1 to preview)
 	cd server && ../$(BIN)/python -m app.backfill_labels \
