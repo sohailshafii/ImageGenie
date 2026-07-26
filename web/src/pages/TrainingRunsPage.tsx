@@ -16,7 +16,14 @@ import { AppLayout } from '../components/AppLayout';
 // move to the server with it — sorting or filtering one page of many
 // client-side would silently apply to that page alone.
 
-type SortColumn = 'id' | 'status' | 'arch' | 'labelCount' | 'finalLoss' | 'startedAt';
+type SortColumn =
+  | 'id'
+  | 'status'
+  | 'arch'
+  | 'labelCount'
+  | 'finalLoss'
+  | 'finalAccuracy'
+  | 'startedAt';
 type SortDirection = 'asc' | 'desc';
 
 /** Status filter — `all` is the absence of a filter, not a status. */
@@ -30,6 +37,7 @@ const COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'arch', label: 'Arch' },
   { key: 'labelCount', label: 'Labels' },
   { key: 'finalLoss', label: 'Final loss' },
+  { key: 'finalAccuracy', label: 'Val accuracy' },
   { key: 'startedAt', label: 'Started' },
 ];
 
@@ -186,6 +194,11 @@ export function TrainingRunsPage() {
                   <td>{run.arch ?? '—'}</td>
                   <td>{run.labelCount ?? '—'}</td>
                   <td>{run.finalLoss === null ? '—' : run.finalLoss.toFixed(4)}</td>
+                  <td>
+                    {run.finalAccuracy === null
+                      ? '—'
+                      : `${(run.finalAccuracy * 100).toFixed(1)}%`}
+                  </td>
                   <td className="runs-time">{new Date(run.startedAt).toLocaleString()}</td>
                 </tr>
               ))}

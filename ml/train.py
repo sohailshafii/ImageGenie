@@ -172,14 +172,25 @@ def create_run(config: Config, snapshot: dict, notes: str | None = None) -> int:
 
 
 def log_metric(
-    run_id: int, step: int, loss: float, val_loss: float | None = None
+    run_id: int,
+    step: int,
+    loss: float,
+    val_loss: float | None = None,
+    val_accuracy: float | None = None,
 ) -> None:
     """Append one point to a run's loss curve (``training_metric``), committed on
     its own so the dashboard's cost curve grows while the run is still going.
-    ``val_loss`` is null on steps where validation was not evaluated."""
+    ``val_loss`` and ``val_accuracy`` are null on steps where validation was not
+    evaluated."""
     with session_scope() as session:
         session.add(
-            TrainingMetric(run_id=run_id, step=step, loss=loss, val_loss=val_loss)
+            TrainingMetric(
+                run_id=run_id,
+                step=step,
+                loss=loss,
+                val_loss=val_loss,
+                val_accuracy=val_accuracy,
+            )
         )
 
 
@@ -326,8 +337,8 @@ def run_training(config: Config, run_id: int, split: DatasetSplit) -> str:
                 log_metric(run_id, global_step, last_train_loss)
             global_step += 1
         val_loss, val_accuracy = _evaluate(model, val_loader, loss_fn, device)
-        # The epoch's final step carries both its train loss and the val loss.
-        log_metric(run_id, global_step - 1, last_train_loss, val_loss)
+        # The epoch's final step carries its train loss and both val metrics.
+        log_metric(run_id, global_step - 1, last_train_loss, val_loss, val_accuracy)
         _save_weights(storage, weights, model)  # checkpoint (overwrite) each epoch
         print(
             f"epoch {epoch + 1}/{config.epochs}  "

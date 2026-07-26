@@ -850,6 +850,13 @@ select:focus {
   stroke-dasharray: 5 4; /* dashed so the series read apart without relying on color */
 }
 
+/* Accuracy is on the RIGHT axis (fixed 0..1), not the loss axis — dotted so the
+   three series stay tellable apart in greyscale as well as by color. */
+.cc-line.cc-acc {
+  stroke: var(--success, #16a34a);
+  stroke-dasharray: 2 3;
+}
+
 .cc-legend {
   display: flex;
   gap: 1rem;
@@ -879,6 +886,10 @@ select:focus {
 
 .cc-key.cc-val {
   color: var(--danger);
+}
+
+.cc-key.cc-acc {
+  color: var(--success, #16a34a);
 }
 
 .cc-axis-label {

@@ -94,6 +94,12 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
     loss and, where evaluated, validation loss over steps; the dashed val line sits above train so
     the train/val gap (bias vs. variance) reads at a glance. Fetched separately from the run, so the
     header/config don't wait on a long curve.
+  - **validation accuracy** as a third (dotted) series on its **own right-hand axis with a fixed
+    0–100% domain** — deliberately not the loss axis, since the two share no units, and
+    auto-fitting accuracy to its own min/max would make a model stuck at the majority-class rate
+    look like it was climbing steeply. A fixed domain also makes the height comparable between
+    runs. Accuracy earns a place next to loss because the corpus is skewed ~7.7:1 (`weapon` alone
+    is ~18%), so a falling loss can hide a model that has collapsed onto the majority class.
   - **Configuration** and **Data snapshot** panels — the `config` and `data_snapshot` JSONB blobs
     rendered as generic key/value lists, so a new hyperparameter or snapshot field appears with no
     frontend change (config-over-code).
