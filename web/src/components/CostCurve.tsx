@@ -132,7 +132,13 @@ export function CostCurve({ points }: { points: TrainingMetricPoint[] }) {
         <span className="cc-key cc-train">train loss</span>
         {valPoints.length > 0 && <span className="cc-key cc-val">val loss</span>}
         {accuracyPoints.length > 0 && <span className="cc-key cc-acc">val accuracy</span>}
-        <span className="cc-axis-label">loss (left) · accuracy (right) vs. step</span>
+        {/* The caption names only the axes actually drawn — a run with no
+            accuracy has no right axis, so promising one is just wrong. */}
+        <span className="cc-axis-label">
+          {accuracyPoints.length > 0
+            ? 'loss (left) · accuracy (right) vs. step'
+            : 'loss vs. step'}
+        </span>
       </figcaption>
     </figure>
   );
