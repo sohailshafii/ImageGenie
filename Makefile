@@ -25,7 +25,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage migrate migration migration-status train
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage migrate migration migration-status train smoke-train
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -68,6 +68,12 @@ train: ## run a baseline training run (M6); writes training_run + metrics to the
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
 	# no cert shim needed — this run only touches Postgres, not the network.
 	PYTHONPATH=server $(BIN)/python ml/train.py
+
+smoke-train: ## CPU smoke: seed a tiny class-separable dataset, train end-to-end, assert it learns (self-cleaning)
+	# Needs a reachable, migrated Postgres (IMAGEGENIE_DATABASE_URL, default
+	# localhost:5432). PYTHONPATH=server:ml so it imports both the DB layer and the
+	# ml modules (train/dataset/model/splits).
+	PYTHONPATH=server:ml $(BIN)/python ml/smoke_train.py
 
 migrate: ## apply pending schema migrations (alembic upgrade head)
 	cd server && ../$(BIN)/alembic upgrade head
