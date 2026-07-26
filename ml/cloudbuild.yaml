@@ -1,0 +1,18 @@
+# Cloud Build config for the training image (`make train-image`).
+#
+# Needed instead of a plain `gcloud builds submit --tag`, which always looks for a
+# Dockerfile at the root of the build context and gives no way to point at
+# ml/Dockerfile. The context is the repo root so the build can copy both server/app
+# and ml/ (see the COPY lines in ml/Dockerfile).
+#
+# Built in the cloud rather than locally because the CUDA base is multi-GB and the
+# dev host is arm64: a local `--platform linux/amd64` build would run the whole
+# thing under emulation, and then push those gigabytes back up over a home
+# connection. Cloud Build pulls and pushes inside Google's network instead.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'ml/Dockerfile', '-t', '${_IMAGE}', '.']
+images: ['${_IMAGE}']
+# The default machine type keeps this inside Cloud Build's free daily tier; the
+# default 10-minute timeout does not survive pulling and pushing a CUDA image.
+timeout: 3600s

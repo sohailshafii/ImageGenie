@@ -15,6 +15,9 @@ COMPOSE := docker compose -f server/docker-compose.yml
 GCP_PROJECT  ?= imagegenie-pipeline
 GCP_REGION   ?= us-central1
 WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:latest
+# The training image (ml/Dockerfile) is a separate artifact from the worker image:
+# CUDA torch instead of CPU torch, and none of the mesh/web stack.
+TRAIN_IMAGE  := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/train:latest
 
 # Run a script through the venv Python ($(BIN)/python, which has the deps — not
 # $(PYTHON), the system interpreter used only to bootstrap the venv in `setup`).
@@ -25,7 +28,7 @@ WORKER_IMAGE := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/imagegenie/worker:la
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train train-image
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -120,6 +123,14 @@ deploy-image: ## build (linux/amd64) + push the worker/API image to Artifact Reg
 	# the server; the Dockerfile is multi-stage (server/Dockerfile).
 	docker build --platform linux/amd64 -f server/Dockerfile -t $(WORKER_IMAGE) .
 	docker push $(WORKER_IMAGE)
+
+train-image: ## build + push the CUDA training image via Cloud Build (M6 chunk G)
+	# Built in the cloud, not locally: the CUDA base is multi-GB and this host is
+	# arm64, so a local linux/amd64 build runs under emulation and then pushes
+	# those gigabytes back up. Context is the repo root — the image needs both
+	# server/app and ml/ (see ml/Dockerfile).
+	gcloud builds submit . --project $(GCP_PROJECT) \
+		--config ml/cloudbuild.yaml --substitutions=_IMAGE=$(TRAIN_IMAGE)
 
 clean: ## remove the virtualenv and caches
 	rm -rf $(VENV) .ruff_cache

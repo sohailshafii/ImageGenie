@@ -1,0 +1,28 @@
+# Training-image deps (ml/Dockerfile, M6 chunk G). Deliberately a *subset* of
+# server/requirements.txt rather than a reuse of it: the training job reads
+# rendered PNGs and writes bookkeeping rows, so it needs none of the mesh stack
+# (trimesh/pyrender/PyOpenGL, plus the OSMesa and X11 system libs they drag in),
+# none of the web layer (fastapi/uvicorn/bcrypt/httpx), and neither Pub/Sub nor
+# objaverse. Dropping them keeps an already-large CUDA image from getting larger
+# and removes build steps that can only fail.
+#
+# torch and torchvision are NOT listed: they come from the CUDA base image, which
+# pins the pair against a matching CUDA runtime. Installing them here would pull
+# the CPU wheels over the top and silently produce a GPU-less job.
+
+# Bookkeeping (NFR-4): training_run + training_metric rows.
+SQLAlchemy==2.0.51
+psycopg[binary]==3.3.4
+# Reaches Cloud SQL over IAM without a VPC or authorized networks
+# (server.md#training-gpu). `pg8000` is the driver the connector uses.
+cloud-sql-python-connector[pg8000]==1.18.4
+# Config (IMAGEGENIE_* env vars) — app.config.
+pydantic-settings==2.14.2
+# Rendered views live in the processed bucket.
+google-cloud-storage==2.19.0
+# The DB URL is held in Secret Manager, not passed as an env var
+# (a job's env is visible in its metadata).
+google-cloud-secret-manager==2.21.1
+# Pixel decode. numpy stays <2 to match the rest of the repo.
+numpy==1.26.4
+Pillow==10.4.0

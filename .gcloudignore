@@ -1,0 +1,14 @@
+# Upload filter for `gcloud builds submit` (see `make train-image`).
+#
+# gcloud reads THIS file, not .dockerignore. Without it the build context tarball
+# would include the 1 GB .venv and 139 MB web/node_modules and upload them on
+# every build — .dockerignore would then discard them, but only after they had
+# already crossed the wire.
+#
+# Including .dockerignore rather than restating it keeps the two from drifting:
+# what the build context excludes and what the upload excludes should be the same
+# set. Verify with:
+#
+#     gcloud meta list-files-for-upload
+#
+#!include:.dockerignore

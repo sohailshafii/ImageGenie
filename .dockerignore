@@ -1,5 +1,16 @@
 # Build context is the repo root (server/Dockerfile builds both the API image and
 # the SPA). Keep the context small: exclude everything the build doesn't need.
+#
+# .gcloudignore includes this file, so these exclusions also govern what
+# `gcloud builds submit` uploads — which is why the secrets below matter here and
+# not only in .gitignore.
+
+# Secrets. `.env` holds the Resend API key, the admin bootstrap password and the
+# TF_VAR_* values; it is gitignored, but .gitignore has no bearing on a build
+# context or on a Cloud Build upload. Nothing in any image reads it — config
+# arrives as env vars (local) or from Secret Manager (cloud).
+.env
+.env.*
 
 # Git + OS cruft
 .git
