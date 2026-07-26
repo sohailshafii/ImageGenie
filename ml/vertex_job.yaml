@@ -1,0 +1,39 @@
+# Vertex AI custom-job spec for a training run (`make train-cloud`).
+#
+# A YAML spec rather than a pile of --worker-pool-spec flags, because two of the
+# settings that matter most here have no convenient flag form: the SPOT strategy
+# and the container env.
+#
+# Substituted by the Makefile: __IMAGE__, __SERVICE_ACCOUNT__, __INSTANCE__,
+# __SECRET__, __ARGS__.
+workerPoolSpecs:
+  - machineSpec:
+      # n1-standard-8 is the smallest shape a T4 attaches to. T4 is the cheapest
+      # widely-available spot GPU and ample for a resnet18-backed multi-view CNN
+      # (server.md#training-gpu).
+      machineType: n1-standard-8
+      acceleratorType: NVIDIA_TESLA_T4
+      acceleratorCount: 1
+    replicaCount: 1
+    containerSpec:
+      imageUri: __IMAGE__
+      args: __ARGS__
+      env:
+        # Reaching Cloud SQL: Vertex has no Unix socket to mount and its egress
+        # IP is dynamic, so the job dials through the Cloud SQL connector over
+        # IAM (server.md#training-gpu).
+        - name: IMAGEGENIE_CLOUDSQL_INSTANCE
+          value: __INSTANCE__
+        # The URL is fetched at startup rather than set here: everything in this
+        # env block is visible in the job's metadata, and the URL carries the
+        # database password.
+        - name: IMAGEGENIE_DATABASE_URL_SECRET
+          value: __SECRET__
+
+# Spot pricing is the whole reason the training line fits in $5–20
+# (NFR-1). A preemption loses the run, not the work already checkpointed:
+# ml/train.py writes weights to the processed bucket after every epoch.
+scheduling:
+  strategy: SPOT
+
+serviceAccount: __SERVICE_ACCOUNT__

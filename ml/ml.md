@@ -222,7 +222,48 @@ non-negotiable is NFR-4 bookkeeping.
   preemption keeps the latest epoch; the key becomes the run's `weights_uri` on success.
 - **`main()`** — load samples → split → snapshot → `create_run` → train → `finalize_run(completed,
   weights_uri)`; an empty trainable set exits early, and any exception marks the run `failed` (so it
-  never lingers as `running`) and re-raises.
+  never lingers as `running`) and re-raises. A short flag list overrides `Config` — `--device`,
+  `--num-workers`, `--epochs`, `--batch-size`, `--learning-rate`, plus `--limit` and `--notes`.
+  Deliberately short: the knobs a *run* varies (where it runs, how big, how much data), not every
+  hyperparameter — the rest stay `Config` defaults edited in code. Each defaults to `None`, so an
+  unset flag leaves the `Config` default alone rather than overwriting it. Whatever they resolve to
+  is what gets recorded, so a cloud run is as reproducible as a local one.
+- **`--limit N`** takes a seeded random subset — the cost guardrail for a first cloud run: prove the
+  wiring on a few hundred models before paying for the full set. It is **proportional, not
+  class-balanced**, so a small run rehearses the real (~7.7:1 skewed) distribution rather than an
+  easier balanced version of it, and the snapshot records `limit` so a subset run is never mistaken
+  for a full one when comparing `label_count`s.
+
+### Running in the cloud (M6 chunk G)
+
+```
+make train-image                     # build + push the CUDA image (Cloud Build)
+make train-cloud LIMIT=500           # a first, small, paid run
+make train-cloud                     # the full trainable set
+make train-cloud ARGS='--epochs 5'   # extra flags straight through
+```
+
+- **The training image is separate from the worker image** (`ml/Dockerfile`, `ml/requirements-train.txt`).
+  Training reads PNGs and writes rows, so it needs none of the mesh stack, none of the web layer, and
+  neither Pub/Sub nor objaverse. **`torch`/`torchvision` are deliberately absent from the
+  requirements**: they come from the CUDA base image, and re-installing them would pull the CPU
+  wheels over the top — a GPU-less job on a GPU being paid for. Built by Cloud Build, since the base
+  is multi-GB and the dev host is arm64.
+- **`ml/vertex_job.yaml`** is the job spec: one `n1-standard-8` + one **T4**, `scheduling.strategy:
+  SPOT`, running as the `imagegenie-trainer` service account. Spot is what keeps the training line
+  inside NFR-1's $5–20; a preemption costs the run, not the work, since weights are checkpointed to
+  the processed bucket after every epoch.
+- **Reaching the database.** Cloud Run mounts a Unix socket for Cloud SQL; Vertex has no equivalent,
+  and its egress IP is dynamic so authorized networks cannot cover it. The job sets
+  `IMAGEGENIE_CLOUDSQL_INSTANCE` and dials through the Cloud SQL connector over IAM instead. The URL
+  itself arrives as `IMAGEGENIE_DATABASE_URL_SECRET` — a secret *name*, fetched at startup — because
+  everything in a job's env block is visible in its metadata and the URL carries the password. See
+  [server.md](../server/server.md#training-gpu).
+- ⚠️ **`num_workers > 0` requires the picklable-storage fix.** An epoch reads ~141k views, so
+  single-threaded loading would leave the GPU waiting on I/O — but a `google.cloud.storage.Client`
+  cannot cross a process boundary by either route (spawn pickles it and it refuses; fork shares its
+  HTTPS connection pool). `GcsStorage` therefore pickles as its bucket name and rebuilds the client
+  per process; see [server.md](../server/server.md#object-storage).
 
 Run it with `make train`, which sets `PYTHONPATH=server` so the DB layer (`app.db`, `app.models`)
 imports; no cert shim, since training only touches Postgres. `ml/smoke_train.py` (`make smoke-train`)
