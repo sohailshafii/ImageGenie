@@ -415,6 +415,10 @@ make migration-status               # current revision + head
 - **A drift test guards the pair** (`tests/test_migrations.py`): it builds a database from migrations
   alone and asserts it matches `Base.metadata`. Nothing else would catch a model change shipping
   without a migration, because the rest of the suite builds its schema with `create_all`.
+- **Every path into Alembic is cwd-independent.** `script_location` and `prepend_sys_path` use
+  `%(here)s` (the ini file's own directory) and the drift test locates `alembic.ini` relative to
+  `__file__`. `make migrate` runs from `server/` but `make test` runs from the repo root, and a
+  cwd-relative path meant the suite passed from one directory and errored from the other.
 - **Enum types need explicit drops in `downgrade`.** Autogenerate omits them, and Postgres ENUMs
   outlive the tables that use them, so a downgrade→upgrade cycle fails with "type already exists".
   The initial revision drops all five by hand; **any future revision adding an enum must do the
