@@ -100,7 +100,8 @@ Component detail and coding standards live in the domain docs:
 - Test the full pipeline end-to-end on ~100 models before scaling to tens of thousands
 - Make all workers **idempotent** — reruns must skip already-processed files
 - Use spot/preemptible instances where possible
-- Delete raw files for models excluded from the dataset
+- Delete raw files for models excluded from the dataset — `make cleanup-raw`
+  (see [server/server.md](server/server.md#reclaiming-raw-storage))
 
 ## Milestones & v1 Scope
 

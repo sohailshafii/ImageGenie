@@ -171,8 +171,11 @@ price plus a minimum-duration commitment:
 overkill here.) The trap avoided: putting training data in Nearline would rack up per-epoch retrieval
 fees and erase the savings, so only raw is cold-stored.
 
-**Lifecycle rule** on `imagegenie-raw`: transition to Nearline once preprocessed and delete models
-excluded from the dataset outright (cost guardrail) — keeps the ~$5–15/mo storage line in check.
+**Lifecycle rule** on `imagegenie-raw`: transition to Nearline once preprocessed. Deleting the
+excluded models outright is not a lifecycle rule — GCS can age an object out, but it cannot know
+whether a *model* is in the dataset, which is a question about the `label` and `model` tables. That
+is a deliberate operator step: [Reclaiming raw storage](#reclaiming-raw-storage). Together they keep
+the ~$5–15/mo storage line in check.
 
 **Client abstraction.** Workers reach storage through a thin `Storage` protocol
 (`server/app/storage.py`) addressed by **key** (e.g. `raw/<uid>.glb`), never touching buckets/paths
@@ -564,9 +567,9 @@ ingestion spend; and it composes with the reconciler. **A hard delete that dropp
 would be undone by the next `reconcile-storage`**, which rebuilds any model whose blobs exist — so a
 true purge would have to delete the blobs too, the irreversible operation. `deleted_at` lives only in
 the DB and the reconciler's upsert writes only storage-authoritative columns, so a soft delete
-correctly survives a rebuild (tested in `test_reconcile_from_storage.py`). Reclaiming storage — the
-cost guardrail's "delete raw files for excluded models" — is a separate, deliberate step, not wired
-to this button.
+correctly survives a rebuild (tested in `test_reconcile_from_storage.py`). Reclaiming storage is a
+separate, deliberate step, not wired to this button — a soft delete makes a model a *candidate* for
+[Reclaiming raw storage](#reclaiming-raw-storage), which someone still has to run and confirm.
 
 `_require_live_model` is the single existence check the write and artifact routes share, so a route
 can't act on a deleted model by checking only for existence.
@@ -592,7 +595,8 @@ make reconcile-storage
   and reported, not written as `done` — the stage-skip gate trusts the row, so recording a partial
   set would permanently hide that model from a re-render and quietly train on missing views.
 - **A model whose raw mesh is gone still gets a row**, marked `pending` rather than `downloaded`.
-  Raw files are deleted for models excluded from the dataset (the cost guardrail in CLAUDE.md), and
+  Raw files are deleted for models excluded from the dataset
+  ([Reclaiming raw storage](#reclaiming-raw-storage)), and
   the labeling UI reads the processed artifacts, not the source mesh.
 - **Unrecognised keys are counted, never imported** — a bucket may hold stray objects, and the run
   reports them rather than inventing models from them.
@@ -607,6 +611,63 @@ Two columns it cannot restore, both by design:
 - **`title` / `tags`** — these come from the store's annotations, not the blobs. Run the metadata
   backfill below afterwards; the reconciler leaves any already present untouched, so the two tools
   compose in either order.
+
+### Reclaiming raw storage
+
+`server/app/cleanup_raw.py` (`make cleanup-raw`, `APPLY=1` to delete) implements CLAUDE.md's cost
+guardrail — *"delete raw files for models excluded from the dataset."* The raw bucket dominates the
+storage line, and a mesh that will never be trained on is paying rent for nothing.
+
+```
+make cleanup-raw            # dry run: per-reason table, deletes nothing
+make cleanup-raw APPLY=1    # deletes, after a typed confirmation
+```
+
+**Only `raw/` is ever listed.** The processed artifacts are what the labeling UI and training read;
+raw is read exactly once, by convert. That asymmetry is why the two buckets have
+[separate lifecycles](#object-storage) in the first place.
+
+**A mesh is deleted only when its model is not in the dataset at all** — one of four reasons, each
+reported separately so a dry run shows *what kind* of exclusion is reclaiming the space. A surprise
+in the mix (thousands of "no label", say) is the signal to stop and look rather than pass `APPLY=1`:
+
+| Reason | Meaning |
+|--------|---------|
+| `no model row` | a stray blob under `raw/` with no `model` row — nothing references it |
+| `soft-deleted` | an admin [removed it](#soft-delete); the label it carried doesn't override that |
+| `no label` | never weak-labeled and never hand-labeled, so training would skip it |
+| `label outside the roster` | labeled outside the 12 classes (`LabelIn.class_name` is a free-form `str`, so the API can write one) |
+
+- **The current label is resolved exactly as the API resolves it** — most recent, manual beating weak
+  — so the cleanup and the labeling UI can never disagree about what is in the dataset. Correcting an
+  out-of-scope weak label back into the roster *saves* the mesh.
+- **A key that maps to no uid is reported and kept, never deleted.** `uid_from_key` returning None
+  means a stray object (`raw/NOTES.txt`, a nested path); the [reconciler](#rebuilding-the-tables-from-storage)
+  treats strays the same way, and a key we cannot parse is one we cannot claim to own.
+- **Dry run by default, and `--apply` still stops for a typed phrase**, matching
+  `scripts/wipe_buckets.sh`. The raw bucket is the *only* copy of an ingested mesh — the renders
+  cannot rebuild it, so the cost of a mistake is a re-download from Objaverse.
+- **Per-object deletion, not a prefix wipe.** The kept and the excluded live side by side under
+  `raw/`, so no prefix selects only the excluded — the one structural difference from
+  `wipe_buckets.sh`, which can delete wholesale.
+- **Idempotent (NFR-2).** `Storage.delete` treats an absent key as success and one object's failure
+  is logged and skipped, so an interrupted run is simply re-run rather than needing to know where it
+  stopped.
+- **Sizes come from the listing itself** (`Storage.list_sizes`), because object stores return them
+  inline. Asking per object over ~165k blobs is the difference between one listing and 165k
+  round-trips — which is exactly how the equivalent `gcloud storage du -s` behaves, slowly enough to
+  time out.
+- ⚠️ **`model` rows are deliberately left untouched.** Resetting `download_status` to `pending` looks
+  tidier but is actively worse: a re-seed would then re-download the very models excluding them was
+  meant to drop. The rows are an index over storage, the next `reconcile-storage` marks them
+  `pending` on its own, and the [download endpoints](#downloads) already 404 on a missing blob.
+- ⚠️ **The `make` target runs from the repo root**, unlike `reconcile-storage`. On the local backend
+  `storage_root` is cwd-relative, so `cd server` points it at an empty `server/data/storage` and
+  cheerfully reports nothing to delete. Against GCS the cwd is irrelevant — which is how that trap
+  stays invisible until someone tests locally.
+- It is the one module under `app/` that imports from `ml/` (the class roster, single-sourced in
+  `ml/taxonomy.py`), hence `PYTHONPATH=server:ml` on the target — the mirror of `make train` adding
+  `server/` so ML code can reach the DB layer. Nothing in the worker image imports it.
 
 ### Metadata backfill
 
