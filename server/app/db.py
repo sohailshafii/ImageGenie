@@ -24,10 +24,65 @@ class Base(DeclarativeBase):
     """Declarative base shared by all ORM models."""
 
 
+def _resolve_database_url(settings) -> str:
+    """The connection URL, read from Secret Manager when configured.
+
+    The Vertex training job takes this path: a job's environment is visible in
+    its metadata, so the URL — which carries the DB password — is passed as a
+    *secret name* and fetched at startup instead. Workers and the API leave this
+    unset and keep using `database_url` directly, injected by Cloud Run.
+    """
+    if settings.database_url_secret is None:
+        return settings.database_url
+
+    from google.cloud import secretmanager
+
+    client = secretmanager.SecretManagerServiceClient()
+    response = client.access_secret_version(name=settings.database_url_secret)
+    return response.payload.data.decode("utf-8").strip()
+
+
+def _cloudsql_connector_engine(settings, url: str) -> Engine:
+    """An engine that dials Cloud SQL through the Python connector.
+
+    Used only by the Vertex training job (server.md#training-gpu). Cloud Run
+    reaches Cloud SQL over a Unix socket it mounts; Vertex has no equivalent, and
+    its egress IP is dynamic so the instance's authorized networks cannot cover
+    it either. The connector solves both by authenticating over IAM against the
+    Cloud SQL Admin API, needing no VPC and no allowlist.
+
+    The URL's credentials and database name are reused; only the transport
+    changes, so the two paths cannot drift about *which* database they mean.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    from google.cloud.sql.connector import Connector
+
+    parsed = urlsplit(url)
+    connector = Connector()
+
+    def connect():
+        return connector.connect(
+            settings.cloudsql_instance,
+            "pg8000",
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            db=parsed.path.lstrip("/"),
+        )
+
+    # pool_pre_ping: a training run is long and mostly idle on the DB between
+    # epoch writes, easily long enough for Cloud SQL to drop a stale connection.
+    return create_engine("postgresql+pg8000://", creator=connect, pool_pre_ping=True, future=True)
+
+
 @lru_cache
 def get_engine() -> Engine:
     """Return the process-wide engine (connections are opened lazily)."""
-    return create_engine(get_settings().database_url, future=True)
+    settings = get_settings()
+    url = _resolve_database_url(settings)
+    if settings.cloudsql_instance:
+        return _cloudsql_connector_engine(settings, url)
+    return create_engine(url, future=True)
 
 
 def init_db() -> None:
