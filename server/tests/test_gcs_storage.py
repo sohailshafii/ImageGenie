@@ -1,3 +1,5 @@
+import os
+import pickle
 from unittest.mock import MagicMock
 
 import google.cloud.storage as gcs
@@ -13,12 +15,86 @@ def test_gcs_storage_conforms_and_wires_client(monkeypatch: pytest.MonkeyPatch) 
     store = GcsStorage("imagegenie-pipeline-raw")
 
     assert isinstance(store, Storage)  # structural conformance to the protocol
-    fake_client.bucket.assert_called_once_with("imagegenie-pipeline-raw")
+    # Construction builds nothing: the client belongs to whichever process first
+    # uses it, which is what lets this object cross a process boundary.
+    fake_client.bucket.assert_not_called()
 
     blob = fake_client.bucket.return_value.blob
     store.put_bytes("raw/abc.glb", b"MESH")
+    fake_client.bucket.assert_called_with("imagegenie-pipeline-raw")
     blob.assert_called_with("raw/abc.glb")
     blob.return_value.upload_from_string.assert_called_once_with(b"MESH")
+
+
+# ── Crossing a process boundary (ml/dataset.py + DataLoader num_workers>0) ──
+# A `storage.Client` cannot travel by either route: spawn pickles the Dataset and
+# the client refuses, while fork hands the child the parent's HTTPS connection
+# pool. Only the bucket name travels; the client is rebuilt per process.
+
+
+def test_pickles_by_name_and_rebuilds_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The spawn case: a real `storage.Client` raises on pickle, so the state
+    that crosses must not contain one."""
+    fake_client = MagicMock()
+    monkeypatch.setattr(gcs, "Client", lambda: fake_client)
+    store = GcsStorage("imagegenie-pipeline-processed")
+    store.get_bytes("processed/x.ply")  # force a client into existence
+
+    revived = pickle.loads(pickle.dumps(store))
+
+    assert revived._bucket_name == "imagegenie-pipeline-processed"
+    assert revived._client is None  # nothing carried over
+    revived.get_bytes("processed/x.ply")
+    fake_client.bucket.assert_called_with("imagegenie-pipeline-processed")
+
+
+def test_a_forked_child_does_not_reuse_the_inherited_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fork case: no pickling happens, so the guard has to be the PID. A
+    child that kept its parent's client would share an HTTPS connection pool
+    across processes."""
+    clients = [MagicMock(), MagicMock()]
+    monkeypatch.setattr(gcs, "Client", lambda: clients.pop(0))
+    monkeypatch.setattr(os, "getpid", lambda: 1000)
+    store = GcsStorage("bucket")
+    store.get_bytes("processed/x.ply")
+    parent_client = store._client
+
+    monkeypatch.setattr(os, "getpid", lambda: 1001)  # "fork"
+    store.get_bytes("processed/x.ply")
+
+    assert store._client is not parent_client
+    assert store._client_pid == 1001
+
+
+def test_the_same_process_reuses_its_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rebuilding per call would mean a fresh connection pool for every one of
+    the ~141k reads an epoch makes."""
+    built = []
+
+    def make_client() -> MagicMock:
+        built.append(MagicMock())
+        return built[-1]
+
+    monkeypatch.setattr(gcs, "Client", make_client)
+    store = GcsStorage("bucket")
+
+    for _ in range(3):
+        store.get_bytes("processed/x.ply")
+
+    assert len(built) == 1
+
+
+def test_routed_storage_survives_the_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The routed wrapper is what cloud actually builds, so it is what a
+    DataLoader worker would receive."""
+    monkeypatch.setattr(gcs, "Client", lambda: MagicMock())
+
+    revived = pickle.loads(pickle.dumps(RoutedGcsStorage("raw-bucket", "processed-bucket")))
+
+    assert revived._raw._bucket_name == "raw-bucket"
+    assert revived._processed._bucket_name == "processed-bucket"
 
 
 def test_routed_gcs_storage_routes_by_prefix(monkeypatch: pytest.MonkeyPatch) -> None:

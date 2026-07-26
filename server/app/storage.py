@@ -11,6 +11,7 @@ in for cloud without changing callers.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
@@ -133,15 +134,56 @@ class LocalStorage:
 class GcsStorage:
     """GCS-backed `Storage` — keys map to objects in a bucket (cloud backend).
 
-    The `google-cloud-storage` import is deferred to construction so LocalStorage
+    The `google-cloud-storage` import is deferred to first use so LocalStorage
     users (and the test suite) don't need the dependency at import time.
+
+    **The bucket name is the identity; the client is derived, disposable,
+    process-local state.** That split is what lets this object cross a process
+    boundary, which a `DataLoader` with ``num_workers > 0`` requires of anything
+    a Dataset holds (`ml/dataset.py`). A `storage.Client` cannot make that trip
+    by either route:
+
+    - **spawn** pickles the Dataset, and the client refuses outright —
+      *"Pickling client objects is explicitly not supported."*
+    - **fork** (the Linux default, so Vertex) doesn't pickle, but the child
+      inherits the parent's HTTPS connection pool, which is not safe to share
+      across processes.
+
+    So only the name is pickled, and the client is rebuilt on first use in
+    whichever process asks — keyed on the PID, so a forked child notices the
+    mismatch and builds its own rather than reusing what it inherited.
     """
 
     def __init__(self, bucket_name: str) -> None:
+        self._bucket_name = bucket_name
+        self._client = None
+        self._client_pid: int | None = None
+        self._signing_credentials = None  # lazily fetched on the first sign
+
+    @property
+    def _bucket(self):
+        """The bucket handle, building this process's client if it has none.
+
+        Re-checking the PID on every access is what makes the fork case safe: a
+        child that inherited a live client sees a mismatch and starts over. The
+        signing credentials are dropped with it, since they belong to the client
+        being replaced.
+        """
         from google.cloud import storage
 
-        self._bucket = storage.Client().bucket(bucket_name)
-        self._signing_credentials = None  # lazily fetched on the first sign
+        current_pid = os.getpid()
+        if self._client is None or self._client_pid != current_pid:
+            self._client = storage.Client()
+            self._client_pid = current_pid
+            self._signing_credentials = None
+        return self._client.bucket(self._bucket_name)
+
+    def __getstate__(self) -> dict:
+        """Pickle the name alone — see the class docstring."""
+        return {"bucket_name": self._bucket_name}
+
+    def __setstate__(self, state: dict) -> None:
+        self.__init__(state["bucket_name"])
 
     def _iam_signer(self) -> tuple[str, str]:
         """The SA email + a live access token for IAM-based V4 signing.
