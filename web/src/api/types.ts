@@ -26,6 +26,7 @@ export type ApiErrorCode =
   | 'payload_too_large' // upload: over the server's size cap
   | 'unauthorized' // no valid session
   | 'forbidden' // authenticated but lacking the role (e.g. non-admin inviting)
+  | 'not_found' // no such resource — or, for a download, an artifact not produced yet
   | 'csrf_failure' // missing/mismatched CSRF token (server.md#csrf)
   | 'network_error' // the request never reached the server
   | 'server_error'; // an unrecognized non-2xx response

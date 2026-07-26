@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { getTrainingRun, getTrainingRunMetrics } from '../api/training';
+import {
+  downloadTrainingWeights,
+  getTrainingRun,
+  getTrainingRunMetrics,
+} from '../api/training';
 import type { TrainingMetricPoint, TrainingRunDetail } from '../api/types';
+import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { CostCurve } from '../components/CostCurve';
+import { DownloadButton } from '../components/DownloadButton';
 
 // Training-run detail (FR-6 / B3): the cost curve plus the run's bookkeeping —
 // the config it ran with, the data snapshot it trained on, and (once evaluated)
@@ -32,6 +38,11 @@ function KeyValues({ record }: { record: Record<string, unknown> }) {
 export function TrainingRunDetailPage() {
   const params = useParams();
   const runId = Number(params.id);
+  const { user } = useAuth();
+  // Weights are the one admin-only corner of an otherwise open dashboard
+  // (NFR-6). The server enforces it; hiding the button just avoids offering a
+  // viewer an action that can only fail.
+  const canDownloadWeights = user?.role === 'admin';
 
   const [run, setRun] = useState<TrainingRunDetail | null>(null);
   const [metrics, setMetrics] = useState<TrainingMetricPoint[] | null>(null);
@@ -85,6 +96,14 @@ export function TrainingRunDetailPage() {
           <div className="run-header">
             <h1>Training run #{run.id}</h1>
             <span className={`status-badge is-${run.status}`}>{run.status}</span>
+            {canDownloadWeights && run.weightsUri && (
+              <DownloadButton
+                label="Download weights"
+                title={`The run's saved checkpoint (${run.weightsUri})`}
+                missingLabel="Checkpoint missing"
+                onDownload={() => downloadTrainingWeights(run.id)}
+              />
+            )}
           </div>
           {run.notes && <p className="page-lead">{run.notes}</p>}
 

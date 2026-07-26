@@ -58,6 +58,8 @@ advances, and `c` hands focus to the class dropdown. Design notes:
   naturally; `vite.config.ts` reproduces that locally.
 - Candidate label with confidence; confirm/correct here too.
 - Neighboring metadata (store tags/title) shown to aid the labeling decision.
+- **Two download buttons** (see [Downloads](#downloads)): the **source mesh** as ingested, and the
+  **normalized PLY** the viewer is showing. Both are offered to any logged-in user, not just admins.
 
 Both views write label corrections through the same API endpoint (see
 [server.md](../server/server.md#database) — corrections create/update `label` rows with `source = manual`).
@@ -85,10 +87,33 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
   - **Dev-set metrics** — a placeholder ("not evaluated yet") until the run has a `metrics` blob;
     per-class precision/recall + confusion matrices (see [ml.md](../ml/ml.md#evaluation)) land with
     **B4 / M7**.
+  - a **Download weights** button in the header, shown only to admins and only once the run has a
+    `weights_uri` (see [Downloads](#downloads)).
   - timestamps (started / finished).
 
   Backed by the `training_run` / `training_metric` entities in
   [server.md](../server/server.md#database).
+
+## Downloads
+
+Three downloads, all through one `DownloadButton` component: the two meshes on the model detail
+view, and a training run's `.pt` checkpoint on the run detail view. Server side (routes, gates, why
+the bytes are proxied rather than signed) is in
+[server.md](../server/server.md#downloads).
+
+- **Fetched, not linked.** A plain `<a href>` would hand the browser a JSON error body to save as a
+  file when the artifact isn't there. `client.ts`'s `download()` goes through `fetch`, so failures
+  arrive as typed `ApiError`s, then saves the blob via a `blob:` object URL — same-origin, which is
+  what makes the `download` attribute (and therefore the server's filename) work at all.
+- **404 is the normal case, not a failure.** An artifact the pipeline hasn't produced yet 404s, so
+  the button says "Not normalized yet" / "No source mesh stored" rather than showing an error. This
+  is why `not_found` is its own `ApiErrorCode` instead of collapsing into `server_error`.
+- **The server's filename wins.** The response's `Content-Disposition` names the file; the caller's
+  fallback only applies if that header is missing. The server knows the source format (GLB vs.
+  STL/OBJ), which the frontend does not.
+- **The weights button is hidden from viewers.** The server enforces admin-only (NFR-6) — hiding it
+  just avoids offering an action that could only fail. Everything else about a run stays visible to
+  any authenticated user.
 
 ## Auth & Roles
 

@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { deleteModel, getModel, getModelArtifacts, setLabel } from '../api/catalog';
+import {
+  deleteModel,
+  downloadNormalizedMesh,
+  downloadSourceMesh,
+  getModel,
+  getModelArtifacts,
+  setLabel,
+} from '../api/catalog';
 import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { ConfirmButton } from '../components/ConfirmButton';
+import { DownloadButton } from '../components/DownloadButton';
 import { ModelViewer } from '../components/ModelViewer';
 
 // Detail view (web.md): a single model in the interactive three.js viewer, its
@@ -157,6 +165,27 @@ export function DetailPage() {
             <div className="detail-field">
               <span className="detail-label">Model id</span>
               <span className="dlq-uid">{model.uid}</span>
+            </div>
+
+            {/* Both meshes, since they answer different questions: the source is
+                what was ingested, the normalized PLY is what the viewer shows and
+                what training consumes. Login-gated, not admin-only. */}
+            <div className="detail-field">
+              <span className="detail-label">Download</span>
+              <span className="detail-downloads">
+                <DownloadButton
+                  label="Source mesh"
+                  title="The original ingested file (GLB, or STL/OBJ if uploaded)"
+                  missingLabel="No source mesh stored"
+                  onDownload={() => downloadSourceMesh(model.uid)}
+                />
+                <DownloadButton
+                  label="Normalized PLY"
+                  title="Centered and unit-scaled — what the viewer shows"
+                  missingLabel="Not normalized yet"
+                  onDownload={() => downloadNormalizedMesh(model.uid)}
+                />
+              </span>
             </div>
 
             {canEdit && (

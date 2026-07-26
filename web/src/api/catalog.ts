@@ -1,4 +1,4 @@
-import { request, upload } from './client';
+import { download, request, upload } from './client';
 import type {
   ClassName,
   DeadLetter,
@@ -196,4 +196,23 @@ export async function listDeletedModels(params: {
     page: body.page,
     pageSize: body.page_size,
   };
+}
+
+/**
+ * GET /models/{uid}/download/source — the original ingested mesh.
+ *
+ * The extension is whatever was ingested (GLB from Objaverse, possibly STL/OBJ
+ * from an admin upload), so the real filename comes back on the response; the
+ * fallback here is only used if that header ever goes missing.
+ */
+export async function downloadSourceMesh(uid: string): Promise<void> {
+  await download(`/models/${encodeURIComponent(uid)}/download/source`, `${uid}.glb`);
+}
+
+/** GET /models/{uid}/download/normalized — the centered, unit-scaled PLY. */
+export async function downloadNormalizedMesh(uid: string): Promise<void> {
+  await download(
+    `/models/${encodeURIComponent(uid)}/download/normalized`,
+    `${uid}-normalized.ply`,
+  );
 }

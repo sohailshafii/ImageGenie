@@ -1,4 +1,4 @@
-import { request } from './client';
+import { download, request } from './client';
 import type {
   TrainingMetricPoint,
   TrainingRunDetail,
@@ -8,7 +8,8 @@ import type {
 
 // Training-dashboard client (FR-6, web.md#training-dashboard). Read-only: the
 // training script writes these rows directly to the DB (ml/train.py), so there
-// is nothing to POST here — this module only lists and drills into runs.
+// is nothing to POST here — this module only lists, drills into, and downloads
+// the artifacts of runs.
 
 /** Wire shapes — snake_case, mirroring the FastAPI response models. */
 interface TrainingRunSummaryResponse {
@@ -84,4 +85,16 @@ export async function getTrainingRunMetrics(id: number): Promise<TrainingMetricP
     loss: point.loss,
     valLoss: point.val_loss,
   }));
+}
+
+/**
+ * GET /training-runs/{id}/weights — **admin-only**: the run's saved `.pt`
+ * checkpoint.
+ *
+ * The one part of the dashboard a viewer can't reach (a trained model is what
+ * NFR-6 calls non-redistributable), so a non-admin caller gets a `forbidden`
+ * ApiError. A run with no `weightsUri` has nothing to download and 404s.
+ */
+export async function downloadTrainingWeights(id: number): Promise<void> {
+  await download(`/training-runs/${id}/weights`, `imagegenie-run-${id}.pt`);
 }
