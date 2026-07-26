@@ -41,6 +41,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .artifact_keys import (
+    MESH_SUFFIX,
     RAW_SUFFIX_TO_FILE_TYPE,
     normalized_key,
     raw_key,
@@ -82,7 +83,7 @@ from .security import (
     resolve_session,
     verify_password,
 )
-from .storage import build_storage
+from .storage import Storage, build_storage
 
 logger = logging.getLogger(__name__)
 
@@ -1094,6 +1095,88 @@ def stream_artifact(key: str) -> Response:
         content=storage.get_bytes(key),
         media_type=_ARTIFACT_MEDIA_TYPES.get(Path(key).suffix, "application/octet-stream"),
         headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+# ── Downloads (web.md#downloads) ────────────────────────────────────────────
+# These two routes send the bytes **through the API**, where the viewer's
+# artifact URLs are signed so the browser reads GCS directly instead. The
+# trade-off inverts here for two reasons.
+#
+# **Where the filename comes from.** A saved file gets its name from one of two
+# places: the `download` attribute on the link the user clicked, or the
+# response's own `Content-Disposition` header. The `download` attribute is
+# ignored when the link points at another origin — and a signed
+# `storage.googleapis.com` URL is another origin — so with signed URLs the name
+# can only come from the header, which means the *storage backend* has to send
+# it. GCS can (`generate_signed_url(response_disposition=...)` bakes the header
+# into the signature), but that would mean widening the `Storage` protocol for a
+# GCS-only feature, and local dev can't sign at all — so one button would need
+# two divergent code paths. Serving the bytes ourselves sets the header directly
+# and behaves identically in both environments.
+#
+# **How often it happens.** What rules out proxying for artifacts is volume: 12
+# view images on every card of a paginated grid. A download is one deliberate
+# click on one model, so that argument doesn't reach these routes.
+
+
+def _attachment(storage: Storage, key: str, filename: str) -> Response:
+    """Serve a blob as a browser download, or 404 if it was never produced.
+
+    404 rather than 500 for a missing blob: a model part-way through the
+    pipeline legitimately has no normalized mesh yet, which is an absent file
+    and not an error.
+    """
+    if not storage.exists(key):
+        raise HTTPException(status_code=404, detail="artifact not available")
+    return Response(
+        content=storage.get_bytes(key),
+        media_type="application/octet-stream",
+        headers={
+            # Quoted, and the name is sanitised at the call site — a filename is
+            # interpolated into a header, so a stray quote or newline would be a
+            # header-injection lever.
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+def _safe_filename(stem: str, suffix: str) -> str:
+    """A download filename with everything but `[A-Za-z0-9._-]` replaced.
+
+    Uids are ours (Objaverse hashes, or a uuid4 for an upload), so this never
+    fires in practice; it is here so that stays true if the source of a uid ever
+    changes.
+    """
+    cleaned = "".join(char if char.isalnum() or char in "._-" else "_" for char in stem)
+    return f"{cleaned}{suffix}"
+
+
+@app.get("/models/{uid}/download/source", dependencies=LOGIN_REQUIRED)
+def download_source_mesh(uid: str) -> Response:
+    """The original ingested mesh, straight from the raw bucket.
+
+    `raw_key` carries the format, which is not always GLB — an admin upload may
+    be STL or OBJ (`artifact_keys.RAW_SUFFIX_TO_FILE_TYPE`), so the suffix is
+    read off the stored key rather than assumed.
+    """
+    with session_scope() as session:
+        key = _require_live_model(session, uid).raw_key
+    if key is None:
+        raise HTTPException(status_code=404, detail="artifact not available")
+    storage = build_storage(get_settings())
+    return _attachment(storage, key, _safe_filename(uid, Path(key).suffix))
+
+
+@app.get("/models/{uid}/download/normalized", dependencies=LOGIN_REQUIRED)
+def download_normalized_mesh(uid: str) -> Response:
+    """The centered, unit-scaled PLY — what the viewer shows and training consumes."""
+    with session_scope() as session:
+        _require_live_model(session, uid)
+    storage = build_storage(get_settings())
+    return _attachment(
+        storage, normalized_key(uid), _safe_filename(f"{uid}-normalized", MESH_SUFFIX)
     )
 
 
