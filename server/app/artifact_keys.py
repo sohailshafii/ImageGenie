@@ -74,6 +74,17 @@ def renders_prefix(uid: str) -> str:
     return f"{RENDERS_PREFIX}{uid}/"
 
 
+# Training output, not a pipeline artifact — kept out of the "families" above so
+# `reconcile_from_storage` (which rebuilds model/artifact rows) never lists it.
+WEIGHTS_PREFIX = "processed/models/"
+
+
+def weights_key(run_id: int) -> str:
+    """Saved model weights for a training run — a processed-bucket blob. The DB's
+    ``training_run.weights_uri`` stores this key (server.md#object-storage)."""
+    return f"{WEIGHTS_PREFIX}{run_id}.pt"
+
+
 def view_key(uid: str, view_index: int) -> str:
     """One rendered view, ``view_00.png`` … ``view_11.png``."""
     return f"{renders_prefix(uid)}view_{view_index:02d}.png"
