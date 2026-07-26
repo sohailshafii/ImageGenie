@@ -184,6 +184,18 @@ distinguish raw/processed); in cloud `RoutedGcsStorage` routes by key prefix —
 bucket, everything else (`processed/*`) → the processed bucket — so the two-bucket split is invisible
 to worker code, which is unchanged between local and GCS.
 
+**A `GcsStorage` can cross a process boundary; its client cannot.** Training's `DataLoader` runs with
+`num_workers > 0`, which puts the Dataset — and the `Storage` it holds — into other processes. A
+`google.cloud.storage.Client` survives neither route there: **spawn** pickles the Dataset and the
+client refuses outright (*"Pickling client objects is explicitly not supported"*), while **fork**
+(the Linux default, so Vertex) doesn't pickle but hands the child the parent's HTTPS connection
+pool, which is not safe to share. So the **bucket name is the object's identity and the client is
+derived, disposable, process-local state**: `__getstate__` pickles the name alone, and the client is
+built on first use and re-checked against `os.getpid()`, so a forked child notices the mismatch and
+builds its own. Fixing it in `Storage` rather than in the Dataset means every caller gets it, and
+the Dataset's API is unchanged. This matters at ~141k view reads per epoch, where single-threaded
+loading would leave the GPU waiting on I/O.
+
 ### Training GPU
 
 The milestone-6 multi-view CNN (a pretrained ResNet fine-tuned on renders) trains as a **Vertex AI
