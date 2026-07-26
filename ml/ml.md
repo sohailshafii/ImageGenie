@@ -243,6 +243,14 @@ make train-cloud                     # the full trainable set
 make train-cloud ARGS='--epochs 5'   # extra flags straight through
 ```
 
+⚠️ **The image is tagged by commit, and `train-cloud` refuses to submit without a matching one.**
+Two preflight checks: uncommitted changes under `ml/` or `server/app` abort the submit, and so does
+a missing image for the current commit. This is not tidiness — it is the fix for a real, expensive
+failure. A first attempt was submitted against a `:latest` image built *before* the CLI flags
+existed; the old entrypoint ignored `--limit`, `--epochs` and `--device` entirely and began training
+the full 11,783-model set on **CPU** on a paid GPU node, looking like a healthy run the whole time.
+A job runs unattended for hours, so a code/image mismatch is a silent failure, not a slow one.
+
 - **The training image is separate from the worker image** (`ml/Dockerfile`, `ml/requirements-train.txt`).
   Training reads PNGs and writes rows, so it needs none of the mesh stack, none of the web layer, and
   neither Pub/Sub nor objaverse. **`torch`/`torchvision` are deliberately absent from the
