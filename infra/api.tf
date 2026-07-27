@@ -125,6 +125,27 @@ resource "google_cloud_run_v2_service" "api" {
         name  = "IMAGEGENIE_COOKIE_SECURE"
         value = "true"
       }
+      # Launching a training run from the dashboard (web.md#starting-a-training-run).
+      # The image is pinned BY COMMIT TAG, never :latest — a floating tag once let a
+      # paid run start against stale code and silently ignore every flag. The
+      # trade-off is that this value goes stale when a newer training image is
+      # built, so the launch form displays the exact tag it is about to run.
+      env {
+        name  = "IMAGEGENIE_TRAIN_IMAGE"
+        value = var.train_image
+      }
+      env {
+        name  = "IMAGEGENIE_TRAINER_SERVICE_ACCOUNT"
+        value = google_service_account.trainer.email
+      }
+      env {
+        name  = "IMAGEGENIE_VERTEX_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "IMAGEGENIE_VERTEX_REGION"
+        value = var.region
+      }
       env {
         name  = "IMAGEGENIE_TRUST_PROXY_HEADERS"
         value = "true"

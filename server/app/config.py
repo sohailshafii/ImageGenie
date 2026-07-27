@@ -110,6 +110,22 @@ class Settings(BaseSettings):
     render_topic: str = "render-jobs"
     render_subscription: str = "render-worker"
 
+    # --- Launching a training run from the UI (web.md#starting-a-training-run) ---
+    # All None locally, which is what makes the launch route return 503 rather
+    # than pretending: a dev machine has no Vertex to submit to.
+    #
+    # The training image is **pinned by commit tag**, never `:latest`
+    # (ml.md#running-in-the-cloud). That is deliberate — a floating tag once let a
+    # paid run start against stale code and silently ignore every flag — but it
+    # means this value goes stale when a newer training image is built, so the UI
+    # shows the exact tag it is about to run rather than leaving it implicit.
+    train_image: str | None = None
+    # The job runs *as* this account (imagegenie-trainer), not as the API's own:
+    # it needs the processed bucket and Cloud SQL, and nothing the API has.
+    trainer_service_account: str | None = None
+    vertex_project: str | None = None
+    vertex_region: str = "us-central1"
+
 
 @lru_cache
 def get_settings() -> Settings:

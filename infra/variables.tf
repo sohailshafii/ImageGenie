@@ -45,3 +45,12 @@ variable "app_base_url" {
   type        = string
   default     = ""
 }
+
+variable "train_image" {
+  type = string
+  # Empty by default so a deploy that has never built a training image still
+  # applies — the API then reports launches as unconfigured and the dashboard
+  # disables the button, rather than offering one that fails at Vertex.
+  default     = ""
+  description = "Commit-tagged training image the launch button submits, e.g. …/imagegenie/train:abc1234. Set to the tag `make train-image` last pushed."
+}
