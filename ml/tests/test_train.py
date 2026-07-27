@@ -1,10 +1,12 @@
 """data_snapshot bookkeeping (M6 B5). The DB-backed loop is covered by the smoke."""
 
 import io
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
 import torch
+import train
 from splits import stratified_split
 from taxonomy import ROSTER
 from torch import nn
@@ -87,3 +89,24 @@ def test_unknown_class_weighting_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="unsupported class_weighting"):
         _build_loss(config, [("a", "chair")], torch.device("cpu"))
+
+
+def test_out_of_roster_labels_are_skipped_not_fatal(monkeypatch, capsys) -> None:
+    # A stray class name must not reach CLASS_TO_INDEX: that lookup happens in a
+    # DataLoader worker, mid-epoch, on a paid GPU.
+    rows = [("a", "chair"), ("b", "sofa"), ("c", "weapon")]
+
+    class _FakeSession:
+        def execute(self, _stmt):
+            return _FakeResult()
+
+    class _FakeResult:
+        def all(self):
+            return rows
+
+    monkeypatch.setattr(train, "session_scope", lambda: nullcontext(_FakeSession()))
+
+    samples = train.load_trainable_samples()
+
+    assert samples == [("a", "chair"), ("c", "weapon")]
+    assert "sofa" in capsys.readouterr().out

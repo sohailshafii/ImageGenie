@@ -128,7 +128,21 @@ def load_trainable_samples() -> list[tuple[str, str]]:
             .distinct(Label.model_uid)
             .order_by(Label.model_uid, Label.created_at.desc(), Label.id.desc())
         )
-        return [(uid, class_name) for uid, class_name in session.execute(stmt).all()]
+        rows = session.execute(stmt).all()
+
+    # Drop anything outside the roster rather than trusting the write path. The
+    # API validates class names now, but rows predate that check and the roster
+    # itself can change; an unknown name would otherwise surface as a KeyError in
+    # `CLASS_TO_INDEX` inside a DataLoader worker — mid-epoch, after a job has
+    # already queued for a spot GPU and pulled a multi-GB image. Skipping is the
+    # right call over raising: one stray row should not cancel a paid run, and
+    # the count is printed so it cannot pass silently.
+    samples = [(uid, class_name) for uid, class_name in rows if class_name in ROSTER]
+    dropped = len(rows) - len(samples)
+    if dropped:
+        unknown_set = {class_name for _, class_name in rows if class_name not in ROSTER}
+        print(f"skipped {dropped} label(s) outside the roster: {sorted(unknown_set)}")
+    return samples
 
 
 def data_snapshot(samples: list[tuple[str, str]], split: DatasetSplit) -> dict:

@@ -336,6 +336,17 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
   caller's identity declare the dependency rather than taking an unused parameter.
 - **Corrections are attributed.** `PUT /label` writes `label.annotator = <calling admin's email>`,
   so weak-vs-corrected analysis can tell who changed what.
+- **Class names are validated against the roster** (422 on anything else). The SPA only offers the
+  12, but the API is the boundary, and an out-of-roster row fails nowhere near where it was created:
+  training maps class name → logit index in a DataLoader worker (`ml/dataset.py`), so a bad label
+  surfaces as a `KeyError` mid-epoch, *after* a Vertex job has queued for a spot GPU and pulled a
+  multi-GB image. `ml/train.py` also skips (and reports) out-of-roster rows, so labels written before
+  this check — or left behind by a roster change — cost a warning line rather than a paid run.
+- **The roster is duplicated in `app/roster.py`**, deliberately: the API image ships `server/app` and
+  the built SPA only (`server/Dockerfile`), so importing `ml/taxonomy.py` here would crash the
+  service at startup in production while passing every local test. `tests/test_roster.py` asserts the
+  copy still equals `ROSTER`, which is what keeps the duplication honest. The frontend keeps its own
+  copy (`web/src/api/types.ts`) for the same reason.
 - Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
   (FR-9).
 
