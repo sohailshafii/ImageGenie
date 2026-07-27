@@ -325,6 +325,8 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
 | `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
+| `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count |
+| `POST /training-runs` | **admin** | submits a Vertex spot-GPU training job; **202**, no run row yet |
 
 - **Sessions, not JWTs.** Login mints an opaque random token stored in the `session` table and
   returned as an **httpOnly** cookie (`imagegenie_session`, 14-day TTL) that page JS can't read.
