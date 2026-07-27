@@ -81,6 +81,18 @@ class Config:
     learning_rate: float = 3e-4
     optimizer: str = "adam"  # "adam" | "sgd"
     momentum: float = 0.9  # SGD only
+    # --- Regularization ---
+    # All three default to off, so an unset knob reproduces the previous
+    # behaviour exactly and a run that sets one can be compared against a run
+    # that didn't (the resolved value is recorded either way, NFR-4).
+    weight_decay: float = 0.0  # L2 penalty on the weights; 0 disables it
+    label_smoothing: float = 0.0  # softens the CE target; helps with noisy labels
+    # How much each class contributes to the loss. "none" = every sample counts
+    # the same, so a 7.7:1 class skew pulls the model toward the head classes and
+    # the tail collapses (the val macro-recall vs accuracy gap). "balanced"
+    # weights each class inversely to its frequency in the *training* split, so
+    # one rare-class mistake costs as much as several common-class ones.
+    class_weighting: str = "none"  # "none" | "balanced"
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
     adam_eps: float = 1e-8
@@ -240,12 +252,52 @@ def _build_optimizer(config: Config, model: nn.Module) -> torch.optim.Optimizer:
             lr=config.learning_rate,
             betas=(config.adam_beta1, config.adam_beta2),
             eps=config.adam_eps,
+            weight_decay=config.weight_decay,
         )
     if config.optimizer == "sgd":
         return torch.optim.SGD(
-            model.parameters(), lr=config.learning_rate, momentum=config.momentum
+            model.parameters(),
+            lr=config.learning_rate,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
         )
     raise ValueError(f"unsupported optimizer {config.optimizer!r}; use 'adam' or 'sgd'")
+
+
+def _build_loss(
+    config: Config, train_samples: list[tuple[str, str]], device: torch.device
+) -> nn.Module:
+    """The training criterion, with optional class weighting and label smoothing.
+
+    Weights are derived from the **training split only** — never the whole
+    trainable set and never val/test, which would leak the evaluation splits'
+    composition into training.
+
+    The "balanced" formula is ``total / (num_classes * count)``, so a class of
+    average size gets weight 1.0 and the weights stay centred around 1 rather
+    than shrinking the overall loss scale (which would silently act as a
+    learning-rate cut). A class absent from the training split gets weight 1.0:
+    it is never a target, so its weight is unused, and 0.0 would be an equally
+    unused value that merely looks alarming when the config is read back.
+    """
+    if config.class_weighting == "none":
+        return nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
+    if config.class_weighting != "balanced":
+        raise ValueError(
+            f"unsupported class_weighting {config.class_weighting!r}; "
+            "use 'none' or 'balanced'"
+        )
+
+    counts = Counter(class_name for _, class_name in train_samples)
+    total = len(train_samples)
+    weights = [
+        total / (config.num_classes * counts[class_name]) if counts[class_name] else 1.0
+        for class_name in ROSTER
+    ]
+    return nn.CrossEntropyLoss(
+        weight=torch.tensor(weights, dtype=torch.float32, device=device),
+        label_smoothing=config.label_smoothing,
+    )
 
 
 def _evaluate(
@@ -346,7 +398,7 @@ def run_training(
 
     model = MultiViewCNN.from_config(config).to(device)
     optimizer = _build_optimizer(config, model)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = _build_loss(config, split.train, device)
 
     global_step = 0
     for epoch in range(config.epochs):
@@ -399,11 +451,17 @@ def run_training(
 def _parse_args() -> argparse.Namespace:
     """Run-time overrides for `Config`.
 
-    Deliberately a short list: the knobs a *run* varies (where it runs, how big,
-    how much data), not every hyperparameter. The rest stay `Config` defaults,
-    edited in code — config-over-code, per CLAUDE.md's M6 budget. Every flag
-    defaults to None so an unset one leaves the `Config` default alone rather
-    than overwriting it with argparse's idea of a default.
+    The line is *what an experiment varies*, not every field on `Config`. Run
+    shape (where it runs, how big, how much data), optimization and
+    regularization are all here, because the launch page
+    (web.md#starting-a-training-run) offers them and a web form cannot edit code.
+    **Architecture stays code-edited** — backbone, view pooling and head shape
+    change the checkpoint's shape, so a saved run's weights only load back into
+    the architecture that produced them; keeping those fixed is what lets runs be
+    compared and lets inference (M7) rebuild a model from a run's config.
+
+    Every flag defaults to None so an unset one leaves the `Config` default alone
+    rather than overwriting it with argparse's idea of a default.
     """
     parser = argparse.ArgumentParser(description="Train the multi-view CNN (M6).")
     parser.add_argument("--device", help='"cpu" | "cuda" | "mps" | "auto"')
@@ -411,6 +469,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--learning-rate", type=float)
+    parser.add_argument("--optimizer", help='"adam" | "sgd"')
+    parser.add_argument("--momentum", type=float, help="SGD only")
+    parser.add_argument("--dropout", type=float, help="dropout in the classifier head")
+    parser.add_argument("--weight-decay", type=float, help="L2 penalty; 0 disables it")
+    parser.add_argument(
+        "--label-smoothing", type=float, help="softens the CE target; 0 disables it"
+    )
+    parser.add_argument(
+        "--class-weighting",
+        help=(
+            '"none" | "balanced". "balanced" weights each class inversely to its '
+            "frequency in the training split, so the 7.7:1 skew stops burying the "
+            "tail classes."
+        ),
+    )
     parser.add_argument(
         "--limit",
         type=int,
