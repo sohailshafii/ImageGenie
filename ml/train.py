@@ -27,9 +27,11 @@ from datetime import UTC, datetime
 
 import torch
 from dataset import MultiViewDataset
+from metrics import evaluation_report
 from model import MultiViewCNN
 from splits import DatasetSplit, split_sizes, stratified_split
 from sqlalchemy import select
+from taxonomy import ROSTER
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -268,6 +270,28 @@ def _evaluate(
     return total_loss / total, correct / total
 
 
+def _collect_predictions(
+    model: nn.Module, loader: DataLoader, device: torch.device
+) -> tuple[list[int], list[int]]:
+    """Every (true, predicted) class index over ``loader``, in loader order.
+
+    Kept separate from ``_evaluate`` even though both do a forward pass: that one
+    runs every epoch and only needs running totals, while this one materialises
+    per-example labels for the end-of-run report. Folding them together would
+    make the common path allocate two lists per epoch to serve a single use at
+    the end.
+    """
+    model.eval()
+    true_indices: list[int] = []
+    predicted_indices: list[int] = []
+    with torch.no_grad():
+        for views, labels in loader:
+            logits = model(views.to(device))
+            predicted_indices.extend(logits.argmax(dim=1).cpu().tolist())
+            true_indices.extend(labels.tolist())
+    return true_indices, predicted_indices
+
+
 def _format_metric(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
@@ -280,19 +304,27 @@ def _save_weights(storage: Storage, key: str, model: nn.Module) -> None:
     storage.put_bytes(key, buffer.getvalue())
 
 
-def run_training(config: Config, run_id: int, split: DatasetSplit) -> str:
+def run_training(
+    config: Config, run_id: int, split: DatasetSplit
+) -> tuple[str, dict | None]:
     """Train the multi-view CNN over the rendered views.
 
     Per-step training loss is logged (throttled by ``log_every``); once per epoch
     the validation split is evaluated for loss and accuracy, and the epoch's final
-    step is logged with both its train loss and that val loss, so the dashboard's
-    cost curve shows the train/val gap. Validation accuracy is printed for the
-    smoke; persisting it as a second curve series is the accuracy follow-up. The
-    bookkeeping helpers (create_run / log_metric / finalize_run) are unchanged.
+    step is logged with both, so the dashboard's cost curve shows the train/val
+    gap and the accuracy series. The bookkeeping helpers (create_run / log_metric
+    / finalize_run) are unchanged.
 
     Weights are checkpointed to the same key after every epoch (overwriting), so a
-    spot preemption keeps the latest epoch. Returns that key — the run's
-    ``weights_uri``, set on success by ``main``.
+    spot preemption keeps the latest epoch.
+
+    Returns ``(weights_key, report)``. The report is the B4 per-class evaluation
+    (`ml/metrics.py`) computed once, after the final epoch, on the **validation**
+    split — deliberately not the test split. Training already consults val every
+    epoch, whereas test is held back for [evaluation](ml.md#evaluation) (M7);
+    scoring test at the end of every run would erode it through repeated peeking
+    long before M7 ever looked at it. ``None`` when the val split is empty, which
+    a very small local smoke can produce.
     """
     torch.manual_seed(config.seed)  # seeded so shuffling/init are reproducible
     storage = build_storage(get_settings())
@@ -346,7 +378,19 @@ def run_training(config: Config, run_id: int, split: DatasetSplit) -> str:
             f"val_loss={_format_metric(val_loss)}  "
             f"val_acc={_format_metric(val_accuracy)}"
         )
-    return weights
+
+    # One pass at the end, on the trained model — not per epoch. The report is a
+    # summary of the finished run, and computing it every epoch would add a full
+    # extra forward pass over val for numbers nothing reads until the run ends.
+    report = None
+    if len(val_loader) > 0:
+        true_indices, predicted_indices = _collect_predictions(model, val_loader, device)
+        report = evaluation_report(true_indices, predicted_indices, ROSTER, split="val")
+        print(
+            f"val report: accuracy={_format_metric(report['accuracy'])}  "
+            f"macro_recall={_format_metric(report['macro_recall'])}"
+        )
+    return weights, report
 
 
 # --- Entry point -------------------------------------------------------------
@@ -436,11 +480,13 @@ def main() -> None:
         f"{config.epochs} epochs on {config.device}"
     )
     try:
-        weights_uri = run_training(config, run_id, split)
+        weights_uri, report = run_training(config, run_id, split)
     except Exception:
         finalize_run(run_id, TrainingStatus.failed)
         raise
-    finalize_run(run_id, TrainingStatus.completed, weights_uri=weights_uri)
+    finalize_run(
+        run_id, TrainingStatus.completed, metrics=report, weights_uri=weights_uri
+    )
     print(f"training_run {run_id}: completed, weights at {weights_uri}")
 
 
