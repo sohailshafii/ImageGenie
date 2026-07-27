@@ -199,11 +199,22 @@ non-negotiable is NFR-4 bookkeeping.
   `floor` slice, train keeps the remainder), so a run reproduces (NFR-4); tiny classes fall back to
   train. The test split is held for [evaluation](#evaluation) (M7).
 - **`Config` dataclass** — all hyperparameters, persisted verbatim to `training_run.config` so
-  adding a knob needs no migration (config-over-code). Three groups: *Architecture* (`backbone`,
+  adding a knob needs no migration (config-over-code). Four groups: *Architecture* (`backbone`,
   `pretrained`, `num_views`, `view_pool`, `feature_dim`, `head_hidden_dims` — one int = nodes in a
   head layer, `dropout`, `num_classes`), *Optimization* (`epochs`, `batch_size`, `learning_rate`,
-  `optimizer`, `momentum`, Adam `beta1`/`beta2`/`eps`, `seed`, `log_every`), and *Runtime* (`device`
+  `optimizer`, `momentum`, Adam `beta1`/`beta2`/`eps`, `seed`, `log_every`), *Regularization*
+  (`weight_decay`, `label_smoothing`, `class_weighting` — see below), and *Runtime* (`device`
   — default `cpu`, the cloud config sets `cuda`; `num_workers`).
+- **Class weighting** (`_build_loss`) — the roster is skewed ~7.7:1 (weapon 2134 … aircraft/table
+  278), and under plain cross-entropy the rare classes barely move the average loss, so the model
+  buys accuracy by favouring the head and the tail collapses. `class_weighting="balanced"` scales
+  each class's loss contribution by `total / (num_classes * count)` — average-sized class ≈ 1.0, so
+  the loss keeps its overall scale instead of silently acting as a learning-rate cut — making one
+  rare-class mistake cost as much as several common-class ones. Counts come from the **training
+  split only**; using the whole trainable set would leak val/test composition into training. A class
+  absent from training keeps weight 1.0 (it is never a target, so the value is unused).
+  **Caveat:** a weighted run's `loss`/`val_loss` are on a different scale from an unweighted run's —
+  compare those two runs on `val_accuracy` and the per-class report, not on the cost curve.
 - **`load_trainable_samples()` + `data_snapshot()`** — the trainable set is the current label per
   live model (manual-over-weak, as the labeling API resolves it) **that is also rendered** (joined to
   a done `rendered` artifact), so training never faults on an unrendered model. The snapshot records

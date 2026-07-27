@@ -3,10 +3,12 @@
 import io
 from pathlib import Path
 
+import pytest
 import torch
 from splits import stratified_split
+from taxonomy import ROSTER
 from torch import nn
-from train import _save_weights, data_snapshot
+from train import Config, _build_loss, _save_weights, data_snapshot
 
 from app.artifact_keys import weights_key
 from app.storage import LocalStorage
@@ -47,3 +49,41 @@ def test_save_weights_round_trips_through_storage(tmp_path: Path) -> None:
     assert storage.exists(key)
     reloaded = torch.load(io.BytesIO(storage.get_bytes(key)), weights_only=True)
     assert set(reloaded) == set(model.state_dict())
+
+
+def test_unweighted_loss_is_plain_cross_entropy() -> None:
+    loss_fn = _build_loss(Config(), [("a", "chair")], torch.device("cpu"))
+
+    assert loss_fn.weight is None
+    assert loss_fn.label_smoothing == 0.0
+
+
+def test_balanced_weighting_is_inverse_to_training_frequency() -> None:
+    # 6 weapons to 2 chairs in a 12-class roster: total/(num_classes*count)
+    # puts chair 3x above weapon, and leaves absent classes at 1.0 (unused).
+    samples = [(f"w{index}", "weapon") for index in range(6)]
+    samples += [(f"c{index}", "chair") for index in range(2)]
+    config = Config(class_weighting="balanced")
+
+    weights = _build_loss(config, samples, torch.device("cpu")).weight
+
+    weight_of = {name: weights[index].item() for index, name in enumerate(ROSTER)}
+    assert weight_of["chair"] == pytest.approx(8 / (12 * 2))
+    assert weight_of["weapon"] == pytest.approx(8 / (12 * 6))
+    assert weight_of["chair"] == pytest.approx(3 * weight_of["weapon"])
+    assert weight_of["aircraft"] == 1.0  # absent from training, never a target
+
+
+def test_label_smoothing_reaches_the_criterion() -> None:
+    loss_fn = _build_loss(
+        Config(label_smoothing=0.1), [("a", "chair")], torch.device("cpu")
+    )
+
+    assert loss_fn.label_smoothing == 0.1
+
+
+def test_unknown_class_weighting_is_rejected() -> None:
+    config = Config(class_weighting="inverse-sqrt")
+
+    with pytest.raises(ValueError, match="unsupported class_weighting"):
+        _build_loss(config, [("a", "chair")], torch.device("cpu"))
