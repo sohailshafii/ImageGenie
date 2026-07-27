@@ -103,9 +103,15 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
   - **Configuration** and **Data snapshot** panels — the `config` and `data_snapshot` JSONB blobs
     rendered as generic key/value lists, so a new hyperparameter or snapshot field appears with no
     frontend change (config-over-code).
-  - **Dev-set metrics** — a placeholder ("not evaluated yet") until the run has a `metrics` blob;
-    per-class precision/recall + confusion matrices (see [ml.md](../ml/ml.md#evaluation)) land with
-    **B4 / M7**.
+  - **Dev-set metrics** (B4) — headline accuracy and **macro** precision/recall, a per-class
+    precision/recall/F1/support table, and the **confusion matrix**. Macro sits beside accuracy
+    because the two disagree loudly on a ~7.7:1 corpus, and that disagreement is the finding. The
+    matrix has truth on the row and prediction on the column, so a heavy off-diagonal *column* is a
+    class the model dumps everything into; shading is normalised **per row**, so a 278-example class
+    reads as clearly as a 2,134-example one. `—` means a metric is *undefined* (a class the model
+    never predicted), not zero. A run still training or one that failed has no blob and keeps the
+    placeholder; an **unrecognised** blob falls back to the generic key/value dump, so runs
+    predating B4 — and whatever shape M7's two-dev-set report takes — still render.
   - a **Download weights** button in the header, shown only to admins and only once the run has a
     `weights_uri` (see [Downloads](#downloads)).
   - timestamps (started / finished).

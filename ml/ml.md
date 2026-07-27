@@ -312,6 +312,26 @@ Two dev sets:
   j. The diagonal is correct predictions; off-diagonal entries show which classes get confused
   for which. Report one per dev set. It's the primary tool for the bias analysis below.
 
+### Dev-set report (B4)
+
+`ml/metrics.py` computes the report every run stores in `training_run.metrics`: confusion matrix,
+per-class precision/recall/F1/support, and macro averages. Pure functions over class indices — no
+torch, no sklearn, no I/O — so the same code serves the end-of-run report and the M7 evaluation
+over both dev sets.
+
+- **Scored on `val`, deliberately not `test`.** Training consults val every epoch anyway, whereas
+  test is held back for the evaluation below; scoring test at the end of every run would erode it
+  through repeated peeking long before M7 looked at it.
+- **Computed once, after the final epoch** — it summarises the finished run, so doing it per epoch
+  would buy nothing but an extra forward pass over val.
+- **Undefined is not zero.** A class the model never predicted has *undefined* precision; reporting
+  0.0 would claim it predicted that class and got them all wrong. Those return `None`, and macro
+  averages skip them rather than being dragged toward zero.
+- **Macro, not micro.** Micro-averaging collapses to plain accuracy, which this corpus's ~7.7:1 skew
+  lets `weapon` dominate. Macro weights the 278-example `aircraft` like the 2,134-example `weapon`,
+  which is what makes a collapsed model look as bad as it is — 80% majority class answered entirely
+  with the majority label scores 0.80 accuracy against 0.33 macro recall.
+
 ### Bias Analysis
 
 - Per-class precision/recall + confusion matrices on both dev sets.
