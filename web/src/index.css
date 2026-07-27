@@ -1156,3 +1156,55 @@ select:focus {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ── Dev-set metrics report (B4) ────────────────────────────────────────────── */
+.metrics-heading {
+  font-size: 0.9rem;
+  margin: 1.5rem 0 0.4rem;
+}
+
+.metrics-note {
+  max-width: 60ch;
+  font-size: 0.85rem;
+  margin-top: 0;
+}
+
+.confusion {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.confusion th,
+.confusion td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.5rem;
+  text-align: center;
+}
+
+.confusion-head {
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Row headers stay readable while the matrix scrolls sideways. */
+.confusion tbody .confusion-head {
+  text-align: right;
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+}
+
+/* Shading comes from --cell-share, set per cell as that cell's fraction of its
+   ROW — so a 278-example class reads as clearly as a 2,134-example one. Correct
+   predictions are green, confusions red, so the failure mode is legible at a
+   glance rather than needing the numbers read. */
+.confusion-cell {
+  background: color-mix(in srgb, var(--danger) calc(var(--cell-share, 0) * 55%), transparent);
+  color: var(--text);
+}
+
+.confusion-cell.is-diagonal {
+  background: color-mix(in srgb, var(--success) calc(var(--cell-share, 0) * 65%), transparent);
+}

@@ -10,6 +10,7 @@ import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { CostCurve } from '../components/CostCurve';
 import { DownloadButton } from '../components/DownloadButton';
+import { MetricsReport, isEvaluationReport } from '../components/MetricsReport';
 
 // Training-run detail (FR-6 / B3): the cost curve plus the run's bookkeeping —
 // the config it ran with, the data snapshot it trained on, and (once evaluated)
@@ -131,10 +132,14 @@ export function TrainingRunDetailPage() {
             <h2>Dev-set metrics</h2>
             {run.metrics === null ? (
               <p className="page-lead">
-                Not evaluated yet — per-class precision/recall and confusion matrices land with
-                the evaluation milestone (M7).
+                Not evaluated yet — a run records this when it finishes (B4), so a run still
+                training, or one that failed, has none.
               </p>
+            ) : isEvaluationReport(run.metrics) ? (
+              <MetricsReport report={run.metrics} />
             ) : (
+              // An unrecognised blob still renders: runs predating B4, and
+              // whatever shape M7's two-dev-set report turns out to have.
               <KeyValues record={run.metrics} />
             )}
           </section>
