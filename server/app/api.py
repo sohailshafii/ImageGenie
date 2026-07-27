@@ -53,6 +53,9 @@ from .db import init_db, session_scope
 from .dead_letters import list_dead_letters, replay
 from .mail import send_invite_email, send_verification_email
 from .models import (
+    Artifact,
+    ArtifactStage,
+    ArtifactStatus,
     DownloadStatus,
     EmailVerification,
     Invite,
@@ -84,6 +87,11 @@ from .security import (
     verify_password,
 )
 from .storage import Storage, build_storage
+from .training_jobs import (
+    TrainingLaunchError,
+    launch_configured,
+    submit_training_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +178,27 @@ class TrainingRunDetailOut(BaseModel):
     notes: str | None
     started_at: datetime
     finished_at: datetime | None
+
+
+class TrainingLaunchConfigOut(BaseModel):
+    """What the launch form needs to describe the run before it is started."""
+
+    configured: bool  # false on a deployment with no Vertex (local dev)
+    image: str | None  # the exact commit-tagged image that will run
+    region: str | None
+    trainable_count: int  # models that are labeled AND rendered — the full-set size
+
+
+class TrainingLaunchIn(BaseModel):
+    epochs: int = 5
+    limit: int | None = None  # None = the whole trainable set
+    notes: str | None = None
+
+
+class TrainingLaunchOut(BaseModel):
+    job_name: str  # Vertex resource name
+    image: str
+    args: list[str]  # exactly what the container was given, for the record
 
 
 class TrainingMetricOut(BaseModel):
@@ -792,6 +821,98 @@ def get_training_run_metrics(run_id: int) -> list[TrainingMetricOut]:
             )
             for point in points
         ]
+
+
+def _trainable_count(session: Session) -> int:
+    """How many models are both labeled and rendered — what a full run would use.
+
+    Mirrors `ml/train.py`'s `load_trainable_samples` filter (live, current label,
+    a done render). Counted here rather than imported because the API image does
+    not contain `ml/`; the two must agree, so a change to one belongs in both.
+    """
+    return (
+        session.scalar(
+            select(func.count(func.distinct(Label.model_uid)))
+            .select_from(Label)
+            .join(Model, Model.uid == Label.model_uid)
+            .join(Artifact, Artifact.model_uid == Label.model_uid)
+            .where(Model.deleted_at.is_(None))
+            .where(Artifact.stage == ArtifactStage.rendered)
+            .where(Artifact.status == ArtifactStatus.done)
+        )
+        or 0
+    )
+
+
+@app.get(
+    "/training-launch",
+    response_model=TrainingLaunchConfigOut,
+    dependencies=[Depends(require_admin)],
+)
+def get_training_launch_config() -> TrainingLaunchConfigOut:
+    """What the launch form shows before anything is spent.
+
+    Admin-only like the launch itself: it reports the image tag and the size of
+    the trainable set, which is what lets the form put a cost in front of the
+    button rather than after it.
+    """
+    settings = get_settings()
+    with session_scope() as session:
+        trainable = _trainable_count(session)
+    return TrainingLaunchConfigOut(
+        configured=launch_configured(settings),
+        image=settings.train_image,
+        region=settings.vertex_region if launch_configured(settings) else None,
+        trainable_count=trainable,
+    )
+
+
+@app.post(
+    "/training-runs",
+    response_model=TrainingLaunchOut,
+    status_code=202,
+    dependencies=[Depends(require_admin)],
+)
+def launch_training_run(body: TrainingLaunchIn) -> TrainingLaunchOut:
+    """Start a Vertex AI spot-GPU training run (admin-only).
+
+    **202, not 201**: this accepts the request and hands it to Vertex. No
+    `training_run` row exists yet — `ml/train.py` writes that itself once the
+    container starts, which is minutes later after the GPU is provisioned and a
+    multi-GB image is pulled. The dashboard shows the run when it appears.
+
+    The API deliberately does not cap the request. The form recommends a small
+    default and shows the cost, but an admin who means to launch the full set is
+    allowed to; the guardrail here is informed consent, not enforcement.
+    """
+    if body.epochs < 1:
+        raise HTTPException(status_code=422, detail="epochs must be at least 1")
+    if body.limit is not None and body.limit < 1:
+        raise HTTPException(status_code=422, detail="limit must be at least 1")
+
+    settings = get_settings()
+    if not launch_configured(settings):
+        # 503, not 500: nothing is broken, this deployment simply has no Vertex
+        # to submit to (local dev). The form disables the button on this.
+        raise HTTPException(
+            status_code=503, detail="training launches are not configured here"
+        )
+
+    args = ["--device", "cuda", "--num-workers", "4", "--epochs", str(body.epochs)]
+    if body.limit is not None:
+        args += ["--limit", str(body.limit)]
+    if body.notes:
+        args += ["--notes", body.notes]
+
+    try:
+        job_name = submit_training_job(settings, args, display_name="imagegenie-train")
+    except TrainingLaunchError as error:
+        # 502: we reached out and were refused. The message is Vertex's own —
+        # quota, IAM, a bad image — which is what the admin needs to see.
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    logger.info("training job launched", extra={"job": job_name, "args": args})
+    return TrainingLaunchOut(job_name=job_name, image=settings.train_image or "", args=args)
 
 
 def _paginate_summaries(

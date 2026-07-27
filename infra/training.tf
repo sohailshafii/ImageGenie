@@ -114,3 +114,21 @@ output "trainer_service_account" {
   value       = google_service_account.trainer.email
   description = "Service account the Vertex training job runs as."
 }
+
+# ── Launching a run from the dashboard (web.md#starting-a-training-run) ──────
+# The API submits the Vertex job itself, which needs two distinct grants: the
+# right to create jobs, and the right to *act as* the account the job runs under.
+# The second is the one that is easy to miss — without it Vertex refuses with a
+# permission error naming the trainer SA, not the API's.
+
+resource "google_project_iam_member" "api_vertex" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_service_account_iam_member" "api_runs_as_trainer" {
+  service_account_id = google_service_account.trainer.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.api.email}"
+}
