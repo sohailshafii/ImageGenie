@@ -175,3 +175,18 @@ export interface TrainingMetricPoint {
   valLoss: number | null; // null on steps where validation was not evaluated
   valAccuracy: number | null; // top-1 on the val split, 0..1; null when not evaluated
 }
+
+/** Whether this deployment can launch a run, and what it would launch. */
+export interface TrainingLaunchConfig {
+  configured: boolean; // false where there is no Vertex to submit to (local dev)
+  image: string | null; // the exact commit-tagged image that will run
+  region: string | null;
+  trainableCount: number; // models both labeled and rendered — the full-set size
+}
+
+/** The accepted job. No run id: the row appears when the container starts. */
+export interface TrainingLaunch {
+  jobName: string;
+  image: string;
+  args: string[];
+}

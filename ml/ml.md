@@ -278,8 +278,9 @@ A job runs unattended for hours, so a code/image mismatch is a silent failure, n
 Run it with `make train`, which sets `PYTHONPATH=server` so the DB layer (`app.db`, `app.models`)
 imports; no cert shim, since training only touches Postgres. `ml/smoke_train.py` (`make smoke-train`)
 seeds a small class-separable dataset and runs the loop end to end on CPU — a repeatable check that it
-learns and the bookkeeping/checkpoint land, without a GPU or the real renders. Dev-set `metrics` stay
-null until [evaluation](#evaluation) (B4 / M7). The reproducibility schema this writes to is detailed
+learns and the bookkeeping/checkpoint land, without a GPU or the real renders. Every finished run now
+writes its own dev-set [report](#dev-set-report-b4) into `metrics`; that blob is null only for a run
+still training, or one that failed before the end. The reproducibility schema this writes to is detailed
 under [Coding Standards](#coding-standards-ml).
 
 ## Dataset Splits

@@ -10,7 +10,8 @@ import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { CostCurve } from '../components/CostCurve';
 import { DownloadButton } from '../components/DownloadButton';
-import { MetricsReport, isEvaluationReport } from '../components/MetricsReport';
+import { isEvaluationReport } from '../components/evaluationReport';
+import { MetricsReport } from '../components/MetricsReport';
 
 // Training-run detail (FR-6 / B3): the cost curve plus the run's bookkeeping —
 // the config it ran with, the data snapshot it trained on, and (once evaluated)

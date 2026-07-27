@@ -45,14 +45,20 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   and a keyboard sweep for fast review, an admin dead-letter view over recorded pipeline failures, and
   Alembic migrations. The API and SPA ship as one image on one origin; `scripts/adopt_schema.sh`
   rebuilds the database from the buckets on deploy.
-- 🚧 **Milestone 6** — baseline training (multi-view CNN on weak labels, spot GPU). **In progress.**
-  The `training_run` / `training_metric` schema (NFR-4 bookkeeping) and the training **dashboard**
-  (run list + per-run cost curve) are done and deployed. `ml/train.py` now trains a real multi-view
-  CNN (resnet18 over the 12 rendered views → pool → head), reading renders from the processed bucket,
-  with reproducible per-class stratified splits and per-epoch weight checkpoints — verified learning
-  end-to-end on CPU via `make smoke-train`. Remaining: the spot-GPU (Vertex) run at scale, dev-set
-  metrics, and an accuracy series on the cost curve.
-- ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup)
+- ✅ **Milestone 6** — baseline training. `ml/train.py` trains a multi-view CNN (resnet18 over the 12
+  rendered views → pool → head) on the weak labels, reading renders from the processed bucket, with
+  reproducible per-class stratified splits, per-epoch checkpoints, and the NFR-4 bookkeeping every
+  run records. It runs **on a Vertex AI spot T4** — proven end-to-end on a real GPU, including
+  Cloud SQL over the IAM connector and parallel GCS reads — and can be started either from the
+  command line (`make train-cloud`) or from the dashboard's **Start a run** page, which shows the
+  measured GPU time and cost before the button. The **dashboard** (run list, cost curve with train /
+  val loss and validation accuracy, per-class precision/recall and a confusion matrix) is deployed.
+  **The one thing not yet done is the full-set run itself** — the ~11.8k-model baseline is a
+  button-press, not missing machinery; it is deferred deliberately because at ~55 min/epoch it wants
+  a considered epoch count rather than a default.
+- ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup). The per-class
+  metric code (`ml/metrics.py`) and the held-out **test** split already exist — M6 scores only `val`
+  precisely so `test` stays sealed for this.
 
 ## Layout
 
@@ -61,7 +67,7 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 | `ml/` | class list, weak labeling, evaluation ([ml/ml.md](ml/ml.md)) |
 | `server/` | pipeline workers, queue, storage, DB, API ([server/server.md](server/server.md)) |
 | `infra/` | Terraform for the GCP resources |
-| `web/` | labeling UI ([web/web.md](web/web.md)); the training dashboard lands with milestone 6 |
+| `web/` | labeling UI + training dashboard ([web/web.md](web/web.md)) |
 
 Design docs are the source of truth — see [CLAUDE.md](CLAUDE.md) for the project hub.
 

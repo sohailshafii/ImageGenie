@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import { listTrainingRuns } from '../api/training';
 import type { TrainingRunSummary, TrainingStatus } from '../api/types';
 import { AppLayout } from '../components/AppLayout';
@@ -72,6 +73,7 @@ function sortRuns(
 }
 
 export function TrainingRunsPage() {
+  const { user } = useAuth();
   const [runs, setRuns] = useState<TrainingRunSummary[] | null>(null);
   // Newest first — the server's own order, so the first paint doesn't reshuffle.
   const [sortColumn, setSortColumn] = useState<SortColumn>('startedAt');
@@ -118,7 +120,14 @@ export function TrainingRunsPage() {
 
   return (
     <AppLayout>
-      <h1>Training runs</h1>
+      <div className="run-header">
+        <h1>Training runs</h1>
+        {user?.role === 'admin' && (
+          <Link className="btn-primary start-run-link" to="/training/new">
+            Start a run
+          </Link>
+        )}
+      </div>
       <p className="page-lead">
         Every training run. Filter by status, and sort by any column — final loss ascending is
         the "which run went best" view. Open one to see its configuration, the labels it

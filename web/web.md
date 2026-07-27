@@ -140,6 +140,32 @@ the bytes are proxied rather than signed) is in
   just avoids offering an action that could only fail. Everything else about a run stays visible to
   any authenticated user.
 
+## Starting a Training Run
+
+`/training/new` (`StartTrainingRunPage`), **admin-only**, linked from the run list. The one page in
+the app where pressing a button spends money on a GPU, which shapes the whole design.
+
+- **The API's first training *write* route.** `POST /training-runs` submits a Vertex AI spot-GPU job
+  (see [server.md](../server/server.md#training-gpu)); `GET /training-launch` supplies what the form
+  needs to describe the run beforehand.
+- **202, and no run id.** The response means Vertex *accepted* the job. No `training_run` row exists
+  yet — `ml/train.py` writes that itself once the container starts, minutes later, after a GPU is
+  provisioned and a multi-GB image is pulled. The confirmation says so, so the empty dashboard
+  doesn't read as a failure.
+- **Recommend, don't enforce.** Defaults start small (500 models, 5 epochs) so the expensive choice
+  is a deliberate edit rather than the path of least resistance, but every field is editable and the
+  API caps nothing. The guardrail is informed consent.
+- **The disclaimer is a live estimate, not boilerplate.** Model count, epochs, GPU time and rough
+  dollars update as the inputs change, so the cost of "just train on everything" is visible before
+  the click rather than after. The rate is **measured** — a real spot-T4 run did 500 models × 1 epoch
+  in 144s — and the fixed ~12-minute provisioning wait is shown separately, since it dominates a
+  small run and is invisible in a per-model rate.
+- **The exact image tag is displayed.** Training images are pinned by commit, never `:latest`
+  ([ml.md](../ml/ml.md#running-in-the-cloud)), so the tag the API is configured with can predate the
+  code being tested. Showing it makes that checkable instead of implicit.
+- **Unconfigured deployments say so.** With no Vertex target (local dev) the form is replaced by an
+  explanation pointing at `make train-cloud`, rather than offering a button that 503s.
+
 ## Auth & Roles
 
 Resolves the login TODO.
@@ -262,8 +288,9 @@ live in `web/src/api/catalog.ts` alongside the rest of the catalog.
   model/label data and three.js APIs; Vite for fast dev/build. Lives in `web/`.
 - **Auth is a UX layer, not the boundary.** The frontend gates views behind login and hides
   admin-only actions by role, but this is for UX only — the server API is the security boundary
-  (NFR-7). Until the FastAPI backend exists, the frontend runs against a typed **mock API** (a single
-  swappable client module), so its login/roles are simulated; real enforcement lands with the backend.
+  (NFR-7). Hiding the "Start a run" button, for instance, only avoids offering an action that would
+  fail; `POST /training-runs` enforces the admin role itself, and the route is guarded too, so a
+  viewer typing the URL is redirected rather than shown a form that 403s.
 - **Rendering:** all 3D viewing through a single reusable viewer component wrapping three.js —
   browse thumbnails and the detail viewer share it. Dispose of GPU resources on unmount.
 - **API access:** one typed client module for the FastAPI backend; no fetch calls scattered

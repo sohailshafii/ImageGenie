@@ -1,5 +1,7 @@
 import { download, request } from './client';
 import type {
+  TrainingLaunch,
+  TrainingLaunchConfig,
   TrainingMetricPoint,
   TrainingRunDetail,
   TrainingRunSummary,
@@ -8,8 +10,9 @@ import type {
 
 // Training-dashboard client (FR-6, web.md#training-dashboard). Read-only: the
 // training script writes these rows directly to the DB (ml/train.py), so there
-// is nothing to POST here — this module only lists, drills into, and downloads
-// the artifacts of runs.
+// is nothing to POST here for *recording* a run — this module lists, drills into,
+// and downloads the artifacts of runs. It can, however, ASK for one to be started
+// (web.md#starting-a-training-run): the job writes its own row when it begins.
 
 /** Wire shapes — snake_case, mirroring the FastAPI response models. */
 interface TrainingRunSummaryResponse {
@@ -101,4 +104,50 @@ export async function getTrainingRunMetrics(id: number): Promise<TrainingMetricP
  */
 export async function downloadTrainingWeights(id: number): Promise<void> {
   await download(`/training-runs/${id}/weights`, `imagegenie-run-${id}.pt`);
+}
+
+/** What the launch form needs before anything is spent. */
+interface TrainingLaunchConfigResponse {
+  configured: boolean;
+  image: string | null;
+  region: string | null;
+  trainable_count: number;
+}
+
+interface TrainingLaunchResponse {
+  job_name: string;
+  image: string;
+  args: string[];
+}
+
+/** GET /training-launch — **admin-only**: is a launch possible here, and on what. */
+export async function getTrainingLaunchConfig(): Promise<TrainingLaunchConfig> {
+  const body = await request<TrainingLaunchConfigResponse>('GET', '/training-launch');
+  return {
+    configured: body.configured,
+    image: body.image,
+    region: body.region,
+    trainableCount: body.trainable_count,
+  };
+}
+
+/**
+ * POST /training-runs — **admin-only**: start a Vertex spot-GPU run.
+ *
+ * Resolves once Vertex has *accepted* the job (202), not once a run exists: the
+ * `training_run` row is written by the training container minutes later, after
+ * the GPU is provisioned and the image pulled. So the caller should send the
+ * user to the run list to wait, not expect a run id back.
+ */
+export async function launchTrainingRun(params: {
+  epochs: number;
+  limit: number | null;
+  notes: string | null;
+}): Promise<TrainingLaunch> {
+  const body = await request<TrainingLaunchResponse>('POST', '/training-runs', {
+    epochs: params.epochs,
+    limit: params.limit,
+    notes: params.notes,
+  });
+  return { jobName: body.job_name, image: body.image, args: body.args };
 }
