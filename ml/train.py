@@ -462,8 +462,13 @@ def run_training(
 # --- Entry point -------------------------------------------------------------
 
 
-def _parse_args() -> argparse.Namespace:
-    """Run-time overrides for `Config`.
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI. Split from `_parse_args` so tests can inspect the accepted flags
+    without running the trainer — the launch API builds these flag strings in a
+    different file (server/app/api.py), and a mismatch there is only discovered
+    ~15 min into a billed job.
+
+    Run-time overrides for `Config`.
 
     The line is *what an experiment varies*, not every field on `Config`. Run
     shape (where it runs, how big, how much data), optimization and
@@ -507,7 +512,11 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--notes", help="free-text description shown on the dashboard")
-    return parser.parse_args()
+    return parser
+
+
+def _parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 def _subsample(samples: list[tuple[str, str]], limit: int, seed: int) -> list[tuple[str, str]]:

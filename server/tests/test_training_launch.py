@@ -240,3 +240,105 @@ def test_launch_configured_needs_every_setting() -> None:
     for missing in ("train_image", "trainer_service_account", "vertex_project"):
         partial = {key: value for key, value in CONFIGURED.items() if key != missing}
         assert training_jobs.launch_configured(config.Settings(**partial)) is False
+
+
+def test_hyperparameters_travel_as_flags(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured = {}
+
+    def fake_submit(settings, args, display_name):
+        captured["args"] = args
+        return "job"
+
+    monkeypatch.setattr(api, "submit_training_job", fake_submit)
+
+    response = admin_client.post(
+        "/training-runs",
+        json={
+            "epochs": 6,
+            "learning_rate": 0.001,
+            "batch_size": 64,
+            "optimizer": "sgd",
+            "momentum": 0.9,
+            "dropout": 0.3,
+            "weight_decay": 0.0001,
+            "label_smoothing": 0.1,
+            "class_weighting": "balanced",
+            "notes": "weighted",
+        },
+    )
+
+    assert response.status_code == 202
+    assert captured["args"] == [
+        "--device", "cuda", "--num-workers", "4", "--epochs", "6",
+        "--learning-rate", "0.001", "--batch-size", "64",
+        "--optimizer", "sgd", "--momentum", "0.9", "--dropout", "0.3",
+        "--weight-decay", "0.0001", "--label-smoothing", "0.1",
+        "--class-weighting", "balanced",
+        "--notes", "weighted",
+    ]
+
+
+def test_unset_hyperparameters_contribute_no_flags(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An omitted knob must leave ml/train.py's Config default alone, not be
+    resent as the API's idea of a default."""
+    captured = {}
+
+    def fake_submit(settings, args, display_name):
+        captured["args"] = args
+        return "job"
+
+    monkeypatch.setattr(api, "submit_training_job", fake_submit)
+
+    admin_client.post("/training-runs", json={"epochs": 1, "class_weighting": "balanced"})
+
+    assert captured["args"] == [
+        "--device", "cuda", "--num-workers", "4", "--epochs", "1",
+        "--class-weighting", "balanced",
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"dropout": 1.0},  # torch requires 0 <= p < 1
+        {"dropout": -0.1},
+        {"learning_rate": 0},  # not a learning rate at all
+        {"learning_rate": -0.1},
+        {"batch_size": 0},
+        {"optimizer": "rmsprop"},  # ml/train.py builds adam or sgd
+        {"class_weighting": "inverse-sqrt"},
+        {"label_smoothing": 1.0},
+        {"weight_decay": -0.1},
+        {"momentum": 1.5},
+    ],
+)
+def test_nonsense_hyperparameters_are_rejected_before_vertex(
+    admin_client: TestClient, configured: None, payload: dict
+) -> None:
+    """These would otherwise crash the container ~15 min in, on a billed GPU."""
+    response = admin_client.post("/training-runs", json={"epochs": 1, **payload})
+
+    assert response.status_code == 422
+
+
+def test_every_emitted_flag_is_one_the_trainer_parses() -> None:
+    """The launch route and ml/train.py's argparse live in different files, so a
+    `--learning_rate`/`--learning-rate` slip would only surface ~15 min into a
+    billed job, when argparse rejects it. Cheaper to assert here."""
+    import train
+
+    accepted = {
+        option
+        for action in train.build_parser()._actions
+        for option in action.option_strings
+    }
+
+    for flag in api._HYPERPARAMETER_FLAGS.values():
+        assert flag in accepted, f"{flag} is not a flag ml/train.py accepts"
+    # The run-shape and runtime flags the route hardcodes travel the same path.
+    for flag in ("--device", "--num-workers", "--epochs", "--limit", "--notes"):
+        assert flag in accepted
