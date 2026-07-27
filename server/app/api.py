@@ -36,7 +36,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -69,6 +69,7 @@ from .models import (
 )
 from .queue import publish_next
 from .ratelimit import BackoffRule, FixedWindowRateLimiter, LoginBackoff, RateLimitRule
+from .roster import CLASS_ROSTER
 from .security import (
     CSRF_COOKIE,
     CSRF_HEADER,
@@ -123,7 +124,24 @@ class ModelPageOut(BaseModel):
 
 
 class LabelIn(BaseModel):
+    """A manual label. `class_name` is validated against the roster here because
+    this is the boundary: the SPA only ever offers the 12, but an API client can
+    send anything, and an out-of-roster row does not fail here — it fails inside a
+    DataLoader worker *after* a training job has queued for a spot GPU and pulled
+    a multi-GB image (ml/dataset.py maps class name to logit index). Rejecting it
+    at write time turns a slow, expensive failure into a 422.
+    """
+
     class_name: str
+
+    @field_validator("class_name")
+    @classmethod
+    def _must_be_in_roster(cls, value: str) -> str:
+        if value not in CLASS_ROSTER:
+            raise ValueError(
+                f"unknown class {value!r}; expected one of {', '.join(CLASS_ROSTER)}"
+            )
+        return value
 
 
 class DeadLetterOut(BaseModel):

@@ -209,6 +209,17 @@ def test_put_label_records_manual(client: TestClient) -> None:
     assert client.get("/models/m2").json()["source"] == "manual"
 
 
+def test_put_label_rejects_a_class_outside_the_roster(client: TestClient) -> None:
+    # 422 at the boundary, not a KeyError inside a DataLoader worker an hour into
+    # a paid training job (app/roster.py).
+    response = client.put("/models/m2/label", json={"class_name": "sofa"})
+
+    assert response.status_code == 422
+    assert "sofa" in response.text
+    # And nothing was written: the model keeps the label it had.
+    assert client.get("/models/m2").json()["source"] == "weak"
+
+
 def test_correction_is_attributed_to_the_calling_admin(client: TestClient) -> None:
     assert client.put("/models/m2/label", json={"class_name": "weapon"}).status_code == 200
     with db.session_scope() as session:
