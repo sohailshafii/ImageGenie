@@ -184,6 +184,49 @@ export interface TrainingLaunchConfig {
   trainableCount: number; // models both labeled and rendered — the full-set size
 }
 
+/**
+ * Optional per-run overrides. **Every field is optional on purpose**: an omitted
+ * one is not sent, and the trainer keeps its own default (ml/train.py's
+ * `Config`). So leaving a box empty means "whatever the trainer thinks is best",
+ * not zero — which matters for `weightDecay` and `labelSmoothing`, where 0 is a
+ * meaningful value an admin might deliberately choose.
+ *
+ * Architecture is deliberately absent: changing the backbone or head shape
+ * changes the checkpoint's shape, so a run's weights only load back into the
+ * architecture that produced them (server.md#api-layer).
+ */
+export interface TrainingHyperparameters {
+  learningRate?: number;
+  batchSize?: number;
+  optimizer?: 'adam' | 'sgd';
+  momentum?: number; // SGD only; ignored by Adam
+  dropout?: number;
+  weightDecay?: number;
+  labelSmoothing?: number;
+  classWeighting?: 'none' | 'balanced';
+}
+
+/**
+ * The trainer's defaults, shown as placeholders so an empty box still tells the
+ * admin what they are about to get.
+ *
+ * Mirrors `Config` in ml/train.py, and can drift from it — the API cannot serve
+ * these (its image ships without the ml package, see server/app/roster.py), so
+ * duplication is the available option. Kept honest by scope: these are display
+ * hints only. A stale value here shows a misleading hint; it never changes what
+ * the run actually does, because an untouched field is never sent.
+ */
+export const TRAINING_DEFAULTS = {
+  learningRate: 0.0003,
+  batchSize: 32,
+  optimizer: 'adam',
+  momentum: 0.9,
+  dropout: 0.5,
+  weightDecay: 0,
+  labelSmoothing: 0,
+  classWeighting: 'none',
+} as const;
+
 /** The accepted job. No run id: the row appears when the container starts. */
 export interface TrainingLaunch {
   jobName: string;

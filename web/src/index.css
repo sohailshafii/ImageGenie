@@ -1239,6 +1239,39 @@ select:focus {
   color: var(--text-muted);
 }
 
+/* Hyperparameter tuning, folded away: the common run changes none of it, so it
+   reads as an aside rather than six more boxes to fill in. Indented against a
+   rule so an open section is visibly subordinate to the three fields above. */
+.advanced-tuning {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.disclosure-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.disclosure-toggle:hover {
+  color: var(--accent-strong);
+}
+
+.advanced-tuning > *:not(.disclosure-toggle) {
+  margin-left: 0.75rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+}
+
 /* The cost disclaimer. Set apart from the inputs because it is the thing to read
    before pressing the button, not another field to fill in. */
 .cost-estimate {

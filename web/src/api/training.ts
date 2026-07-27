@@ -1,5 +1,6 @@
 import { download, request } from './client';
 import type {
+  TrainingHyperparameters,
   TrainingLaunch,
   TrainingLaunchConfig,
   TrainingMetricPoint,
@@ -143,11 +144,36 @@ export async function launchTrainingRun(params: {
   epochs: number;
   limit: number | null;
   notes: string | null;
+  hyperparameters?: TrainingHyperparameters;
 }): Promise<TrainingLaunch> {
+  const { hyperparameters = {} } = params;
+  // Only *set* knobs are sent. An absent key leaves ml/train.py's Config default
+  // in charge, so the request records what the admin chose rather than
+  // re-asserting a copy of the defaults that could drift from the trainer's.
+  const overrides: Record<string, number | string> = {};
+  for (const [name, value] of Object.entries(hyperparameters)) {
+    if (value !== undefined) overrides[HYPERPARAMETER_KEYS[name as HyperparameterName]] = value;
+  }
+
   const body = await request<TrainingLaunchResponse>('POST', '/training-runs', {
     epochs: params.epochs,
     limit: params.limit,
     notes: params.notes,
+    ...overrides,
   });
   return { jobName: body.job_name, image: body.image, args: body.args };
 }
+
+type HyperparameterName = keyof TrainingHyperparameters;
+
+/** camelCase field -> the snake_case name `TrainingLaunchIn` expects. */
+const HYPERPARAMETER_KEYS: Record<HyperparameterName, string> = {
+  learningRate: 'learning_rate',
+  batchSize: 'batch_size',
+  optimizer: 'optimizer',
+  momentum: 'momentum',
+  dropout: 'dropout',
+  weightDecay: 'weight_decay',
+  labelSmoothing: 'label_smoothing',
+  classWeighting: 'class_weighting',
+};
