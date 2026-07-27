@@ -21,7 +21,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import (
@@ -36,7 +36,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -208,9 +208,58 @@ class TrainingLaunchConfigOut(BaseModel):
 
 
 class TrainingLaunchIn(BaseModel):
-    epochs: int = 5
-    limit: int | None = None  # None = the whole trainable set
+    """What to train, and how (web.md#starting-a-training-run).
+
+    Every hyperparameter is optional and defaults to None, meaning *leave
+    `ml/train.py`'s `Config` default alone* — so the payload records only what
+    the admin deliberately changed, and a knob gaining a better default in code
+    improves runs that never mentioned it.
+
+    The bounds are typo-catchers, not opinions. A training job fails ~15 minutes
+    after submission (queue for a spot GPU, pull a multi-GB image) and bills for
+    the privilege, so `dropout=1.5` is worth refusing here rather than
+    discovering there. Run *size* is deliberately unbounded — a big run is a
+    judgment call the form prices out, and the guardrail for it is informed
+    consent; `dropout=1.5` is just a mistake.
+
+    Architecture is absent on purpose: backbone, pooling and head shape change
+    the checkpoint's shape, so a run's weights only load back into the
+    architecture that produced them (ml/train.py's `_parse_args`).
+    """
+
+    epochs: int = Field(5, ge=1)
+    limit: int | None = Field(None, ge=1)  # None = the whole trainable set
     notes: str | None = None
+
+    # --- Optimization ---
+    learning_rate: float | None = Field(None, gt=0)
+    batch_size: int | None = Field(None, ge=1)
+    optimizer: Literal["adam", "sgd"] | None = None
+    # SGD only; harmless under Adam, which ignores it. Not rejected when the
+    # optimizer is adam, so switching optimizers back and forth in the form
+    # doesn't silently discard the value.
+    momentum: float | None = Field(None, ge=0, le=1)
+
+    # --- Regularization ---
+    dropout: float | None = Field(None, ge=0, lt=1)  # torch requires 0 <= p < 1
+    weight_decay: float | None = Field(None, ge=0)
+    label_smoothing: float | None = Field(None, ge=0, lt=1)
+    class_weighting: Literal["none", "balanced"] | None = None
+
+
+# Payload field -> the flag ml/train.py parses. Every one of these is optional;
+# an unset field contributes no flag at all, which is what lets `Config` keep
+# ownership of the defaults.
+_HYPERPARAMETER_FLAGS: dict[str, str] = {
+    "learning_rate": "--learning-rate",
+    "batch_size": "--batch-size",
+    "optimizer": "--optimizer",
+    "momentum": "--momentum",
+    "dropout": "--dropout",
+    "weight_decay": "--weight-decay",
+    "label_smoothing": "--label-smoothing",
+    "class_weighting": "--class-weighting",
+}
 
 
 class TrainingLaunchOut(BaseModel):
@@ -899,15 +948,12 @@ def launch_training_run(body: TrainingLaunchIn) -> TrainingLaunchOut:
     container starts, which is minutes later after the GPU is provisioned and a
     multi-GB image is pulled. The dashboard shows the run when it appears.
 
-    The API deliberately does not cap the request. The form recommends a small
-    default and shows the cost, but an admin who means to launch the full set is
-    allowed to; the guardrail here is informed consent, not enforcement.
+    The API deliberately does not cap the *size* of the request. The form
+    recommends a small default and shows the cost, but an admin who means to
+    launch the full set is allowed to; the guardrail here is informed consent,
+    not enforcement. Hyperparameter ranges are enforced (`TrainingLaunchIn`),
+    because those are typos rather than decisions.
     """
-    if body.epochs < 1:
-        raise HTTPException(status_code=422, detail="epochs must be at least 1")
-    if body.limit is not None and body.limit < 1:
-        raise HTTPException(status_code=422, detail="limit must be at least 1")
-
     settings = get_settings()
     if not launch_configured(settings):
         # 503, not 500: nothing is broken, this deployment simply has no Vertex
@@ -916,10 +962,16 @@ def launch_training_run(body: TrainingLaunchIn) -> TrainingLaunchOut:
             status_code=503, detail="training launches are not configured here"
         )
 
+    # --device/--num-workers are deployment facts, not experiment knobs: the job
+    # always lands on the same spot-T4 shape, so they stay server-side.
     args = ["--device", "cuda", "--num-workers", "4", "--epochs", str(body.epochs)]
     if body.limit is not None:
         args += ["--limit", str(body.limit)]
-    if body.notes:
+    for field_name, flag in _HYPERPARAMETER_FLAGS.items():
+        value = getattr(body, field_name)
+        if value is not None:
+            args += [flag, str(value)]
+    if body.notes:  # last, so a long free-text value never buries the knobs
         args += ["--notes", body.notes]
 
     try:

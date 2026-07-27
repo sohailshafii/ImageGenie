@@ -203,8 +203,15 @@ custom training job on a spot GPU**, not a hand-managed VM. Vertex provisions th
 job's duration and releases it automatically** on completion — the same pay-only-while-running
 principle used for compute and the queue, and the structural guard against this project's biggest
 budget risk: a forgotten, idle GPU VM. Spot pricing keeps the training line at $5–20 total; the job
-container is the same PyTorch image, checkpointing to GCS so a spot **preemption** simply resumes
-(see the [ML coding standard](../ml/ml.md#coding-standards-ml)).
+container is the same PyTorch image (see the [ML coding standard](../ml/ml.md#coding-standards-ml)).
+
+**A preemption does not resume.** `ml/train.py` writes a checkpoint to GCS after every epoch, so the
+*weights* of the last completed epoch survive — but nothing reads them back, and there is no resume
+path. A preempted job is SIGKILLed, so its `except → finalize_run(failed)` never runs and the
+`training_run` row **lingers as `running` forever** on the dashboard until it is corrected by hand.
+Two practical consequences: prefer an epoch count whose wall-clock keeps preemption exposure
+sensible (~1 hr/epoch on the full set, measured), and after any cancelled or preempted job, check
+for a phantom `running` row.
 
 **GPU: default T4** — the cheapest widely-available spot GPU, ample for a small multi-view CNN. Step
 up to **L4** only for faster/newer silicon if spot availability is good. A plain Compute Engine spot
@@ -327,6 +334,18 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
 | `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count |
 | `POST /training-runs` | **admin** | submits a Vertex spot-GPU training job; **202**, no run row yet |
+
+`POST /training-runs` carries the run shape (`epochs`, `limit`, `notes`) plus optional
+hyperparameters — `learning_rate`, `batch_size`, `optimizer`, `momentum`, `dropout`, `weight_decay`,
+`label_smoothing`, `class_weighting` — each translated into the matching `ml/train.py` flag. An
+**omitted** field contributes no flag, so `Config` keeps ownership of the defaults and a knob that
+gains a better default in code improves runs that never mentioned it. Ranges are enforced here
+(`dropout` in [0,1), `learning_rate` > 0, enum membership for the two string knobs) because the
+alternative is discovering a typo ~15 minutes in, on a billed GPU, when argparse or torch rejects it.
+Run *size* is deliberately uncapped — that is a judgment call the form prices out, not a mistake.
+`--device`/`--num-workers` stay server-side: they describe the job's machine shape, not the
+experiment. **Architecture is deliberately not exposed** — backbone, pooling and head shape change
+the checkpoint's shape, so a run's weights only load back into the architecture that produced them.
 
 - **Sessions, not JWTs.** Login mints an opaque random token stored in the `session` table and
   returned as an **httpOnly** cookie (`imagegenie_session`, 14-day TTL) that page JS can't read.
