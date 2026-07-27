@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getTrainingLaunchConfig, launchTrainingRun } from '../api/training';
 import { ApiError } from '../api/errors';
-import type { TrainingLaunchConfig } from '../api/types';
+import { TRAINING_DEFAULTS, type TrainingLaunchConfig } from '../api/types';
 import { AppLayout } from '../components/AppLayout';
 
 // Start a training run (web.md#starting-a-training-run). Admin-only, and the one
@@ -15,6 +15,34 @@ import { AppLayout } from '../components/AppLayout';
 
 const DEFAULT_EPOCHS = 5;
 const DEFAULT_LIMIT = 500;
+
+// The tunable knobs, in the order they appear. Held as strings so "" reads as
+// "leave the trainer's default alone" — see TrainingHyperparameters.
+type AdvancedField =
+  | 'learningRate'
+  | 'batchSize'
+  | 'optimizer'
+  | 'momentum'
+  | 'dropout'
+  | 'weightDecay'
+  | 'labelSmoothing'
+  | 'classWeighting';
+
+const EMPTY_TUNING: Record<AdvancedField, string> = {
+  learningRate: '',
+  batchSize: '',
+  optimizer: '',
+  momentum: '',
+  dropout: '',
+  weightDecay: '',
+  labelSmoothing: '',
+  classWeighting: '',
+};
+
+/** "" -> undefined (not sent), otherwise the number. */
+function asNumber(value: string): number | undefined {
+  return value.trim() === '' ? undefined : Number(value);
+}
 
 // Measured, not guessed: a real spot-T4 run did 500 models × 1 epoch in 144s
 // (~0.29s per model per epoch). Provisioning is the fixed cost — that same run
@@ -42,6 +70,16 @@ export function StartTrainingRunPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<string | null>(null);
+  // Advanced knobs are held as *strings*, so "" can mean "not set" — distinct
+  // from 0, which is a real value for weight decay and label smoothing. They are
+  // converted at submit, and an unset one is never sent (api/training.ts).
+  const [tuning, setTuning] = useState<Record<AdvancedField, string>>(EMPTY_TUNING);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const changedCount = Object.values(tuning).filter((value) => value !== '').length;
+
+  function setField(field: AdvancedField, value: string) {
+    setTuning((current) => ({ ...current, [field]: value }));
+  }
 
   useEffect(() => {
     let active = true;
@@ -69,7 +107,24 @@ export function StartTrainingRunPage() {
     setBusy(true);
     setError(null);
     try {
-      const result = await launchTrainingRun({ epochs, limit, notes: notes || null });
+      const result = await launchTrainingRun({
+        epochs,
+        limit,
+        notes: notes || null,
+        hyperparameters: {
+          learningRate: asNumber(tuning.learningRate),
+          batchSize: asNumber(tuning.batchSize),
+          optimizer: (tuning.optimizer || undefined) as 'adam' | 'sgd' | undefined,
+          momentum: asNumber(tuning.momentum),
+          dropout: asNumber(tuning.dropout),
+          weightDecay: asNumber(tuning.weightDecay),
+          labelSmoothing: asNumber(tuning.labelSmoothing),
+          classWeighting: (tuning.classWeighting || undefined) as
+            | 'none'
+            | 'balanced'
+            | undefined,
+        },
+      });
       setLaunched(result.jobName);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Could not start the run.');
@@ -149,6 +204,170 @@ export function StartTrainingRunPage() {
               onChange={(event) => setNotes(event.target.value)}
             />
             <span className="field-hint">Shown on the dashboard next to the run.</span>
+          </div>
+
+          {/* Tuning is folded away because the common run changes none of it.
+              Every box empty === the trainer's own defaults, so the short form
+              stays the honest default path rather than a stripped-down one. */}
+          <div className="advanced-tuning">
+            <button
+              type="button"
+              className="disclosure-toggle"
+              aria-expanded={showAdvanced}
+              onClick={() => setShowAdvanced((open) => !open)}
+            >
+              {showAdvanced ? '▾' : '▸'} Tuning
+              {changedCount > 0 && <span className="pill">{changedCount} changed</span>}
+            </button>
+
+            {showAdvanced && (
+              <>
+                <p className="field-hint">
+                  Leave a box empty to use the trainer's default, shown as the placeholder.
+                  Whatever a run resolves to is recorded on its detail page.
+                </p>
+
+                <div className="field">
+                  <label htmlFor="run-class-weighting">Class weighting</label>
+                  <select
+                    id="run-class-weighting"
+                    value={tuning.classWeighting}
+                    onChange={(event) => setField('classWeighting', event.target.value)}
+                  >
+                    <option value="">default ({TRAINING_DEFAULTS.classWeighting})</option>
+                    <option value="none">none</option>
+                    <option value="balanced">balanced</option>
+                  </select>
+                  <span className="field-hint">
+                    The roster is skewed ~7.7:1 (weapon 2,134 vs aircraft 278).{' '}
+                    <strong>balanced</strong> makes one rare-class mistake cost as much as
+                    several common-class ones, so the tail stops being ignored — at some
+                    precision on the big classes.
+                  </span>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="run-learning-rate">Learning rate</label>
+                  <input
+                    id="run-learning-rate"
+                    type="number"
+                    step="0.0001"
+                    min={0}
+                    value={tuning.learningRate}
+                    placeholder={String(TRAINING_DEFAULTS.learningRate)}
+                    onChange={(event) => setField('learningRate', event.target.value)}
+                  />
+                  <span className="field-hint">Step size. Too high diverges, too low crawls.</span>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="run-batch-size">Batch size</label>
+                  <input
+                    id="run-batch-size"
+                    type="number"
+                    min={1}
+                    value={tuning.batchSize}
+                    placeholder={String(TRAINING_DEFAULTS.batchSize)}
+                    onChange={(event) => setField('batchSize', event.target.value)}
+                  />
+                  <span className="field-hint">
+                    Models per weight update. Doubling it halves the updates per epoch, so the
+                    same epoch count learns less.
+                  </span>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="run-optimizer">Optimizer</label>
+                  <select
+                    id="run-optimizer"
+                    value={tuning.optimizer}
+                    onChange={(event) => setField('optimizer', event.target.value)}
+                  >
+                    <option value="">default ({TRAINING_DEFAULTS.optimizer})</option>
+                    <option value="adam">adam</option>
+                    <option value="sgd">sgd</option>
+                  </select>
+                </div>
+
+                {tuning.optimizer === 'sgd' && (
+                  <div className="field">
+                    <label htmlFor="run-momentum">Momentum</label>
+                    <input
+                      id="run-momentum"
+                      type="number"
+                      step="0.05"
+                      min={0}
+                      max={1}
+                      value={tuning.momentum}
+                      placeholder={String(TRAINING_DEFAULTS.momentum)}
+                      onChange={(event) => setField('momentum', event.target.value)}
+                    />
+                    <span className="field-hint">SGD only — Adam ignores it.</span>
+                  </div>
+                )}
+
+                <div className="field">
+                  <label htmlFor="run-dropout">Dropout</label>
+                  <input
+                    id="run-dropout"
+                    type="number"
+                    step="0.05"
+                    min={0}
+                    max={0.95}
+                    value={tuning.dropout}
+                    placeholder={String(TRAINING_DEFAULTS.dropout)}
+                    onChange={(event) => setField('dropout', event.target.value)}
+                  />
+                  <span className="field-hint">
+                    Fraction of head units dropped each step, to curb overfitting. Must be under 1.
+                  </span>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="run-weight-decay">Weight decay</label>
+                  <input
+                    id="run-weight-decay"
+                    type="number"
+                    step="0.0001"
+                    min={0}
+                    value={tuning.weightDecay}
+                    placeholder={String(TRAINING_DEFAULTS.weightDecay)}
+                    onChange={(event) => setField('weightDecay', event.target.value)}
+                  />
+                  <span className="field-hint">Penalty on large weights. 0 disables it.</span>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="run-label-smoothing">Label smoothing</label>
+                  <input
+                    id="run-label-smoothing"
+                    type="number"
+                    step="0.05"
+                    min={0}
+                    max={0.95}
+                    value={tuning.labelSmoothing}
+                    placeholder={String(TRAINING_DEFAULTS.labelSmoothing)}
+                    onChange={(event) => setField('labelSmoothing', event.target.value)}
+                  />
+                  <span className="field-hint">
+                    Softens the target so the model is less certain — useful against weak-label
+                    noise. 0 disables it.
+                  </span>
+                </div>
+
+                {changedCount > 0 && (
+                  <p className="form-note">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setTuning(EMPTY_TUNING)}
+                    >
+                      Reset to defaults
+                    </button>
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           {/* The disclaimer, made concrete: it moves as the inputs move, so the

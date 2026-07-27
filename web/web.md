@@ -165,6 +165,25 @@ the app where pressing a button spends money on a GPU, which shapes the whole de
   code being tested. Showing it makes that checkable instead of implicit.
 - **Unconfigured deployments say so.** With no Vertex target (local dev) the form is replaced by an
   explanation pointing at `make train-cloud`, rather than offering a button that 503s.
+- **Tuning is folded away, and empty means "the trainer's default".** Class weighting, learning rate,
+  batch size, optimizer (+ momentum, shown only for SGD), dropout, weight decay and label smoothing
+  live behind a `Tuning` disclosure, because the common run changes none of them. Each field is held
+  as a *string* so `""` can mean *unset* — distinct from `0`, which is a real choice for weight decay
+  and label smoothing — and an unset field is **not sent**, leaving `Config` in `ml/train.py` as the
+  single owner of the defaults. A count of changed knobs shows on the collapsed header, so a folded
+  section can never hide a non-default run.
+- **Class weighting leads the section** rather than sitting in alphabetical order: the roster is
+  skewed ~7.7:1, and the first full evaluation showed the tail collapsing (`aircraft` never predicted,
+  `animal` absorbing everything). It is the knob most likely to matter, so its hint explains the
+  trade — recall on the tail, at some precision on the head — instead of just naming the option.
+- **Defaults are shown as placeholders**, duplicated from `Config` in `TRAINING_DEFAULTS`
+  (`api/types.ts`). The API cannot serve them — its image ships without the ml package
+  ([server.md](../server/server.md#api-layer)) — so this can drift. It is bounded on purpose:
+  placeholders are display-only, so a stale value shows a misleading hint and never changes what a
+  run does, because an untouched field is never sent.
+- **Architecture is deliberately not offered.** Backbone, pooling and head shape change the
+  checkpoint's shape, so a run's weights only load back into the architecture that produced them —
+  which M7 inference and the predict-a-class feature both depend on.
 
 ## Auth & Roles
 
