@@ -130,8 +130,10 @@ def main() -> None:
         snapshot = data_snapshot(samples, split)
         run_id = create_run(config, snapshot, notes="local cpu smoke")
         print(f"trainable={len(samples)} splits={snapshot['splits']}")
-        weights_uri = run_training(config, run_id, split)
-        finalize_run(run_id, TrainingStatus.completed, weights_uri=weights_uri)
+        weights_uri, report = run_training(config, run_id, split)
+        finalize_run(
+            run_id, TrainingStatus.completed, metrics=report, weights_uri=weights_uri
+        )
 
         with session_scope() as session:
             run = session.get(TrainingRun, run_id)
@@ -146,9 +148,17 @@ def main() -> None:
             assert run.status is TrainingStatus.completed
             assert losses[-1] < losses[0], f"loss did not fall: {losses[0]} -> {losses[-1]}"
             assert storage.exists(weights_uri), "checkpoint blob missing"
+            # B4: the dev-set report must survive the round-trip into JSONB, not
+            # just exist in memory — the dashboard reads it back from there.
+            assert run.metrics is not None, "dev-set metrics blob missing"
+            assert run.metrics["split"] == "val"
+            assert set(run.metrics["confusion"]["classes"]) == set(ROSTER)
+            # Read inside the scope: the ORM object detaches when it closes.
+            run_metrics = run.metrics
         print(
             f"SMOKE PASS: loss {losses[0]:.3f} -> {losses[-1]:.3f}, "
-            f"weights at {weights_uri}"
+            f"weights at {weights_uri}, "
+            f"val macro_recall={run_metrics['macro_recall']}"
         )
     finally:
         _cleanup(uids, run_id)
