@@ -176,6 +176,29 @@ export interface TrainingMetricPoint {
   valAccuracy: number | null; // top-1 on the val split, 0..1; null when not evaluated
 }
 
+/**
+ * One run scored against one dev set (FR-7, M7).
+ *
+ * Distinct from `TrainingRunDetail.metrics`, which is the run's own end-of-run
+ * report on `val` — a split it consulted every epoch. These are produced
+ * afterwards by `make evaluate` against data the run never saw, and there can be
+ * several: one per dev set, plus any re-scores.
+ */
+export interface Evaluation {
+  id: number;
+  devSet: string; // "test" today; a second, independently-annotated set later
+  // A JSON object, always; narrowed to a drawable report with isEvaluationReport.
+  report: Record<string, unknown>;
+  /**
+   * The labeled set as it stood when this was scored — *not* when the run
+   * trained. The split is recomputed rather than stored, so a label added since
+   * the run shifts it; a hash differing from the run's own means this number
+   * describes a different held-out set than the one intended.
+   */
+  labelHash: string | null;
+  createdAt: string;
+}
+
 /** Whether this deployment can launch a run, and what it would launch. */
 export interface TrainingLaunchConfig {
   configured: boolean; // false where there is no Vertex to submit to (local dev)

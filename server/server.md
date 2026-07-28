@@ -332,8 +332,18 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
 | `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
+| `GET /training-runs/{id}/evaluations` | login | dev-set reports for a run, newest first (FR-7) |
 | `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count |
 | `POST /training-runs` | **admin** | submits a Vertex spot-GPU training job; **202**, no run row yet |
+
+`GET /training-runs/{id}/evaluations` returns the `evaluation` rows written by `make evaluate`
+(ml/evaluate.py) — one per dev set, plus any re-scores, newest first. These are **not** the same as
+`training_run.metrics`: that blob is the run's own end-of-training report on `val`, a split it
+consulted every epoch, while these are scored afterwards on data the run never saw. The API keeps
+them apart for that reason, and so does the detail page. Each row exposes its `label_hash` rather
+than hiding it, because the split is recomputed rather than stored: if it differs from the run's own
+hash, the labels moved in between and the scored split is not the one held out — the one fact that
+decides whether the number can be trusted, and one only the reader can weigh.
 
 `POST /training-runs` carries the run shape (`epochs`, `limit`, `notes`) plus optional
 hyperparameters — `learning_rate`, `batch_size`, `optimizer`, `momentum`, `dropout`, `weight_decay`,

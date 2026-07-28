@@ -9,7 +9,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import api, db
-from app.models import TrainingMetric, TrainingRun, TrainingStatus, User, UserRole
+from app.models import (
+    Evaluation,
+    TrainingMetric,
+    TrainingRun,
+    TrainingStatus,
+    User,
+    UserRole,
+)
 from app.security import CSRF_COOKIE, CSRF_HEADER, hash_password
 
 ADMIN_EMAIL = "admin@imagegenie.dev"
@@ -23,7 +30,7 @@ def anon_client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClien
     with pg_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE training_metric, training_run, session, app_user"
+                "TRUNCATE evaluation, training_metric, training_run, session, app_user"
                 " RESTART IDENTITY CASCADE"
             )
         )
@@ -212,3 +219,52 @@ def test_the_curve_carries_accuracy_per_point(viewer_client: TestClient) -> None
     points = viewer_client.get(f"/training-runs/{run_id}/metrics").json()
 
     assert [point["val_accuracy"] for point in points] == [None, pytest.approx(0.42)]
+
+
+def test_evaluations_are_newest_first(viewer_client: TestClient) -> None:
+    run_id = _seed_run(config={"arch": "mvcnn"}, data_snapshot={"label_count": 5})
+    with db.session_scope() as session:
+        session.add(
+            Evaluation(
+                run_id=run_id,
+                dev_set="test",
+                report={"split": "test", "accuracy": 0.42},
+                label_hash="sha256:abc",
+            )
+        )
+        session.flush()
+        session.add(
+            Evaluation(
+                run_id=run_id,
+                dev_set="lvis_gold",
+                report={"split": "lvis_gold", "accuracy": 0.31},
+                label_hash=None,
+            )
+        )
+
+    body = viewer_client.get(f"/training-runs/{run_id}/evaluations").json()
+
+    assert [row["dev_set"] for row in body] == ["lvis_gold", "test"]
+    assert body[1]["report"]["accuracy"] == 0.42
+    # Exposed, not hidden: a hash differing from the run's is the one thing that
+    # makes a dev-set number untrustworthy.
+    assert body[1]["label_hash"] == "sha256:abc"
+    assert body[0]["label_hash"] is None
+
+
+def test_a_run_with_no_evaluations_is_an_empty_list(viewer_client: TestClient) -> None:
+    """Not a 404 — the run exists, it simply has not been scored yet."""
+    run_id = _seed_run(config={"arch": "mvcnn"}, data_snapshot={"label_count": 5})
+
+    response = viewer_client.get(f"/training-runs/{run_id}/evaluations")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_evaluations_for_an_unknown_run_are_404(viewer_client: TestClient) -> None:
+    assert viewer_client.get("/training-runs/999/evaluations").status_code == 404
+
+
+def test_evaluations_need_a_session(anon_client: TestClient) -> None:
+    assert anon_client.get("/training-runs/1/evaluations").status_code == 401

@@ -1,5 +1,6 @@
 import { download, request } from './client';
 import type {
+  Evaluation,
   TrainingHyperparameters,
   TrainingLaunch,
   TrainingLaunchConfig,
@@ -44,6 +45,14 @@ interface TrainingMetricResponse {
   loss: number;
   val_loss: number | null;
   val_accuracy: number | null;
+}
+
+interface EvaluationResponse {
+  id: number;
+  dev_set: string;
+  report: Record<string, unknown>;
+  label_hash: string | null;
+  created_at: string;
 }
 
 function toSummary(run: TrainingRunSummaryResponse): TrainingRunSummary {
@@ -92,6 +101,21 @@ export async function getTrainingRunMetrics(id: number): Promise<TrainingMetricP
     loss: point.loss,
     valLoss: point.val_loss,
     valAccuracy: point.val_accuracy,
+  }));
+}
+
+/** GET /training-runs/{id}/evaluations — dev-set reports, newest first (M7). */
+export async function getTrainingRunEvaluations(id: number): Promise<Evaluation[]> {
+  const rows = await request<EvaluationResponse[]>(
+    'GET',
+    `/training-runs/${id}/evaluations`,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    devSet: row.dev_set,
+    report: row.report,
+    labelHash: row.label_hash,
+    createdAt: row.created_at,
   }));
 }
 

@@ -112,6 +112,15 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
     never predicted), not zero. A run still training or one that failed has no blob and keeps the
     placeholder; an **unrecognised** blob falls back to the generic key/value dump, so runs
     predating B4 — and whatever shape M7's two-dev-set report takes — still render.
+  - **Held-out evaluation** (M7) — a section per dev-set report from
+    `GET /training-runs/{id}/evaluations`, each drawn with the same component as the block above.
+    Deliberately a *separate* section rather than more rows in it: that one is the run's own report
+    on `val`, a split it consulted every epoch, and these are scored afterwards on data it never
+    saw. Same shape, different standing — merging them would invite reading the optimistic number as
+    the honest one. The whole section is hidden until a run has been scored, so an unevaluated run
+    gains nothing to scroll past. When a report's `label_hash` differs from the run's, the block
+    carries a warning: the split is recomputed rather than stored, so the labels moving in between
+    means the scored split is not the one held out.
   - a **Download weights** button in the header, shown only to admins and only once the run has a
     `weights_uri` (see [Downloads](#downloads)).
   - timestamps (started / finished).
