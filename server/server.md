@@ -332,6 +332,7 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs/{id}` | logged in | one run's config / data-snapshot / metrics blobs (404 if unknown) |
 | `GET /training-runs/{id}/metrics` | logged in | the run's loss curve in step order (the cost graph) |
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
+| `GET /models/{uid}/predict` | login | classify a rendered model with the newest trained run |
 | `GET /training-runs/{id}/evaluations` | login | dev-set reports for a run, newest first (FR-7) |
 | `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count |
 | `POST /training-runs` | **admin** | submits a Vertex spot-GPU training job; **202**, no run row yet |
@@ -378,6 +379,39 @@ the checkpoint's shape, so a run's weights only load back into the architecture 
   copy (`web/src/api/types.ts`) for the same reason.
 - Still to come in this area: dead-letter endpoints and admin [data upload](../web/web.md#data-upload)
   (FR-9).
+
+### Predicting a class
+
+`GET /models/{uid}/predict` (`app/predict.py`) rebuilds the newest completed run's model and
+classifies one already-rendered model, returning the whole roster ranked plus the run id.
+
+- **GET, not POST.** It changes nothing: the model runs in eval mode, so the answer is a
+  deterministic function of the weights and the views. That also keeps it outside the CSRF scheme,
+  which guards writes.
+- **Viewers as well as admins.** A prediction is a statement *about the catalog*, which anyone with a
+  session can already read. The trained model itself is what NFR-6 restricts, and the weights
+  download stays admin-only.
+- **The newest run answers, not the best one.** "Best" needs a metric to rank by, and the honest one
+  — a held-out score — exists only for runs someone evaluated; ranking by it would also make a
+  prediction change when an *evaluation* is recorded. The run id is in the response, so which model
+  answered is always visible.
+- **The model is cached in-process, one run at a time.** Loading is ~43 MB off object storage plus a
+  state-dict copy, which would otherwise dominate every response. Safe only because the service runs
+  at `max_instance_count = 1`; raising that gives each instance its own copy.
+- **The imports are deferred.** Torch costs seconds to import, and paying it on every cold start —
+  including the overwhelming majority of requests that never predict — is a poor trade. It also
+  keeps the API alive in local dev, where the ml package is absent (`PYTHONPATH=server`): the route
+  answers 503 instead of the process failing at import.
+- **404 for an unrendered model**, checked against the `artifact` table rather than by catching a
+  storage miss — the backends raise different exceptions, and "the pipeline hasn't rendered this
+  yet" is a state worth naming. **503** when no completed run has weights, matching the launch
+  route: nothing is broken, there is simply nothing to answer with.
+- **The image carries `ml/`** (`COPY ml ./ml`, `PYTHONPATH=/srv:/srv/ml`) and CPU torch. The `+cpu`
+  wheel suffix is load-bearing: plain `torch==2.5.1` resolves to the CUDA build on linux/amd64 and
+  drags in ~2.5 GB of nvidia wheels for a service with no GPU. Measured, the image goes 364 MB →
+  575 MB. Duplicating the model code into `server/app` was rejected — unlike `app/roster.py`, which
+  is twelve strings with a drift test, this is a model, and a copy that drifts would predict from a
+  different architecture than the metrics on screen describe.
 
 ### Serving artifacts
 
