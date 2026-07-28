@@ -533,8 +533,12 @@ def _parse_args() -> argparse.Namespace:
     return build_parser().parse_args()
 
 
-def _subsample(samples: list[tuple[str, str]], limit: int, seed: int) -> list[tuple[str, str]]:
+def subsample(samples: list[tuple[str, str]], limit: int, seed: int) -> list[tuple[str, str]]:
     """A seeded random subset of `limit` samples.
+
+    Public because evaluation has to reproduce it: a limited run held out a split
+    of its *subset*, so scoring it against a split of the full trainable set
+    would put models the run trained on into its own test set (ml/evaluate.py).
 
     Proportional, not per-class balanced: it preserves the real class
     distribution (which is skewed ~7.7:1), so a small run rehearses the actual
@@ -571,7 +575,7 @@ def main() -> None:
             "(run the pipeline and the weak-label backfill first)"
         )
     if args.limit is not None:
-        samples = _subsample(samples, args.limit, config.seed)
+        samples = subsample(samples, args.limit, config.seed)
     split = stratified_split(samples, config.seed)
     snapshot = data_snapshot(samples, split)
     if args.limit is not None:

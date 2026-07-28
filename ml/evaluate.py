@@ -28,7 +28,7 @@ import argparse
 from infer import evaluate_samples as score
 from infer import load_run_model
 from splits import DatasetSplit, stratified_split
-from train import data_snapshot, load_trainable_samples
+from train import data_snapshot, load_trainable_samples, subsample
 
 from app.config import get_settings
 from app.db import session_scope
@@ -111,6 +111,14 @@ def evaluate_run(
     model, config, snapshot = load_run_model(run_id, storage)
 
     samples = load_trainable_samples()
+    # Reproduce the run's subsample before splitting. A `--limit` run held out a
+    # split of its *subset*, so splitting the full trainable set would put models
+    # it trained on straight into its own test set — measured on run 4: 141 of
+    # 1,173 recomputed "test" models were ones the run had trained on, and the
+    # score would have been inflated by exactly the amount that matters.
+    limit = snapshot.get("limit")
+    if limit is not None:
+        samples = subsample(samples, limit, config.seed)
     # The run's own seed, not Config's default: a recomputed partition is only
     # reproducible under the seed that produced it, and a run may have set its own.
     split = stratified_split(samples, config.seed)
