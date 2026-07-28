@@ -11,6 +11,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -qE '(ruff check|pytest|make (test|lint))' && { cd \"$CLAUDE_PROJECT_DIR\" && .venv/bin/ruff check . --select I --fix >/dev/null 2>&1; }; true",
+            "statusMessage": "Sorting imports"
+          }
+        ]
+      }
     ]
   }
 }
