@@ -80,7 +80,14 @@ def load_run_model(
         weights_uri = run.weights_uri
 
     config = rebuild_config(stored_config)
-    model = MultiViewCNN.from_config(config)
+    # Build the architecture *without* ImageNet initialisation, whatever the run
+    # used. `pretrained` only chooses the backbone's starting weights, and the
+    # checkpoint about to be loaded supplies every one of them — so honouring it
+    # here downloads ~45 MB to overwrite it a line later, and makes inference
+    # depend on reaching download.pytorch.org. The returned `config` keeps the
+    # run's real value; only the object used to build the model differs.
+    architecture = SimpleNamespace(**{**vars(config), "pretrained": False})
+    model = MultiViewCNN.from_config(architecture)
     # map_location="cpu" because the weights were saved from a CUDA run and this
     # may well be a CPU box; weights_only because the blob is data, not code.
     state = torch.load(
