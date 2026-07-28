@@ -316,6 +316,16 @@ Two dev sets:
    - Expect distribution shift (different artists, styles, mesh quality) — analyze it explicitly
      rather than treating it as noise.
 
+**MVP scope: (1) only** (decided 2026-07-27). The `evaluation` table is keyed by dev set precisely so
+(2) can be added later without a migration or a second code path. What is being given up is worth
+stating plainly rather than discovering later: every label in (1) comes from the *same* weak-labeling
+pipeline as the training data, so the test split inherits its biases — including the measured 0.62
+precision on `figure`. A model can therefore score well by faithfully reproducing the weak labeler's
+mistakes, and (1) alone cannot tell that apart from being right. It measures generalization to unseen
+**objects**; it does not measure whether the labels themselves are correct. If a cheap version of (2)
+is wanted, the **LVIS gold set** from milestone 1 is already independently annotated and already has
+tooling (`ml/eval_weak_labels.py`) — a far smaller job than the Objaverse-slice mapping above.
+
 ### Metrics
 
 - **Per-class precision and recall** on both dev sets.
@@ -343,6 +353,38 @@ over both dev sets.
   lets `weapon` dominate. Macro weights the 278-example `aircraft` like the 2,134-example `weapon`,
   which is what makes a collapsed model look as bad as it is — 80% majority class answered entirely
   with the majority label scores 0.80 accuracy against 0.33 macro recall.
+
+### Scoring a finished run (M7 / C1)
+
+```
+make evaluate RUN=4              # the held-out test split
+make evaluate RUN=4 SPLIT=val    # re-score val, e.g. to compare two methods
+```
+
+`ml/infer.py` rebuilds the model and `ml/evaluate.py` scores it, storing one `evaluation` row per
+(run, dev set) — see [server.md](../server/server.md#database). Separate from training on purpose:
+the trainer reports on `val`, which it consults every epoch and therefore cannot score honestly,
+while `test` exists precisely so one number survives that nothing steered against. Keeping it a
+distinct command is what stops "evaluate the model" becoming another training-time metric.
+
+- **A run's stored config is the source of truth, never `Config`'s current defaults.** Backbone,
+  view pooling and head shape decide the shape of the saved tensors, so weights only load back into
+  the architecture that produced them. `rebuild_config` lets stored values win and fills only what a
+  run predates (runs 2 and 3 have no `class_weighting`), keeping keys this checkout has since
+  dropped. Filling a missing *architecture* key is an unguarded guess on purpose: a wrong one fails
+  loudly in `load_state_dict` on a shape mismatch, which beats predicting from the wrong model. It
+  is also why architecture is absent from the [launch form](../web/web.md#starting-a-training-run).
+- **The split is recomputed, not stored** — a run records only its sizes. `stratified_split` is
+  deterministic given the same samples and the run's **own seed**, so the same trainable set
+  reproduces the partition exactly. What breaks it is the trainable set changing: a label added or
+  corrected since the run moves models between partitions, and the recomputed `test` is no longer
+  the one held out. That is reported (a warning naming both hashes) and recorded (the current
+  `label_hash` on the row), **not enforced** — a deliberate deferral, taken because the check is
+  cheap to add later while the data to run it against is unrecoverable if never written.
+- **An empty split is refused**, rather than reporting metrics over zero samples — which would
+  render on the dashboard as a real-looking result.
+- **`classify_model` returns the whole roster ranked**, not just the top class: a single label hides
+  a near-tie between `figure` and `animal`, where the model is lucky rather than right.
 
 ### Bias Analysis
 
