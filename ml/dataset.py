@@ -39,6 +39,15 @@ def _load_view(storage: Storage, key: str) -> torch.Tensor:
     return (tensor - mean) / std
 
 
+def load_views(storage: Storage, uid: str) -> torch.Tensor:
+    """Every rendered view of one model, stacked into ``[num_views, 3, H, W]``.
+
+    Standalone rather than inlined into `MultiViewDataset`, because inference
+    (ml/infer.py) needs views for a model whose class is the unknown.
+    """
+    return torch.stack([_load_view(storage, key) for key in view_keys(uid)])
+
+
 class MultiViewDataset(Dataset):
     """One item per model: its stacked views and class index.
 
@@ -59,10 +68,7 @@ class MultiViewDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
         uid, class_name = self._samples[index]
-        views = torch.stack(
-            [_load_view(self._storage, key) for key in view_keys(uid)]
-        )  # [num_views, 3, H, W]
-        return views, CLASS_TO_INDEX[class_name]
+        return load_views(self._storage, uid), CLASS_TO_INDEX[class_name]
 
 
 def has_all_views(storage: Storage, uid: str) -> bool:
