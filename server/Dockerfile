@@ -48,6 +48,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server/app ./app
 
+# The ml package, for inference (server.md#predicting-a-class). The API needs
+# `infer`/`model`/`dataset` to rebuild a trained run's model, and duplicating them
+# into server/app would guarantee the copy drifts from the code that trains —
+# producing predictions from a subtly different architecture than the one whose
+# metrics are on screen. (`app/roster.py` is duplicated instead, but that is a
+# tuple of twelve strings with a test asserting it matches; this is a model.)
+#
+# ml/ modules import each other flatly (`from dataset import ...`), so /srv/ml
+# has to be on the path in its own right, not just /srv.
+COPY ml ./ml
+ENV PYTHONPATH=/srv:/srv/ml
+
 # The built SPA the API serves. IMAGEGENIE_SPA_DIR points the API (root_app) at
 # it; the workers never read it, so it is inert for them.
 COPY --from=web-build /web/dist ./web_dist

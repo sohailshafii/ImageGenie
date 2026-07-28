@@ -96,8 +96,15 @@ resource "google_cloud_run_v2_service" "api" {
 
       resources {
         limits = {
-          cpu    = "1"
-          memory = "1Gi" # trimesh loads on upload; the SPA is static
+          # 2 CPU / 2Gi since the API classifies models itself
+          # (server.md#predicting-a-class): torch plus a resnet18 forward pass
+          # over 12 views does not fit the previous 1 CPU / 1Gi, which sized only
+          # trimesh-on-upload and a static SPA. The second CPU matters as much as
+          # the memory — torch parallelises the forward pass, and this service is
+          # pinned to one instance, so a slow prediction is a request every other
+          # caller waits behind.
+          cpu    = "2"
+          memory = "2Gi"
         }
       }
 
