@@ -28,6 +28,18 @@ numpy==1.26.4
 trimesh==4.4.9
 pyrender==0.1.45
 Pillow==10.4.0
+# Inference (server.md#predicting-a-class). The API rebuilds a trained run's model
+# and classifies with it, so it needs the same torch/torchvision pair the trainer
+# used — a checkpoint only loads into the architecture that produced it.
+#
+# **The `+cpu` suffix and the index URL are load-bearing.** Plain `torch==2.5.1`
+# resolves to the CUDA build on linux/amd64, dragging in ~2.5 GB of nvidia-*
+# wheels for a service with no GPU. The CPU wheel is a fraction of that and is
+# all Cloud Run can use. (The repo-root requirements.txt pins the unsuffixed
+# version because on macOS arm64 there is no CUDA build to resolve to.)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+torchvision==0.20.1+cpu
 # pyrender's OSMesa backend imports OSMesaCreateContextAttribs, which upstream
 # PyOpenGL (incl. 3.1.0, the version pyrender hard-pins) never exposed. The pyrender
 # author's fork adds it and self-reports as 3.1.0, satisfying that pin. Installed
