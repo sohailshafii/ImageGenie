@@ -68,6 +68,7 @@ from .models import (
     User,
     UserRole,
 )
+from .predict import PredictionUnavailable, classify
 from .queue import publish_next
 from .ratelimit import BackoffRule, FixedWindowRateLimiter, LoginBackoff, RateLimitRule
 from .roster import CLASS_ROSTER
@@ -143,6 +144,24 @@ class LabelIn(BaseModel):
                 f"unknown class {value!r}; expected one of {', '.join(CLASS_ROSTER)}"
             )
         return value
+
+
+class ClassProbability(BaseModel):
+    class_name: str
+    probability: float  # 0..1, softmax over the 12-class roster
+
+
+class PredictionOut(BaseModel):
+    """What the classifier makes of one model (server.md#predicting-a-class).
+
+    `run_id` is part of the answer, not metadata: predictions come from whichever
+    run trained most recently, so a number is only interpretable alongside which
+    model produced it. The whole roster is returned ranked — a near-tie between
+    `figure` and `animal` is the case worth seeing, and a single label hides it.
+    """
+
+    run_id: int
+    predictions: list[ClassProbability]  # best first
 
 
 class DeadLetterOut(BaseModel):
@@ -1127,6 +1146,58 @@ def _require_live_model(session: Session, uid: str) -> Model:
     if model is None or model.deleted_at is not None:
         raise HTTPException(status_code=404, detail="unknown model")
     return model
+
+
+@app.get(
+    "/models/{uid}/predict",
+    response_model=PredictionOut,
+    dependencies=LOGIN_REQUIRED,
+)
+def predict_model_class(uid: str) -> PredictionOut:
+    """What the newest trained model thinks this model is (FR-7 / M9 demo).
+
+    **GET, not POST**: this changes nothing. The model runs in eval mode, so the
+    answer is a deterministic function of the weights and the views — a safe,
+    repeatable read, which also keeps it outside the CSRF scheme that guards
+    writes.
+
+    Open to viewers as well as admins, unlike the weights download. A prediction
+    is a *statement about the catalog*, which everyone with a session can already
+    see; the trained model itself is the thing NFR-6 restricts, and that stays
+    admin-only.
+
+    Costs a forward pass over twelve views, so it is a second or two on a service
+    pinned to one instance — deliberately not called automatically on page load.
+    """
+    with session_scope() as session:
+        _require_live_model(session, uid)
+        rendered = session.scalar(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.model_uid == uid)
+            .where(Artifact.stage == ArtifactStage.rendered)
+            .where(Artifact.status == ArtifactStatus.done)
+        )
+    if not rendered:
+        # Checked against the DB rather than by catching a storage miss: the
+        # backends raise different exceptions for a missing blob, and "the
+        # pipeline hasn't rendered this yet" is a state worth naming precisely.
+        raise HTTPException(status_code=404, detail="this model has no rendered views")
+
+    try:
+        run_id, ranked = classify(uid, build_storage(get_settings()))
+    except PredictionUnavailable as error:
+        # 503, matching the launch route: nothing is broken, this deployment just
+        # has no model to answer with. The UI explains rather than showing an error.
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    return PredictionOut(
+        run_id=run_id,
+        predictions=[
+            ClassProbability(class_name=name, probability=probability)
+            for name, probability in ranked
+        ],
+    )
 
 
 def _load_summary(uid: str, url_prefix: str = "") -> ModelSummaryOut:
