@@ -27,6 +27,11 @@ def test_data_snapshot_records_counts_hash_filter_and_splits() -> None:
     assert snapshot["filter"]["renders"] == "required"
     assert set(snapshot["splits"]) == {"train", "val", "test"}
     assert sum(snapshot["splits"].values()) == 3
+    # The held-out uids, so a later evaluation replays this partition rather than
+    # recomputing one the labeled set may have moved out from under.
+    assert set(snapshot["held_out"]) == {"val", "test"}
+    assert snapshot["held_out"]["val"] == [uid for uid, _ in split.val]
+    assert snapshot["held_out"]["test"] == [uid for uid, _ in split.test]
 
 
 def test_label_hash_is_order_independent() -> None:

@@ -117,3 +117,68 @@ def _stub_run(monkeypatch, config, snapshot) -> None:
         evaluate, "load_run_model", lambda run_id, storage: (None, config, snapshot)
     )
     monkeypatch.setattr(evaluate, "record_evaluation", lambda *args, **kwargs: 1)
+
+
+def test_replays_the_recorded_partition_instead_of_recomputing(monkeypatch) -> None:
+    """The case the whole feature exists for: labels added since the run change
+    what `stratified_split` produces, but the recorded uids still name the set
+    the run actually held out."""
+    trained_on = [(f"m{index}", "chair") for index in range(10)]
+    # Two labels added since — enough to reshuffle the recomputed partition.
+    samples = trained_on + [("new1", "chair"), ("new2", "lamp")]
+    snapshot = {"held_out": {"test": ["m3", "m7"]}, "label_hash": "sha256:stale"}
+
+    scored = evaluate.resolve_scored_samples(
+        4, "test", snapshot, samples, stratified_split(samples, 0)
+    )
+
+    assert scored == [("m3", "chair"), ("m7", "chair")]
+
+
+def test_replay_uses_current_labels_not_the_ones_trained_on(monkeypatch) -> None:
+    """A corrected label is a better answer to "is the model right?" than the one
+    the run trained against — and re-scoring after corrections is the M8 loop."""
+    samples = [("m1", "table")]  # was `chair` when the run trained
+    snapshot = {"held_out": {"test": ["m1"]}}
+
+    scored = evaluate.resolve_scored_samples(
+        4, "test", snapshot, samples, stratified_split(samples, 0)
+    )
+
+    assert scored == [("m1", "table")]
+
+
+def test_recorded_models_that_left_the_set_are_skipped_and_reported(
+    monkeypatch, capsys
+) -> None:
+    samples = [("m1", "chair"), ("m2", "lamp")]
+    snapshot = {"held_out": {"test": ["m1", "deleted", "m2"]}}
+
+    scored = evaluate.resolve_scored_samples(
+        4, "test", snapshot, samples, stratified_split(samples, 0)
+    )
+
+    assert scored == [("m1", "chair"), ("m2", "lamp")]
+    assert "1 of 3" in capsys.readouterr().out
+
+
+def test_a_run_without_a_recorded_split_falls_back_and_warns(capsys) -> None:
+    """Runs 2-4 predate the field; they still evaluate, with the caveat stated."""
+    samples = [(f"m{index}", "chair") for index in range(10)]
+    split = stratified_split(samples, 0)
+    snapshot = {"label_hash": "sha256:stale"}
+
+    scored = evaluate.resolve_scored_samples(4, "test", snapshot, samples, split)
+
+    assert scored == split.test
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_train_always_recomputes_since_it_is_never_recorded() -> None:
+    samples = [(f"m{index}", "chair") for index in range(10)]
+    split = stratified_split(samples, 0)
+    snapshot = {"held_out": {"val": ["m1"], "test": ["m2"]}}
+
+    scored = evaluate.resolve_scored_samples(4, "train", snapshot, samples, split)
+
+    assert scored == split.train
