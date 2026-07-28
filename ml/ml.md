@@ -218,8 +218,10 @@ non-negotiable is NFR-4 bookkeeping.
 - **`load_trainable_samples()` + `data_snapshot()`** — the trainable set is the current label per
   live model (manual-over-weak, as the labeling API resolves it) **that is also rendered** (joined to
   a done `rendered` artifact), so training never faults on an unrendered model. The snapshot records
-  `{label_count, label_hash, as_of, filter, class_counts, splits}`; the `label_hash` (sha256 over
-  the sorted `(uid, class)` pairs) identifies the set, so a changed hash flags data drift.
+  `{label_count, label_hash, as_of, filter, class_counts, splits, held_out}`; the `label_hash`
+  (sha256 over the sorted `(uid, class)` pairs) identifies the set, so a changed hash flags data
+  drift, and `held_out` names the val/test uids so [evaluation](#scoring-a-finished-run-m7--c1) can
+  replay the partition rather than recompute one the labeled set has moved out from under.
 - **Bookkeeping helpers** — `create_run` / `log_metric` / `finalize_run`, each committing on its own
   `session_scope` so the [dashboard](../web/web.md#training-dashboard) sees a **live** run with a
   growing loss curve. Written directly through a DB session (like the pipeline workers); the API only
@@ -374,13 +376,23 @@ distinct command is what stops "evaluate the model" becoming another training-ti
   dropped. Filling a missing *architecture* key is an unguarded guess on purpose: a wrong one fails
   loudly in `load_state_dict` on a shape mismatch, which beats predicting from the wrong model. It
   is also why architecture is absent from the [launch form](../web/web.md#starting-a-training-run).
-- **The split is recomputed, not stored** — a run records only its sizes. `stratified_split` is
-  deterministic given the same samples and the run's **own seed**, so the same trainable set
-  reproduces the partition exactly. What breaks it is the trainable set changing: a label added or
-  corrected since the run moves models between partitions, and the recomputed `test` is no longer
-  the one held out. That is reported (a warning naming both hashes) and recorded (the current
-  `label_hash` on the row), **not enforced** — a deliberate deferral, taken because the check is
-  cheap to add later while the data to run it against is unrecoverable if never written.
+- **The partition is replayed from the run, not recomputed.** `data_snapshot` records the uids it
+  held out (`held_out.val` / `held_out.test`). Recomputing *is* deterministic given the same samples
+  and the run's own seed — but the partition is a function of the whole sample set, so one label
+  added or corrected reshuffles every class and moves models between train, val and test, and the
+  resulting number looks no different for being wrong. Writing the answer down is what makes an
+  evaluation reproducible rather than merely deterministic. Only val and test are stored: train is
+  large and nothing evaluates against it, which keeps the blob to ~2,300 uids at full scale.
+  - **Labels come from the current database, not from training time** — only the uids are replayed.
+    Scoring asks "is the model right?", and a corrected label answers that better than the one the
+    run trained against. It is also what makes the M8 loop legible: hand-correct, re-score the same
+    models, see the difference.
+  - **A recorded model that has left the trainable set** (soft-deleted, unlabeled, unrendered) is
+    skipped rather than fatal, and the count is printed — a shrinking dev set changes what the
+    numbers mean.
+  - **Runs predating the field** (2 through 4), and `train`, which is never recorded, fall back to
+    recomputation, warning when the labels have moved since. Either way the report records the
+    `label_hash` it was scored under.
 - **An empty split is refused**, rather than reporting metrics over zero samples — which would
   render on the dashboard as a real-looking result.
 - **`classify_model` returns the whole roster ranked**, not just the top class: a single label hides

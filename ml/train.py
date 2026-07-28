@@ -170,6 +170,20 @@ def data_snapshot(samples: list[tuple[str, str]], split: DatasetSplit) -> dict:
         },
         "class_counts": dict(sorted(class_to_count.items())),
         "splits": split_sizes(split),
+        # The held-out partitions by uid, so a later evaluation replays *this*
+        # split instead of recomputing one.
+        #
+        # Recomputation is deterministic given the same samples and seed, but the
+        # partition is a function of the whole sample set: one label added or
+        # corrected reshuffles every class, and models move between train, val
+        # and test. The recomputed "test" would then not be the set this run held
+        # out, and nothing about the resulting number would look wrong. Writing
+        # the answer down is what makes the evaluation reproducible rather than
+        # merely deterministic.
+        #
+        # Only val and test: train is large, and no one evaluates against it.
+        "held_out": {"val": sorted(uid for uid, _ in split.val),
+                     "test": sorted(uid for uid, _ in split.test)},
     }
 
 
