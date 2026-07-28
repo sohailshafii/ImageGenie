@@ -247,6 +247,42 @@ class TrainingMetric(Base):
     val_accuracy: Mapped[float | None] = mapped_column(default=None)
 
 
+class Evaluation(Base):
+    """One run scored against one dev set (FR-7, M7).
+
+    A table rather than another blob on ``training_run`` because FR-7 asks for
+    **two** dev sets and the roster of them is expected to grow: the held-out
+    ``test`` split first, an independently-annotated set (e.g. the LVIS gold set)
+    after. A column per dev set would need a migration each time; a row per
+    (run, dev set) needs none, and it lets one run be re-scored later without
+    overwriting what it scored before.
+
+    Distinct from ``training_run.metrics``, which is the run's own end-of-training
+    report on ``val``. That one is written by the trainer as part of the run; these
+    are written afterwards, by ml/evaluate.py, against data the run never saw.
+    """
+
+    __tablename__ = "evaluation"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("training_run.id"), index=True)
+    # Which dev set was scored: "test" today, e.g. "lvis_gold" later. A string
+    # rather than an enum so adding a dev set stays a code-only change.
+    dev_set: Mapped[str] = mapped_column()
+    # Same shape as training_run.metrics (ml/metrics.py) so the two are directly
+    # comparable and the frontend renders both with one component.
+    report: Mapped[dict] = mapped_column(JSONB)
+    # The label_hash of the trainable set *at scoring time*. The split is
+    # recomputed from the live DB rather than stored, so a label added since the
+    # run shifts the partition and quietly changes what "test" means. Recording
+    # the hash here is what lets a later check say which reports were scored
+    # against the run's own split and which were not — unrecoverable if skipped.
+    label_hash: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class UserRole(str, enum.Enum):
     """Access role — ``user`` can view, ``admin`` can also correct + upload (FR-8)."""
 
