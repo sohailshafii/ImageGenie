@@ -38,7 +38,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -81,6 +81,13 @@ train: ## run a baseline training run (M6); writes training_run + metrics to the
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
 	# no cert shim needed — this run only touches Postgres, not the network.
 	PYTHONPATH=server $(BIN)/python ml/train.py
+
+evaluate: ## score a finished run against a held-out dev set (M7; RUN=n, SPLIT=test|val|train)
+	# Separate from training because `val` is steered against every epoch and
+	# `test` is not — see ml/evaluate.py. PYTHONPATH=server for the DB layer, as
+	# with `train`.
+	@test -n "$(RUN)" || { echo "usage: make evaluate RUN=<training run id> [SPLIT=test]"; exit 1; }
+	PYTHONPATH=server $(BIN)/python ml/evaluate.py --run $(RUN) $(if $(SPLIT),--split $(SPLIT),)
 
 smoke-train: ## CPU smoke: seed a tiny class-separable dataset, train end-to-end, assert it learns (self-cleaning)
 	# Needs a reachable, migrated Postgres (IMAGEGENIE_DATABASE_URL, default
