@@ -393,6 +393,10 @@ distinct command is what stops "evaluate the model" becoming another training-ti
   - **Runs predating the field** (2 through 4), and `train`, which is never recorded, fall back to
     recomputation, warning when the labels have moved since. Either way the report records the
     `label_hash` it was scored under.
+  - **A `--limit` run's subsample is reproduced before splitting.** Such a run held out a split of
+    its *subset*, so splitting the full trainable set puts models it trained on into its own test
+    set — measured on run 4, 141 of 1,173 recomputed `test` models were ones the run had trained on.
+    `subsample` is seeded and public for exactly this reason.
 - **An empty split is refused**, rather than reporting metrics over zero samples — which would
   render on the dashboard as a real-looking result.
 - **`classify_model` returns the whole roster ranked**, not just the top class: a single label hides

@@ -182,3 +182,33 @@ def test_train_always_recomputes_since_it_is_never_recorded() -> None:
     scored = evaluate.resolve_scored_samples(4, "train", snapshot, samples, split)
 
     assert scored == split.train
+
+
+def test_a_limited_run_is_scored_against_its_own_subset(monkeypatch) -> None:
+    """Regression: evaluating run 4 without reproducing its --limit subsample put
+    141 of 1,173 recomputed "test" models into a set the run had trained on."""
+    samples = [(f"m{index}", "chair") for index in range(100)]
+    samples += [(f"w{index}", "weapon") for index in range(100)]
+    snapshot = {"limit": 20}
+    config = SimpleNamespace(seed=0, backbone="resnet18")
+    scored: dict = {}
+
+    _stub_run(monkeypatch, config, snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    monkeypatch.setattr(
+        evaluate,
+        "score",
+        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+            samples=samples
+        )
+        or _REPORT,
+    )
+
+    evaluate.evaluate_run(4)
+
+    subset = evaluate.subsample(samples, 20, 0)
+    expected = stratified_split(subset, 0).test
+    assert scored["samples"] == expected
+    # And nothing the run trained on leaks into what is scored.
+    trained_on = {uid for uid, _ in stratified_split(subset, 0).train}
+    assert not [uid for uid, _ in scored["samples"] if uid in trained_on]
