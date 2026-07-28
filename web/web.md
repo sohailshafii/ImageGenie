@@ -128,6 +128,33 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
   Backed by the `training_run` / `training_metric` entities in
   [server.md](../server/server.md#database).
 
+## Predicting a Class
+
+`PredictPanel` on the model detail page — "what does the classifier think this is?" — backed by
+`GET /models/{uid}/predict` ([server.md](../server/server.md#predicting-a-class)).
+
+- **Viewers and admins alike.** The answer is a statement about the catalog, which any authenticated
+  user can already read; the trained model itself stays admin-only (NFR-6).
+- **On demand, never on page load.** A prediction costs a forward pass over twelve views — a second
+  or two on a service pinned to one instance — so it waits for a click. That is also why the result
+  stays on screen with an *again* link rather than refetching on its own.
+- **Top three of twelve, with bars.** The full ranking is fetched, because a near-tie between
+  `figure` and `animal` is exactly the case worth seeing, but a list of twelve buries the answer. The
+  bar matters as much as the number: the *gap* between first and second is the reading that counts,
+  and it is far easier to see than to compute from two percentages. A low-confidence model therefore
+  looks low-confidence — three stubby bars — which is honest rather than a rendering fault.
+- **Disagreement with the stored label is called out explicitly.** That is the signal the M8 review
+  loop hunts for, so it should not need spotting.
+- **The run id is shown.** Predictions come from whichever run trained most recently, so the number
+  is only interpretable alongside which model produced it.
+- **Two of the three failure modes are states, not faults**, and the panel names both. A model that
+  has not been rendered yet answers **404** — the ordinary case right after an upload, since
+  ingestion runs the pipeline asynchronously — and reads *"Not rendered yet."* A deployment with no
+  completed run answers **503** and reads *"No trained model yet."* Reporting either as "could not
+  classify" would invite debugging a system that is working correctly. 503 has its own
+  `unavailable` error code for this, added for the same reason 404 has `not_found`: the generic
+  `server_error` conflates "cannot yet" with "went wrong".
+
 ## Downloads
 
 Three downloads, all through one `DownloadButton` component: the two meshes on the model detail

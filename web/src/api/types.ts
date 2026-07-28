@@ -27,6 +27,7 @@ export type ApiErrorCode =
   | 'unauthorized' // no valid session
   | 'forbidden' // authenticated but lacking the role (e.g. non-admin inviting)
   | 'not_found' // no such resource — or, for a download, an artifact not produced yet
+  | 'unavailable' // the server can't answer *yet* (e.g. nothing has trained) — not a fault
   | 'csrf_failure' // missing/mismatched CSRF token (server.md#csrf)
   | 'network_error' // the request never reached the server
   | 'server_error'; // an unrecognized non-2xx response
@@ -100,6 +101,19 @@ export interface ModelSummary {
    * treat a load error as "no preview", not as a bug.
    */
   thumbnail: string | null;
+}
+
+/**
+ * What the classifier makes of one model (server.md#predicting-a-class).
+ *
+ * `runId` is part of the answer rather than metadata: the prediction comes from
+ * whichever run trained most recently, so it is only interpretable alongside
+ * which model produced it.
+ */
+export interface Prediction {
+  runId: number;
+  /** The whole roster, best first — a near-tie is the case worth seeing. */
+  predictions: { className: ClassName; probability: number }[];
 }
 
 /** A model's rendered views and mesh, for the detail view. */

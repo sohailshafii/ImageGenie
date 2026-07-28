@@ -8,10 +8,16 @@ import type {
   ModelSort,
   ModelSummary,
   PipelineStage,
+  Prediction,
 } from './types';
 
 // Model catalog client for the FastAPI backend (server.md#api-layer).
 // Every call here is real — no mocks remain in this app.
+
+interface PredictionResponse {
+  run_id: number;
+  predictions: { class_name: string; probability: number }[];
+}
 
 /** Wire shape of a model summary — snake_case, with nullable label fields. */
 interface ModelSummaryResponse {
@@ -205,6 +211,30 @@ export async function listDeletedModels(params: {
  * from an admin upload), so the real filename comes back on the response; the
  * fallback here is only used if that header ever goes missing.
  */
+/**
+ * GET /models/{uid}/predict — what the newest trained model thinks this is.
+ *
+ * A GET because it changes nothing: the model runs in eval mode, so the answer
+ * is a deterministic function of the weights and the views. Open to viewers as
+ * well as admins — the restricted thing is the trained model itself, not a
+ * statement about the catalog.
+ *
+ * Costs a forward pass over twelve views on a single-instance service, so it is
+ * called on demand, never on page load. A deployment with no completed run
+ * answers 503, which surfaces as a `server_error` ApiError the caller should
+ * explain rather than treat as a fault.
+ */
+export async function predictModelClass(uid: string): Promise<Prediction> {
+  const body = await request<PredictionResponse>('GET', `/models/${uid}/predict`);
+  return {
+    runId: body.run_id,
+    predictions: body.predictions.map((row) => ({
+      className: row.class_name as ClassName,
+      probability: row.probability,
+    })),
+  };
+}
+
 export async function downloadSourceMesh(uid: string): Promise<void> {
   await download(`/models/${encodeURIComponent(uid)}/download/source`, `${uid}.glb`);
 }
