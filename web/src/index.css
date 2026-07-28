@@ -1239,6 +1239,23 @@ select:focus {
   color: var(--text-muted);
 }
 
+/* One dev-set report. Several can appear under a single run — one per dev set,
+   plus re-scores — so each carries its own heading and scored-at time rather
+   than relying on order to distinguish them. */
+.evaluation-block + .evaluation-block {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.evaluation-block h3 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+
 /* Hyperparameter tuning, folded away: the common run changes none of it, so it
    reads as an aside rather than six more boxes to fill in. Indented against a
    rule so an open section is visibly subordinate to the three fields above. */

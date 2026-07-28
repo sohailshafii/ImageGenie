@@ -58,6 +58,7 @@ from .models import (
     ArtifactStatus,
     DownloadStatus,
     EmailVerification,
+    Evaluation,
     Invite,
     Label,
     LabelSource,
@@ -266,6 +267,22 @@ class TrainingLaunchOut(BaseModel):
     job_name: str  # Vertex resource name
     image: str
     args: list[str]  # exactly what the container was given, for the record
+
+
+class EvaluationOut(BaseModel):
+    """One run scored against one dev set (FR-7, M7).
+
+    `label_hash` is the trainable set as it stood when the report was computed,
+    not when the run trained. It is exposed rather than kept internal because a
+    difference between the two is the one thing that makes a dev-set number
+    untrustworthy, and only the reader can judge whether it matters.
+    """
+
+    id: int
+    dev_set: str  # "test" today; a second, independently-annotated set later
+    report: dict  # same shape as training_run.metrics (ml/metrics.py)
+    label_hash: str | None
+    created_at: datetime
 
 
 class TrainingMetricOut(BaseModel):
@@ -858,6 +875,39 @@ def get_training_run(run_id: int) -> TrainingRunDetailOut:
             started_at=run.started_at,
             finished_at=run.finished_at,
         )
+
+
+@app.get(
+    "/training-runs/{run_id}/evaluations",
+    response_model=list[EvaluationOut],
+    dependencies=LOGIN_REQUIRED,
+)
+def get_training_run_evaluations(run_id: int) -> list[EvaluationOut]:
+    """A run's dev-set reports, newest first (FR-7, M7).
+
+    Separate from `training_run.metrics`, which is the run's own end-of-training
+    report on `val`. These are written afterwards by ml/evaluate.py against data
+    the run never saw, and there can be several — one per dev set, and more if a
+    run is re-scored later.
+    """
+    with session_scope() as session:
+        if session.get(TrainingRun, run_id) is None:
+            raise HTTPException(status_code=404, detail="unknown training run")
+        evaluations = session.execute(
+            select(Evaluation)
+            .where(Evaluation.run_id == run_id)
+            .order_by(Evaluation.created_at.desc(), Evaluation.id.desc())
+        ).scalars()
+        return [
+            EvaluationOut(
+                id=evaluation.id,
+                dev_set=evaluation.dev_set,
+                report=evaluation.report,
+                label_hash=evaluation.label_hash,
+                created_at=evaluation.created_at,
+            )
+            for evaluation in evaluations
+        ]
 
 
 @app.get(

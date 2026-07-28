@@ -3,9 +3,10 @@ import { Link, useParams } from 'react-router-dom';
 import {
   downloadTrainingWeights,
   getTrainingRun,
+  getTrainingRunEvaluations,
   getTrainingRunMetrics,
 } from '../api/training';
-import type { TrainingMetricPoint, TrainingRunDetail } from '../api/types';
+import type { Evaluation, TrainingMetricPoint, TrainingRunDetail } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { CostCurve } from '../components/CostCurve';
@@ -48,6 +49,7 @@ export function TrainingRunDetailPage() {
 
   const [run, setRun] = useState<TrainingRunDetail | null>(null);
   const [metrics, setMetrics] = useState<TrainingMetricPoint[] | null>(null);
+  const [evaluations, setEvaluations] = useState<Evaluation[] | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
 
   useEffect(() => {
@@ -83,6 +85,29 @@ export function TrainingRunDetailPage() {
       active = false;
     };
   }, [runId]);
+
+  // Dev-set reports, likewise separate: most runs have none, and a failure to
+  // load them should not cost the reader the config and the curve.
+  useEffect(() => {
+    let active = true;
+    setEvaluations(null);
+    getTrainingRunEvaluations(runId)
+      .then((result) => {
+        if (active) setEvaluations(result);
+      })
+      .catch(() => {
+        if (active) setEvaluations([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [runId]);
+
+  // The set the run *trained* on, to compare against what each evaluation was
+  // *scored* on. The split is recomputed rather than stored, so these differing
+  // is what turns a dev-set number into an indicative one.
+  const runLabelHash =
+    typeof run?.dataSnapshot?.label_hash === 'string' ? run.dataSnapshot.label_hash : null;
 
   return (
     <AppLayout>
@@ -144,6 +169,43 @@ export function TrainingRunDetailPage() {
               <KeyValues record={run.metrics} />
             )}
           </section>
+
+          {/* Held-out scores (M7), kept separate from the section above rather
+              than merged into it: that one is the run's own report on `val`, a
+              split it consulted every epoch, and these are scored afterwards on
+              data it never saw. Same shape, different standing — presenting them
+              together would invite reading the optimistic number as the honest
+              one. */}
+          {evaluations !== null && evaluations.length > 0 && (
+            <section className="run-section">
+              <h2>Held-out evaluation</h2>
+              {evaluations.map((evaluation) => (
+                <div key={evaluation.id} className="evaluation-block">
+                  <h3>
+                    {evaluation.devSet}
+                    <span className="form-note">
+                      scored {new Date(evaluation.createdAt).toLocaleString()}
+                    </span>
+                  </h3>
+                  {runLabelHash !== null &&
+                    evaluation.labelHash !== null &&
+                    evaluation.labelHash !== runLabelHash && (
+                      <p className="form-error">
+                        The labeled set changed between training and scoring, so this split is
+                        not the one the run held out. Treat the numbers as indicative.
+                      </p>
+                    )}
+                  {isEvaluationReport(evaluation.report) ? (
+                    <MetricsReport report={evaluation.report} />
+                  ) : (
+                    // An unfamiliar shape still renders rather than vanishing —
+                    // a report is worth showing raw if it cannot be shown well.
+                    <KeyValues record={evaluation.report} />
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
 
           <p className="run-timestamps">
             Started {new Date(run.startedAt).toLocaleString()}
