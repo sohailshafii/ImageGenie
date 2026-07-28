@@ -60,6 +60,10 @@ const STATUS_CODES: Record<number, ApiErrorCode> = {
   415: 'unsupported_media_type', // upload of a format the pipeline can't ingest
   422: 'validation_error', // FastAPI request-validation failures
   429: 'rate_limited',
+  // Distinct from server_error for the same reason 404 is: a 503 here means the
+  // capability isn't available yet (no trained model to classify with), which is
+  // a state to explain, not a failure to apologise for.
+  503: 'unavailable',
 };
 
 /** Map an error response to a typed code, preferring the body over the status. */

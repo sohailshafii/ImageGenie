@@ -13,6 +13,7 @@ import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { ConfirmButton } from '../components/ConfirmButton';
 import { DownloadButton } from '../components/DownloadButton';
+import { PredictPanel } from '../components/PredictPanel';
 import { ModelViewer } from '../components/ModelViewer';
 
 // Detail view (web.md): a single model in the interactive three.js viewer, its
@@ -161,6 +162,8 @@ export function DetailPage() {
                 ))}
               </span>
             </div>
+
+            <PredictPanel uid={model.uid} currentLabel={model.className} />
 
             <div className="detail-field">
               <span className="detail-label">Model id</span>
