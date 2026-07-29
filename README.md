@@ -56,9 +56,18 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   **The one thing not yet done is the full-set run itself** — the ~11.8k-model baseline is a
   button-press, not missing machinery; it is deferred deliberately because at ~55 min/epoch it wants
   a considered epoch count rather than a default.
-- ⬜ **Milestone 7** — evaluation (both dev sets, confusion matrices, bias writeup). The per-class
-  metric code (`ml/metrics.py`) and the held-out **test** split already exist — M6 scores only `val`
-  precisely so `test` stays sealed for this.
+- 🚧 **Milestone 7** — evaluation. `make evaluate RUN=n` scores a finished run against the held-out
+  **test** split and stores the report per (run, dev set); the run detail page renders it beside the
+  run's own `val` metrics, kept deliberately separate so the optimistic number is not mistaken for
+  the honest one. The classifier is also usable directly — predict a catalog model from its detail
+  page, or upload any mesh at `/classify` and get a class back without ingesting it. The **bias
+  writeup** is in [ml/ml.md](ml/ml.md#bias-analysis): class skew and tail collapse, a measured ~9%
+  weak-label error ceiling, evidence the model is under- rather than over-trained, and the bias the
+  pipeline itself introduces by rendering shape only.
+  **Outstanding:** FR-7 asks for *two* dev sets and only one exists. Just 49 LVIS-gold-labeled models
+  fall in our held-out split — too few to report — so a real second dev set means ingesting ~1,000
+  independently-annotated objects through the existing pipeline. Scoped as a data run, deliberately
+  after the remaining MVP work.
 
 ## Layout
 
