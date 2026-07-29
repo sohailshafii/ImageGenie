@@ -198,6 +198,16 @@ non-negotiable is NFR-4 bookkeeping.
   into train/val/test (~80/10/10), deterministic from `Config.seed` (sorted → seeded shuffle →
   `floor` slice, train keeps the remainder), so a run reproduces (NFR-4); tiny classes fall back to
   train. The test split is held for [evaluation](#evaluation) (M7).
+  - **NOT IMPLEMENTED: the fractions are fixed at 10/10 regardless of dataset size.** The right
+    proportions depend on how much data there is — a small set needs a *larger* held-out share (or
+    k-fold cross-validation) to measure anything stably, while at hundreds of thousands of examples
+    98/1/1 leaves a dev set that is still plenty. A constant 80/10/10 is wrong at both ends.
+    **This already cost us a result:** a `--limit 2000` run leaves 193 val models — about 4 per class
+    for the smallest — and the class-weighting A/B (runs 3 vs 4) came back inconclusive precisely
+    because tail movement was unresolvable at that size. At the full 11,783 the same fractions give
+    1,173, which is fine, so the defect only bites on limited runs. Fixing it means scaling
+    `val_fraction`/`test_fraction` with `len(samples)` — or at minimum warning when a split leaves
+    fewer than ~20 models in the smallest class.
 - **`Config` dataclass** — all hyperparameters, persisted verbatim to `training_run.config` so
   adding a knob needs no migration (config-over-code). Four groups: *Architecture* (`backbone`,
   `pretrained`, `num_views`, `view_pool`, `feature_dim`, `head_hidden_dims` — one int = nodes in a
@@ -404,11 +414,10 @@ distinct command is what stops "evaluate the model" becoming another training-ti
 
 ### Bias Analysis
 
-**Scope of the numbers below.** They come from the shakedown-scale runs — 2,000 models × 3 epochs,
-runs 3 (plain cross-entropy) and 4 (balanced class weighting) — and run 4's held-out `test` score
-(`evaluation 1`). A full-set run (11,783 × 6 epochs) is the intended basis for the final figures;
-the *shape* of every finding below is expected to survive it, and each number says which run
-produced it so refreshing is mechanical.
+**Where the numbers come from.** The headline figures are **run 14** — the full trainable set,
+11,783 models × 4 epochs on an on-demand T4 (1h53m) — and its held-out score, `evaluation 2`, over
+the 1,173 `test` models it recorded as held out. Runs 3 and 4 (2,000 × 3, plain cross-entropy and
+balanced class weighting) are cited where a comparison is the point. Each figure names its run.
 
 #### 1. The class distribution is skewed 7.7:1, and the tail collapses
 
@@ -417,13 +426,32 @@ car 693 · plant 572 · lamp 472 · chair 424 · table 278 · aircraft 278.
 
 A majority-class baseline scores ~18%, so **top-line accuracy is nearly uninformative here** — which
 is why macro averages sit beside it everywhere in this project. The gap between the two *is* the
-finding: run 4 scores 0.3782 accuracy against 0.3538 macro recall on `test`.
+finding: run 14 scores **0.4484 accuracy against 0.336 macro recall** on `test` (macro precision
+0.521, macro F1 0.385, n=1,173).
 
-Per-class on `test` (run 4, precision/recall): weapon 0.82/0.50 and building 0.41/0.81 at the head;
-`figure` recall **0.04**, `electronics` **never predicted at all**, `table` 0.03/0.25. The model
-answers with big classes and abandons small ones. In run 3 the same failure took a different shape —
-`animal` became a dumping ground (recall 0.77 on precision 0.31, absorbing 14 of 28 figures) — so
-which class swallows the others is unstable, but that one does is not.
+Per-class on `test` (run 14, precision/recall/support):
+
+| class | prec | recall | support | | class | prec | recall | support |
+|---|---:|---:|---:|---|---|---:|---:|---:|
+| weapon | 0.57 | 0.67 | 213 | | food | 0.36 | 0.31 | 80 |
+| animal | 0.53 | 0.37 | 168 | | car | **0.87** | 0.39 | 69 |
+| figure | 0.35 | 0.60 | 159 | | plant | 0.30 | 0.25 | 57 |
+| building | 0.46 | 0.70 | 157 | | lamp | 0.36 | 0.19 | 47 |
+| electronics | 0.28 | 0.24 | 127 | | chair | **0.90** | 0.21 | 42 |
+| | | | | | table | **0.75** | 0.11 | 27 |
+| | | | | | aircraft | **—** | 0.00 | 27 |
+
+**`aircraft` is never predicted at all** — 27 held-out models, zero predictions, undefined precision.
+
+**The most actionable pattern is the precision/recall split on the small classes:** `chair`
+0.90/0.21, `table` 0.75/0.11, `car` 0.87/0.39. When the model says "chair" it is almost always
+right; it just says it far too rarely. That is not a model unable to recognise chairs — it is a
+decision rule biased toward the big classes by the 7.7:1 skew, and it is the strongest evidence that
+part of the tail problem is **calibration, not capability**.
+
+Which class absorbs the others is unstable: here `figure` over-predicts (0.35 precision on 0.60
+recall), while in run 3 `animal` played that role (0.31/0.77, taking 14 of 28 figures). That one
+class does is not.
 
 #### 2. Class weighting did not fix it (and that is informative)
 
@@ -436,7 +464,13 @@ rather than repaired: `table` went 0.00/0.00 → 0.11/0.75 (predicting it often,
 Read as **inconclusive rather than settled**: run 4 trailed run 3 at every epoch and ended with a
 higher val loss that was still falling, so weighting made optimization harder and three epochs never
 recovered. The deeper problem is that a 193-sample val split cannot resolve tail effects at all —
-`aircraft` has 3 samples in it. Revisit at full scale, where val is ~1,173.
+`aircraft` has 3 samples in it.
+
+**This is now the experiment most worth rerunning.** Run 14 gives a 1,173-model val split, which can
+resolve tail movement, and (1) supplies a specific reason to expect weighting to help that was not
+visible before: the small classes are *precise but under-predicted* (`chair` 0.90/0.21), which is the
+calibration failure class weighting exists to correct. One full-set run with
+`class_weighting=balanced`, compared against run 14, would settle it.
 
 #### 3. The labels themselves impose a ceiling — measured at ~9%
 
@@ -446,24 +480,46 @@ time on the actually-ingested corpus rather than a sample.
 
 It is **not uniform across classes**, which is what makes it bias rather than noise: FR-3 measured
 per-class weak-label precision of 0.78–1.00 for most classes but **0.62 for `figure`**, whose
-boundary with `animal` is genuinely fuzzy. So the class the model does worst on (`figure` recall
-0.04) is also the class whose labels are least trustworthy — and a model that perfectly reproduced
-these labels would still look wrong wherever they are wrong. **Some fraction of the measured error
-is unreachable by any amount of training.**
+boundary with `animal` is genuinely fuzzy. In run 14 `figure` is precisely the class that
+over-predicts — 0.35 precision on 0.60 recall, absorbing others — so the class whose labels are
+least trustworthy is also the one whose behaviour is hardest to interpret: we cannot tell how much
+of that 0.35 is the model being wrong and how much is the *label* being wrong.
 
-#### 4. The model is under-trained, not over-trained
+A model that perfectly reproduced these labels would still look wrong wherever they are wrong, so
+**some fraction of the measured 0.4484 is unreachable by any amount of training** — and with (4)
+showing training itself is exhausted, this ceiling is now the leading explanation rather than one of
+several.
 
-Run 3 ended with train loss 1.7661 against val loss 1.7665 — no gap whatsoever — and run 4's `test`
-accuracy (0.3782) slightly *exceeds* its val (0.3731). Overfitting shows the opposite pattern. Val
-accuracy was still climbing steeply when run 3 stopped (0.306 → 0.378 → 0.461).
+Note the two measurements are not independent methods: both FR-3's 0.91 and this 8.8% come from
+comparison against LVIS gold. They are different *samples* — FR-3 over sampled shards, this over the
+ingested corpus — which is corroboration, not confirmation by a second technique.
 
-Two cheap levers, both exposed on the launch form: **more epochs**, and **dropout 0.5 → ~0.2** —
-dropout regularises, and running it at 0.5 against a model that is underfitting fights a problem
-that isn't there.
+#### 4. It has converged at ~0.45 — the ceiling is upstream of training
 
-**Separating (3) from (4) needs clean labels.** Under-training and label noise both depress the same
-numbers, and the only way to tell how much of the ceiling is which is to score against
-independently-annotated data. See the follow-up below.
+At shakedown scale this looked like under-training: run 3 ended with train loss 1.7661 against val
+loss 1.7665 — no gap at all — and val accuracy still climbing steeply (0.306 → 0.378 → 0.461). The
+obvious prescription was more epochs and more data.
+
+**Run 14 tested that and refuted it.** With 5.8× the data and a fourth epoch:
+
+| | run 3 (2,000 × 3) | run 14 (11,783 × 4) |
+|---|---:|---:|
+| val accuracy | 0.4611 | 0.4552 |
+| macro precision | 0.484 | 0.482 |
+| macro recall | 0.334 | 0.345 |
+| macro F1 | 0.367 | 0.385 |
+
+Accuracy did not move (slightly down); macro F1 improved modestly. If data volume were the binding
+constraint, this is exactly where it would have shown, and it did not.
+
+Run 14's own curve says the same thing from the other side. Val loss went 1.766 → 1.696 → 1.729 →
+1.703 — flat after epoch 1 — while train loss fell 2.03 → 2.01 → 1.51 → 1.46. The model kept
+extracting more from the training set and none of it transferred. That is the far side of the
+underfitting boundary: **more epochs would now widen the gap rather than close it.**
+
+So the two cheap levers are spent. Whatever caps this model at ~0.45 is not epochs and not corpus
+size, which leaves the two candidates below: the label ceiling in (3), and the shape-only
+representation in (5). Distinguishing them needs independently-annotated data — see the follow-up.
 
 #### 5. Bias introduced by the pipeline itself, not the data
 
@@ -483,7 +539,9 @@ independently-annotated data. See the follow-up below.
 #### Follow-up: a real second dev set
 
 Everything above rests on one corpus labeled by one weak labeler, so it measures generalization to
-unseen **objects**, not whether the labels are right. The intended fix is measured and scoped rather
+unseen **objects**, not whether the labels are right. After (4), that is no longer a nicety: with
+training exhausted, the open question is *what* caps the model at ~0.45, and only clean labels
+separate "the labels are wrong" from "the representation cannot express it". The intended fix is measured and scoped rather
 than hypothetical: LVIS gold has 13,118 objects, of which only **475** are in our trainable set and
 only **49** in the held-out split — roughly 4 per class, too thin to report. A genuine second dev set
 means **ingesting ~1,000 of the ~12,600 LVIS-annotated objects not yet in the corpus** through the
