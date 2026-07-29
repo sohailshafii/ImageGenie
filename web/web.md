@@ -155,6 +155,21 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
   `unavailable` error code for this, added for the same reason 404 has `not_found`: the generic
   `server_error` conflates "cannot yet" with "went wrong".
 
+### Classifying an upload
+
+`/classify` (`ClassifyPage`) — upload a mesh, get a class back, nothing stored. Backed by
+`POST /models/predict-upload`.
+
+- **A separate page from `/upload`, not a second button on it.** The two look alike and mean
+  entirely different things: one asks a question, the other adds to the catalog. The expensive
+  mistake is ingesting when you only meant to ask, so they do not sit side by side.
+- **Ungated in the nav, unlike Upload.** Nothing is stored, so this is not a route around the admin
+  gate on FR-9 ingestion — which is the whole reason it can be open to viewers.
+- **Accepts PLY** as well as the three ingest formats, so the normalized mesh a detail page hands
+  out can be fed straight back in.
+- **Says that it is rendering.** The server renders twelve views before it can answer, so a few
+  seconds of apparent nothing is expected and the button says so rather than looking hung.
+
 ## Downloads
 
 Three downloads, all through one `DownloadButton` component: the two meshes on the model detail

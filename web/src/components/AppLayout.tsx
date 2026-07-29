@@ -16,6 +16,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </Link>
         <nav className="app-user">
           <Link to="/training">Training</Link>
+          {/* Ungated, unlike Upload beside it: classifying stores nothing, so it
+              is not a route around the admin gate on ingestion. */}
+          <Link to="/classify">Classify</Link>
           {user?.role === 'admin' && <Link to="/upload">Upload</Link>}
           {user?.role === 'admin' && <Link to="/deleted">Deleted</Link>}
           {user?.role === 'admin' && <Link to="/dead-letters">Failed</Link>}
