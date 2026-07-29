@@ -45,5 +45,12 @@ workerPoolSpecs:
 # 6-hour run costs about $4.40 — still well inside the budget, and it finishes.
 scheduling:
   strategy: __STRATEGY__
+  # A hard ceiling on wall-clock: Vertex kills the job at this point whatever it
+  # is doing. The budget alerts (infra/budget.tf) only *notify*, and they notify
+  # against a $100 monthly total — far too coarse and too late to stop a training
+  # job that is not progressing. This is the mechanism that actually bounds the
+  # spend of one run. Default 6h via MAX_HOURS, comfortably above the ~3.8h a
+  # 4-epoch full-set run needs at the measured 0.288 s/model/epoch.
+  timeout: __TIMEOUT__
 
 serviceAccount: __SERVICE_ACCOUNT__
