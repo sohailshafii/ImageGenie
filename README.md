@@ -71,7 +71,10 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
   is upstream of training, and only independently-annotated labels distinguish a label ceiling from a
   representation limit. Just 49 LVIS-gold-labeled models
   fall in our held-out split — too few to report — so a real second dev set means ingesting ~1,000
-  independently-annotated objects through the existing pipeline. Scoped as a data run, deliberately
+  independently-annotated objects through the existing pipeline. A second post-MVP thread is the
+  **texture A/B**: renders are shape-only, and because the convert stage exports PLY (which carries no
+  UV textures) using materials means changing the pipeline and re-rendering everything — see
+  [ml.md](ml/ml.md#bias-analysis). Both are scoped as data runs, deliberately
   after the remaining MVP work.
 
 ## Layout
