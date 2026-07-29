@@ -10,6 +10,7 @@ from infer import (
     evaluate_samples,
     load_run_model,
     predict_probabilities,
+    rank_samples,
     rebuild_config,
 )
 from model import MultiViewCNN
@@ -81,6 +82,26 @@ def test_evaluate_samples_reports_against_the_given_split(tmp_path) -> None:
     assert report["split"] == "test"
     assert report["sample_count"] == 2
     assert set(report["per_class"]) == set(ROSTER)
+
+
+def test_rank_samples_pairs_each_ranking_with_its_own_sample(tmp_path) -> None:
+    """Batched scoring must stay aligned with the input, across batch boundaries —
+    a shuffled loader would silently attribute one model's prediction to another."""
+    storage = LocalStorage(tmp_path)
+    samples = [("m1", "chair"), ("m2", "lamp"), ("m3", "car")]
+    for uid, _ in samples:
+        _seed_views(storage, uid)
+    model = MultiViewCNN.from_config(rebuild_config({"pretrained": False}))
+    model.eval()
+
+    # batch_size=2 over 3 samples so the last batch is short.
+    ranked_samples = list(rank_samples(model, samples, storage, batch_size=2))
+
+    assert [(uid, label) for uid, label, _ in ranked_samples] == samples
+    for _, _, ranked in ranked_samples:
+        assert len(ranked) == len(ROSTER)
+        probabilities = [probability for _, probability in ranked]
+        assert probabilities == sorted(probabilities, reverse=True)
 
 
 def test_a_run_without_weights_is_not_usable(monkeypatch, tmp_path) -> None:

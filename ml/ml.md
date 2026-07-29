@@ -412,6 +412,36 @@ distinct command is what stops "evaluate the model" becoming another training-ti
 - **`classify_model` returns the whole roster ranked**, not just the top class: a single label hides
   a near-tie between `figure` and `animal`, where the model is lucky rather than right.
 
+### The Review Queue (milestone 8)
+
+```
+make review-queue RUN=14                      # the run's own held-out test split
+make review-queue RUN=14 SPLIT=val LIMIT=100  # the 100 most confident disagreements
+```
+
+`ml/review_queue.py` scores a finished run against a split and writes
+`data/m8/review_queue.csv` — one row per model where the classifier and the stored label
+**disagree**, each with a link to the model's page and two blank columns for the reviewer's proposed
+label and verdict.
+
+- **Disagreement, not low confidence.** The textbook active-learning queue is the least-confident
+  models, and the browse UI already sorts that way. Low confidence finds models the classifier is
+  unsure about; disagreement finds models where somebody is *demonstrably* wrong — and on a corpus
+  whose labels are ~9% wrong ([bias analysis](#bias-analysis)), each disagreement is either model
+  error or label error, which is exactly the distinction the analysis needs a human for.
+- **Most-confident disagreements first.** Those are where the classifier commits hardest against the
+  label, so they are the most informative to adjudicate and the least likely to be a coin-flip.
+- **Scoring goes through the dataset and a DataLoader** (`infer.rank_samples`), like evaluation does
+  — not `classify_model` per model. A model is twelve separate view reads from the bucket, so
+  scoring one at a time serializes them all: over 2 s/model measured against GCS, dominated by read
+  latency rather than the forward pass. Batching with worker processes is the difference between
+  ~40 minutes and ~15 for the 1,173-model `test` split. `classify_model` stays the right tool for
+  the single-model prediction endpoint, and the wrong one for a whole split.
+- **Labeling inside `test` sharpens the yardstick, not the model.** With ~9% of labels wrong, the
+  held-out score is measured against a noisy ruler; correcting those labels makes the number mean
+  what it says immediately. Correcting *training* labels only helps with volume, so a couple of
+  review passes are not expected to move aggregate metrics — that is the design, not a failure.
+
 ### Bias Analysis
 
 **Where the numbers come from.** The headline figures are **run 14** — the full trainable set,
@@ -535,6 +565,28 @@ representation in (5). Distinguishing them needs independently-annotated data �
   problem in (1) is partly the price.
 - **The corpus is Sketchfab's, not the world's.** Whatever artists choose to model and upload sets
   the distribution; nothing here corrects for it, and the skew in (1) is that choice showing through.
+
+#### Follow-up (post-MVP): render textures, and A/B them
+
+The other candidate for the ~0.45 ceiling, and the one that would be easiest to
+under-scope. **Shading is not the gap** — the render stage already lights each mesh with
+camera-attached key and fill lights precisely so shading reveals form, and the tone was tuned twice
+to get there. What is discarded is **texture and colour**: `workers/render.py` overrides every mesh's
+own material with one neutral grey, so a wooden chair and a steel chair are identical inputs, and
+`food`, `plant` and `electronics` lose their most distinguishing cue. Those are three of the classes
+performing worst.
+
+**It is a pipeline change, not a render tweak.** The convert stage exports **PLY, which carries no UV
+textures at all**, so materials are gone two stages before rendering. Using them means preserving
+textured geometry through convert and normalize, then **re-rendering all 11,783 models** — a few
+dollars and a couple of hours of parallel Cloud Run, plus a schema question about what the converted
+artifact is.
+
+Test it as a controlled A/B rather than a migration: re-render one subset with textures, train on it,
+and compare against the same subset shape-only. Anything less cannot separate "textures help" from
+"this subset is easier". Weigh it against the risk it introduces — with textures the model can key on
+an artist's palette or a render style rather than the object, which is a *new* bias in exchange for
+the one it removes.
 
 #### Follow-up: a real second dev set
 

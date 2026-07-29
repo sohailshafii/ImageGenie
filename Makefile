@@ -38,7 +38,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -88,6 +88,15 @@ evaluate: ## score a finished run against a held-out dev set (M7; RUN=n, SPLIT=t
 	# with `train`.
 	@test -n "$(RUN)" || { echo "usage: make evaluate RUN=<training run id> [SPLIT=test]"; exit 1; }
 	PYTHONPATH=server $(BIN)/python ml/evaluate.py --run $(RUN) $(if $(SPLIT),--split $(SPLIT),)
+
+review-queue: ## build the M8 hand-labeling queue from a run's disagreements (RUN=n, SPLIT=test, LIMIT=N, WORKERS=4)
+	# Where the classifier and the stored label disagree, one of them is wrong —
+	# and only a human can say which. That split is what separates real model
+	# error from the weak-label ceiling (ml.md#bias-analysis).
+	@test -n "$(RUN)" || { echo "usage: make review-queue RUN=<training run id> [SPLIT=test] [LIMIT=N] [WORKERS=4]"; exit 1; }
+	PYTHONPATH=server $(BIN)/python ml/review_queue.py --run $(RUN) \
+		$(if $(SPLIT),--split $(SPLIT),) $(if $(LIMIT),--limit $(LIMIT),) \
+		$(if $(WORKERS),--num-workers $(WORKERS),)
 
 smoke-train: ## CPU smoke: seed a tiny class-separable dataset, train end-to-end, assert it learns (self-cleaning)
 	# Needs a reachable, migrated Postgres (IMAGEGENIE_DATABASE_URL, default

@@ -18,6 +18,7 @@ form (server.md#api-layer).
 from __future__ import annotations
 
 import io
+from collections.abc import Iterator
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -130,6 +131,15 @@ def views_from_images(images: list[bytes]) -> torch.Tensor:
     return torch.stack([decode_view(image) for image in images])
 
 
+def rank_classes(probabilities: torch.Tensor) -> list[tuple[str, float]]:
+    """One model's probability vector as (class_name, probability), best first."""
+    return sorted(
+        zip(ROSTER, probabilities.tolist(), strict=True),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+
+
 def classify_views(
     model: MultiViewCNN, views: torch.Tensor
 ) -> list[tuple[str, float]]:
@@ -139,12 +149,42 @@ def classify_views(
     stored — rendered in memory from an upload — uses the same path as one
     reading them from the bucket.
     """
-    probabilities = predict_probabilities(model, views.unsqueeze(0))[0]
-    return sorted(
-        zip(ROSTER, probabilities.tolist(), strict=True),
-        key=lambda pair: pair[1],
-        reverse=True,
+    return rank_classes(predict_probabilities(model, views.unsqueeze(0))[0])
+
+
+def rank_samples(
+    model: MultiViewCNN,
+    samples: list[tuple[str, str]],
+    storage: Storage,
+    batch_size: int = 32,
+    num_workers: int = 0,
+) -> Iterator[tuple[str, str, list[tuple[str, float]]]]:
+    """Rank the whole roster for each of `samples`, yielding (uid, class_name, ranked).
+
+    The batched counterpart to `classify_model`, and the one to reach for over a
+    whole split. Classifying model-by-model means twelve *sequential* storage
+    reads per model with nothing overlapping them — measured at over 2 s/model
+    against GCS, which is the read latency and not the forward pass. A DataLoader
+    fans those reads across workers and hands the model a batch at a time, the
+    same way `evaluate_samples` does.
+
+    Yields in `samples` order (the loader does not shuffle), so a caller can pair
+    each ranking with the sample it came from and report progress as it goes
+    rather than after the last batch.
+    """
+    loader = DataLoader(
+        MultiViewDataset(samples, storage),
+        batch_size=batch_size,
+        shuffle=False,  # so the results line up with `samples` positionally
+        num_workers=num_workers,
     )
+    ranked_samples = (
+        rank_classes(probabilities)
+        for views, _ in loader
+        for probabilities in predict_probabilities(model, views)
+    )
+    for (uid, class_name), ranked in zip(samples, ranked_samples, strict=True):
+        yield uid, class_name, ranked
 
 
 def evaluate_samples(
