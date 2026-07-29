@@ -164,6 +164,7 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	#   make train-cloud                      # the whole trainable set
 	#   make train-cloud ARGS='--epochs 5'
 	#   make train-cloud SPOT=0                # on-demand, for a long run
+	#   make train-cloud MAX_HOURS=2           # tighter hard timeout (default 6)
 	#
 	# SPOT=0 is not a cost preference, it is what makes a multi-hour run finish.
 	# A preemption RESTARTS a run rather than pausing it (see ml/vertex_job.yaml),
@@ -192,7 +193,8 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	trap 'rm -f "$$spec"' EXIT; \
 	: "$${DEVICE:=cuda}"; : "$${WORKERS:=4}"; \
 	if [ "$(SPOT)" = "0" ]; then strategy=STANDARD; else strategy=SPOT; fi; \
-	echo "scheduling: $$strategy"; \
+	: "$${MAX_HOURS:=6}"; timeout=$$(( MAX_HOURS * 3600 ))s; \
+	echo "scheduling: $$strategy, hard timeout $$timeout"; \
 	args=$$($(BIN)/python -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \
 		--device "$$DEVICE" --num-workers "$$WORKERS" \
 		$(if $(LIMIT),--limit $(LIMIT),) $(ARGS)); \
@@ -202,6 +204,7 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	    -e 's|__SECRET__|projects/$(GCP_PROJECT)/secrets/imagegenie-database-url/versions/latest|' \
 	    -e "s|__ARGS__|$$args|" \
 	    -e "s|__STRATEGY__|$$strategy|" \
+	    -e "s|__TIMEOUT__|$$timeout|" \
 	    ml/vertex_job.yaml > "$$spec"; \
 	echo "--- job spec ---"; cat "$$spec"; echo "----------------"; \
 	gcloud ai custom-jobs create --project $(GCP_PROJECT) --region $(GCP_REGION) \
