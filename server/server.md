@@ -213,6 +213,20 @@ Two practical consequences: prefer an epoch count whose wall-clock keeps preempt
 sensible (~1 hr/epoch on the full set, measured), and after any cancelled or preempted job, check
 for a phantom `running` row.
 
+**Worse than "does not resume": Vertex *restarts* it.** A preempted job is retried automatically, so
+`train.py` runs again from epoch 1 and opens a **new** `training_run` row, while the job state never
+leaves `RUNNING` — nothing looks wrong from the outside. The first full-set attempt (6 epochs,
+11,783 models) did this **nine times in three hours** and never passed epoch 1, leaving nine phantom
+`running` rows and a dashboard reading "Running 9". The cause was ordinary spot contention:
+*"Resources are insufficient in region: us-central1"*.
+
+So **spot is for short runs only** — anything under ~30 minutes. A run that must hold a node for
+hours goes on-demand: `make train-cloud SPOT=0` (`strategy: STANDARD`). That costs roughly $0.73/hr
+against spot's ~$0.20, so a 6-hour full-set run is about **$4.40** — inside NFR-1's $5–20 training
+line, and it actually finishes. The permanent fix is checkpoint *resume*, which would make spot
+viable for long runs; it is deliberately not built yet (CLAUDE.md's M6 budget: add machinery when a
+result demands it).
+
 **GPU: default T4** — the cheapest widely-available spot GPU, ample for a small multi-view CNN. Step
 up to **L4** only for faster/newer silicon if spot availability is good. A plain Compute Engine spot
 VM was rejected: cheaper per-hour but requires manual teardown, reintroducing the idle-GPU risk.

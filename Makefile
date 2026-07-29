@@ -163,6 +163,12 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	#   make train-cloud LIMIT=500
 	#   make train-cloud                      # the whole trainable set
 	#   make train-cloud ARGS='--epochs 5'
+	#   make train-cloud SPOT=0                # on-demand, for a long run
+	#
+	# SPOT=0 is not a cost preference, it is what makes a multi-hour run finish.
+	# A preemption RESTARTS a run rather than pausing it (see ml/vertex_job.yaml),
+	# so a 6-hour job in a contended region can retry indefinitely without ever
+	# passing epoch 1 — while the job state stays RUNNING and nothing looks wrong.
 	#
 	# Two preflight checks, both learned the expensive way. A job runs unattended
 	# for hours, so an image that doesn't match the code is not a slow failure —
@@ -185,6 +191,8 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	spec=$$(mktemp -t imagegenie-vertex); \
 	trap 'rm -f "$$spec"' EXIT; \
 	: "$${DEVICE:=cuda}"; : "$${WORKERS:=4}"; \
+	if [ "$(SPOT)" = "0" ]; then strategy=STANDARD; else strategy=SPOT; fi; \
+	echo "scheduling: $$strategy"; \
 	args=$$($(BIN)/python -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \
 		--device "$$DEVICE" --num-workers "$$WORKERS" \
 		$(if $(LIMIT),--limit $(LIMIT),) $(ARGS)); \
@@ -193,6 +201,7 @@ train-cloud: ## submit a Vertex AI spot-GPU training run (LIMIT=500 for a subset
 	    -e 's|__INSTANCE__|$(GCP_PROJECT):$(GCP_REGION):imagegenie-pg|' \
 	    -e 's|__SECRET__|projects/$(GCP_PROJECT)/secrets/imagegenie-database-url/versions/latest|' \
 	    -e "s|__ARGS__|$$args|" \
+	    -e "s|__STRATEGY__|$$strategy|" \
 	    ml/vertex_job.yaml > "$$spec"; \
 	echo "--- job spec ---"; cat "$$spec"; echo "----------------"; \
 	gcloud ai custom-jobs create --project $(GCP_PROJECT) --region $(GCP_REGION) \
