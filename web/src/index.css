@@ -810,6 +810,22 @@ select:focus {
   overflow-wrap: anywhere; /* long values (the sha256 label_hash) must wrap */
 }
 
+.kv-details summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+/* An expanded held-out uid list is thousands of ids: scroll it in place rather
+   than letting one field push the rest of the snapshot off the screen. */
+.kv-overflow {
+  max-height: 12rem;
+  overflow-y: auto;
+  margin-top: 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .run-timestamps {
   margin-top: 1.5rem;
   color: var(--text-muted);

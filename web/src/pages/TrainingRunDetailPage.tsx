@@ -25,15 +25,44 @@ function formatValue(value: unknown): string {
   return String(value);
 }
 
+// Past this, a value is collapsed behind its summary. `data_snapshot.held_out`
+// records every uid a run held out — ~2,300 of them at full scale — and printed
+// inline it buries every other field on the page under a wall of hex. The list
+// is still bookkeeping worth reading (NFR-4), so it folds rather than truncates.
+const COLLAPSE_OVER_CHARACTERS = 240;
+
+/** A one-line stand-in for a value too long to show inline: how much is in there. */
+function summarizeValue(value: unknown): string {
+  if (Array.isArray(value)) return `${value.length.toLocaleString()} items`;
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, entry]) => (Array.isArray(entry) ? `${key}: ${entry.length.toLocaleString()}` : key))
+      .join(' · ');
+  }
+  return `${String(value).length.toLocaleString()} characters`;
+}
+
 function KeyValues({ record }: { record: Record<string, unknown> }) {
   return (
     <dl className="kv-list">
-      {Object.entries(record).map(([key, value]) => (
-        <div className="kv-row" key={key}>
-          <dt>{key}</dt>
-          <dd className="kv-value">{formatValue(value)}</dd>
-        </div>
-      ))}
+      {Object.entries(record).map(([key, value]) => {
+        const formatted = formatValue(value);
+        return (
+          <div className="kv-row" key={key}>
+            <dt>{key}</dt>
+            <dd className="kv-value">
+              {formatted.length <= COLLAPSE_OVER_CHARACTERS ? (
+                formatted
+              ) : (
+                <details className="kv-details">
+                  <summary>{summarizeValue(value)}</summary>
+                  <div className="kv-overflow">{formatted}</div>
+                </details>
+              )}
+            </dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
