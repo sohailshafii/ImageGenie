@@ -404,10 +404,91 @@ distinct command is what stops "evaluate the model" becoming another training-ti
 
 ### Bias Analysis
 
-- Per-class precision/recall + confusion matrices on both dev sets.
-- **Key question:** which categories do metadata-derived weak labels systematically corrupt?
-  Compare weak-label-trained vs. hand-label-corrected performance **per class** — a class that
-  improves a lot after manual correction is one the weak labels were poisoning.
+**Scope of the numbers below.** They come from the shakedown-scale runs — 2,000 models × 3 epochs,
+runs 3 (plain cross-entropy) and 4 (balanced class weighting) — and run 4's held-out `test` score
+(`evaluation 1`). A full-set run (11,783 × 6 epochs) is the intended basis for the final figures;
+the *shape* of every finding below is expected to survive it, and each number says which run
+produced it so refreshing is mechanical.
+
+#### 1. The class distribution is skewed 7.7:1, and the tail collapses
+
+weapon 2,134 · animal 1,687 · figure 1,594 · building 1,572 · electronics 1,279 · food 800 ·
+car 693 · plant 572 · lamp 472 · chair 424 · table 278 · aircraft 278.
+
+A majority-class baseline scores ~18%, so **top-line accuracy is nearly uninformative here** — which
+is why macro averages sit beside it everywhere in this project. The gap between the two *is* the
+finding: run 4 scores 0.3782 accuracy against 0.3538 macro recall on `test`.
+
+Per-class on `test` (run 4, precision/recall): weapon 0.82/0.50 and building 0.41/0.81 at the head;
+`figure` recall **0.04**, `electronics` **never predicted at all**, `table` 0.03/0.25. The model
+answers with big classes and abandons small ones. In run 3 the same failure took a different shape —
+`animal` became a dumping ground (recall 0.77 on precision 0.31, absorbing 14 of 28 figures) — so
+which class swallows the others is unstable, but that one does is not.
+
+#### 2. Class weighting did not fix it (and that is informative)
+
+Run 4 repeated run 3 with `class_weighting=balanced`, identical data (same `label_hash`) and seed.
+Macro recall — the thing weighting exists to move — went **0.334 → 0.337**, inside the noise on a
+193-sample val split, while accuracy and macro precision each fell ~9 points. It redistributed
+rather than repaired: `table` went 0.00/0.00 → 0.11/0.75 (predicting it often, mostly wrongly) while
+`plant` went 0.33/0.11 → 0.00/0.00.
+
+Read as **inconclusive rather than settled**: run 4 trailed run 3 at every epoch and ended with a
+higher val loss that was still falling, so weighting made optimization harder and three epochs never
+recovered. The deeper problem is that a 193-sample val split cannot resolve tail effects at all —
+`aircraft` has 3 samples in it. Revisit at full scale, where val is ~1,173.
+
+#### 3. The labels themselves impose a ceiling — measured at ~9%
+
+The weak labeler disagrees with the independently-annotated LVIS gold labels on **8.8%** of the 475
+models where both exist (42 of 475). That independently confirms FR-3's 0.91 blended precision, this
+time on the actually-ingested corpus rather than a sample.
+
+It is **not uniform across classes**, which is what makes it bias rather than noise: FR-3 measured
+per-class weak-label precision of 0.78–1.00 for most classes but **0.62 for `figure`**, whose
+boundary with `animal` is genuinely fuzzy. So the class the model does worst on (`figure` recall
+0.04) is also the class whose labels are least trustworthy — and a model that perfectly reproduced
+these labels would still look wrong wherever they are wrong. **Some fraction of the measured error
+is unreachable by any amount of training.**
+
+#### 4. The model is under-trained, not over-trained
+
+Run 3 ended with train loss 1.7661 against val loss 1.7665 — no gap whatsoever — and run 4's `test`
+accuracy (0.3782) slightly *exceeds* its val (0.3731). Overfitting shows the opposite pattern. Val
+accuracy was still climbing steeply when run 3 stopped (0.306 → 0.378 → 0.461).
+
+Two cheap levers, both exposed on the launch form: **more epochs**, and **dropout 0.5 → ~0.2** —
+dropout regularises, and running it at 0.5 against a model that is underfitting fights a problem
+that isn't there.
+
+**Separating (3) from (4) needs clean labels.** Under-training and label noise both depress the same
+numbers, and the only way to tell how much of the ceiling is which is to score against
+independently-annotated data. See the follow-up below.
+
+#### 5. Bias introduced by the pipeline itself, not the data
+
+- **Renders are shape-only.** Every mesh is drawn with one neutral grey material
+  (`workers/render.py`), discarding its own textures and colours. Deliberate — it stops the model
+  keying on an artist's palette — but it means classes separable mainly by *appearance* rather than
+  *silhouette* cannot be learned at all, and a 12-view orbit at fixed elevation adds a viewpoint
+  prior on top.
+- **The roster is a choice with consequences.** `chair`/`table`/`lamp` are three of the four
+  smallest classes and could have been one `furniture` class — which would have removed two tail
+  classes at the cost of the resolution that makes the classifier useful. Splitting them was chosen
+  for visual coherence (see [Class-list approach](#metadata-exploration-milestone-1)); the tail
+  problem in (1) is partly the price.
+- **The corpus is Sketchfab's, not the world's.** Whatever artists choose to model and upload sets
+  the distribution; nothing here corrects for it, and the skew in (1) is that choice showing through.
+
+#### Follow-up: a real second dev set
+
+Everything above rests on one corpus labeled by one weak labeler, so it measures generalization to
+unseen **objects**, not whether the labels are right. The intended fix is measured and scoped rather
+than hypothetical: LVIS gold has 13,118 objects, of which only **475** are in our trainable set and
+only **49** in the held-out split — roughly 4 per class, too thin to report. A genuine second dev set
+means **ingesting ~1,000 of the ~12,600 LVIS-annotated objects not yet in the corpus** through the
+existing (idempotent) pipeline: a data run, not a code change. That closes FR-7 properly and answers
+the (3)-versus-(4) question in the same stroke.
 
 ## Coding Standards (ML)
 
