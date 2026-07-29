@@ -20,7 +20,7 @@ def render_env(pg_engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_camera_poses_are_distinct_transforms() -> None:
-    poses = render._camera_poses(render.NUM_VIEWS)
+    poses = render.camera_poses(render.NUM_VIEWS)
     assert len(poses) == render.NUM_VIEWS
     assert all(pose.shape == (4, 4) for pose in poses)
     # Adjacent viewpoints differ (the ring is not degenerate).
@@ -46,7 +46,7 @@ def test_render_writes_view_set_idempotently(
         render_calls.append(len(poses))
         return [f"png-{index}".encode() for index in range(len(poses))]
 
-    monkeypatch.setattr(render, "_render_views", fake_render_views)
+    monkeypatch.setattr(render, "render_views", fake_render_views)
 
     job = {"uid": uid}
     assert render.process(job) == "rendered"

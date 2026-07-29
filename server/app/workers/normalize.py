@@ -16,6 +16,8 @@ from __future__ import annotations
 import hashlib
 import logging
 
+import trimesh
+
 from ..artifact_keys import converted_key, normalized_key
 from ..config import get_settings
 from ..consumer import run_stage
@@ -32,6 +34,23 @@ STAGE = ArtifactStage.normalized
 
 
 
+def normalize_mesh(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Center on the bounding-box center and scale the largest extent to 1.
+
+    Its own function because prediction has to apply the *same* transform to an
+    uploaded mesh (app/predict.py): a model trained on unit-scale, origin-centred
+    renders sees something else entirely if the views come from a mesh at a
+    different scale or offset, and the mismatch would surface as a bad prediction
+    rather than as an error.
+    """
+    mesh.apply_translation(-mesh.bounds.mean(axis=0))
+    largest_extent = float(mesh.extents.max())
+    if largest_extent <= 0.0:
+        raise ValueError("degenerate mesh (zero extent)")
+    mesh.apply_scale(1.0 / largest_extent)
+    return mesh
+
+
 def process(job: dict) -> str:
     """Center + unit-scale one model. Returns ``"normalized"`` or ``"skipped"``."""
     uid = job["uid"]
@@ -46,16 +65,7 @@ def process(job: dict) -> str:
         logger.info("skip already-normalized", extra={"uid": uid, "stage": STAGE.value})
         result = "skipped"
     else:
-        mesh = load_mesh(storage.get_bytes(converted_key(uid)), file_type="ply")
-
-        # Center on the bounding-box center, then scale the largest extent to 1.
-        bounding_box_center = mesh.bounds.mean(axis=0)
-        mesh.apply_translation(-bounding_box_center)
-        largest_extent = float(mesh.extents.max())
-        if largest_extent <= 0.0:
-            raise ValueError(f"degenerate mesh (zero extent) for {uid}")
-        mesh.apply_scale(1.0 / largest_extent)
-
+        mesh = normalize_mesh(load_mesh(storage.get_bytes(converted_key(uid)), file_type="ply"))
         ply_bytes = export_ply(mesh)
         content_hash = hashlib.sha256(ply_bytes).hexdigest()
         storage.put_bytes(output_key, ply_bytes)

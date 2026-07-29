@@ -92,7 +92,7 @@ def _light_offset(yaw_degrees: float, pitch_degrees: float) -> np.ndarray:
     return rotate_yaw @ rotate_pitch
 
 
-def _camera_poses(num_views: int) -> list[np.ndarray]:
+def camera_poses(num_views: int) -> list[np.ndarray]:
     """`num_views` camera-to-world poses evenly spaced on a tilted ring at origin."""
     target = np.zeros(3)
     up = np.array([0.0, 1.0, 0.0])
@@ -108,7 +108,7 @@ def _camera_poses(num_views: int) -> list[np.ndarray]:
     return poses
 
 
-def _render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]:
+def render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]:
     """Render `mesh` from each pose to PNG bytes (offscreen; imports pyrender lazily).
 
     pyrender/OpenGL are imported here, not at module load, so the pure geometry
@@ -171,7 +171,7 @@ def process(job: dict) -> str:
         return "skipped"
 
     mesh = load_mesh(storage.get_bytes(normalized_key(uid)), file_type="ply")
-    images = _render_views(mesh, _camera_poses(NUM_VIEWS), RESOLUTION)
+    images = render_views(mesh, camera_poses(NUM_VIEWS), RESOLUTION)
     for view_index, png_bytes in enumerate(images):
         storage.put_bytes(view_key(uid, view_index), png_bytes)
     with session_scope() as session:
