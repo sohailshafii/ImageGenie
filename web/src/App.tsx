@@ -8,6 +8,7 @@ import { InvitePage } from './pages/InvitePage';
 import { TrainingRunDetailPage } from './pages/TrainingRunDetailPage';
 import { StartTrainingRunPage } from './pages/StartTrainingRunPage';
 import { TrainingRunsPage } from './pages/TrainingRunsPage';
+import { ClassifyPage } from './pages/ClassifyPage';
 import { UploadPage } from './pages/UploadPage';
 
 // Code-split the detail view: it pulls in three.js (~600 KB), which no other
@@ -77,6 +78,14 @@ export default function App() {
         element={
           <ProtectedRoute requireAdmin>
             <InvitePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/classify"
+        element={
+          <ProtectedRoute>
+            <ClassifyPage />
           </ProtectedRoute>
         }
       />

@@ -205,13 +205,6 @@ export async function listDeletedModels(params: {
 }
 
 /**
- * GET /models/{uid}/download/source — the original ingested mesh.
- *
- * The extension is whatever was ingested (GLB from Objaverse, possibly STL/OBJ
- * from an admin upload), so the real filename comes back on the response; the
- * fallback here is only used if that header ever goes missing.
- */
-/**
  * GET /models/{uid}/predict — what the newest trained model thinks this is.
  *
  * A GET because it changes nothing: the model runs in eval mode, so the answer
@@ -220,9 +213,10 @@ export async function listDeletedModels(params: {
  * statement about the catalog.
  *
  * Costs a forward pass over twelve views on a single-instance service, so it is
- * called on demand, never on page load. A deployment with no completed run
- * answers 503, which surfaces as a `server_error` ApiError the caller should
- * explain rather than treat as a fault.
+ * called on demand, never on page load. A model the pipeline has not rendered
+ * yet answers 404 (`not_found`) and a deployment with nothing trained answers
+ * 503 (`unavailable`) — both states the caller should explain rather than report
+ * as a fault.
  */
 export async function predictModelClass(uid: string): Promise<Prediction> {
   const body = await request<PredictionResponse>('GET', `/models/${uid}/predict`);
@@ -235,6 +229,35 @@ export async function predictModelClass(uid: string): Promise<Prediction> {
   };
 }
 
+/**
+ * POST /models/predict-upload — classify a mesh that is not in the catalog.
+ *
+ * **Not an ingestion.** `uploadModel` is admin-only and puts the file into the
+ * pipeline; this one renders it in memory, answers, and stores nothing — which
+ * is what lets viewers use it. Seconds, not the minutes an ingested model waits
+ * for the render stage.
+ *
+ * Accepts PLY as well as the three ingest formats, so the normalized mesh a
+ * detail page hands out can be fed straight back in.
+ */
+export async function predictUploadedMesh(file: File): Promise<Prediction> {
+  const body = await upload<PredictionResponse>('/models/predict-upload', file);
+  return {
+    runId: body.run_id,
+    predictions: body.predictions.map((row) => ({
+      className: row.class_name as ClassName,
+      probability: row.probability,
+    })),
+  };
+}
+
+/**
+ * GET /models/{uid}/download/source — the original ingested mesh.
+ *
+ * The extension is whatever was ingested (GLB from Objaverse, possibly STL/OBJ
+ * from an admin upload), so the real filename comes back on the response; the
+ * fallback here is only used if that header ever goes missing.
+ */
 export async function downloadSourceMesh(uid: string): Promise<void> {
   await download(`/models/${encodeURIComponent(uid)}/download/source`, `${uid}.glb`);
 }
