@@ -30,10 +30,20 @@ workerPoolSpecs:
         - name: IMAGEGENIE_DATABASE_URL_SECRET
           value: __SECRET__
 
-# Spot pricing is the whole reason the training line fits in $5–20
-# (NFR-1). A preemption loses the run, not the work already checkpointed:
-# ml/train.py writes weights to the processed bucket after every epoch.
+# SPOT or STANDARD, substituted by `make train-cloud` (SPOT=0 for on-demand).
+#
+# Spot is the default because it is what keeps the training line inside NFR-1's
+# $5–20 — but it suits SHORT runs only. A preemption does not pause a run, it
+# restarts it: Vertex retries the job, train.py starts from epoch 1 and writes a
+# *new* training_run row, while the killed one lingers as `running` because
+# SIGKILL never reaches its finalizer. A 6-epoch full-set run learned this the
+# expensive way — nine restarts, three hours of GPU time, no progress past epoch
+# 1, and the job state never left RUNNING so nothing looked wrong.
+#
+# Rule of thumb: spot for anything under ~30 minutes, STANDARD for a run that has
+# to hold a node for hours. On-demand is ~$0.73/hr against spot's ~$0.20, so a
+# 6-hour run costs about $4.40 — still well inside the budget, and it finishes.
 scheduling:
-  strategy: SPOT
+  strategy: __STRATEGY__
 
 serviceAccount: __SERVICE_ACCOUNT__
