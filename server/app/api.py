@@ -68,7 +68,13 @@ from .models import (
     User,
     UserRole,
 )
-from .predict import PredictionUnavailable, classify
+from .predict import (
+    PREDICTABLE_TYPES,
+    PredictionUnavailable,
+    UnusableMesh,
+    classify,
+    classify_upload,
+)
 from .queue import publish_next
 from .ratelimit import BackoffRule, FixedWindowRateLimiter, LoginBackoff, RateLimitRule
 from .roster import CLASS_ROSTER
@@ -1200,6 +1206,55 @@ def predict_model_class(uid: str) -> PredictionOut:
     )
 
 
+@app.post(
+    "/models/predict-upload",
+    response_model=PredictionOut,
+    dependencies=LOGIN_REQUIRED,
+)
+def predict_uploaded_mesh(
+    file: Annotated[UploadFile, File(description="STL, OBJ, GLB or PLY mesh")],
+) -> PredictionOut:
+    """Classify a mesh that is not in the catalog, storing nothing (FR-7 / M9).
+
+    **Not an upload in the FR-9 sense.** That route is admin-only and *ingests* —
+    the file lands in the raw bucket and enters the pipeline. This one renders in
+    memory, answers, and forgets: no blob, no `model` row. That is what lets it be
+    open to viewers without handing them a way past the admin gate on ingestion,
+    and it is why a user gets an answer in seconds rather than waiting minutes for
+    the pipeline to render what they just sent.
+
+    POST because it carries a body, so unlike the per-model route it does go
+    through the CSRF check.
+
+    The cost is real: rendering twelve views and running a forward pass takes
+    seconds of CPU on a service pinned to one instance, and scales with mesh
+    complexity. The size cap is the same one ingestion uses.
+    """
+    settings = get_settings()
+    suffix = _validated_upload_suffix(file.filename, PREDICTABLE_TYPES)
+    data = _read_within_limit(file, settings.upload_max_bytes)
+
+    try:
+        run_id, ranked = classify_upload(data, PREDICTABLE_TYPES[suffix], build_storage(settings))
+    except PredictionUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except UnusableMesh as error:
+        # It parsed as its format and still yields nothing renderable — an empty
+        # scene, points only, zero extent. The user's problem to see. A *rendering*
+        # failure deliberately does not land here: that is the server's fault and
+        # should surface as a 500 rather than blame the file.
+        raise HTTPException(status_code=422, detail=f"unusable mesh: {error}") from error
+
+    logger.info("classified an upload", extra={"run": run_id, "bytes": len(data)})
+    return PredictionOut(
+        run_id=run_id,
+        predictions=[
+            ClassProbability(class_name=name, probability=probability)
+            for name, probability in ranked
+        ],
+    )
+
+
 def _load_summary(uid: str, url_prefix: str = "") -> ModelSummaryOut:
     """Read one live model's current label, or 404. Shared by the GET/PUT routes.
 
@@ -1259,16 +1314,22 @@ def restore_model(request: Request, uid: str, admin: AdminUser) -> ModelSummaryO
     return _load_summary(uid, _url_prefix(request))
 
 
-def _validated_upload_suffix(filename: str | None) -> str:
-    """The raw-key suffix for an uploaded filename, or 415 if we can't ingest it.
+def _validated_upload_suffix(
+    filename: str | None, accepted: dict[str, str] = RAW_SUFFIX_TO_FILE_TYPE
+) -> str:
+    """The file suffix for an uploaded filename, or 415 if it isn't accepted.
 
     Rejecting here rather than downstream is the point: an unsupported format that
     reached the queue would fail inside the convert worker and surface as a
     dead-letter minutes later, with no way to tell the admin why.
+
+    `accepted` differs by route. Ingest takes the three source formats; prediction
+    also takes PLY, which the pipeline produces but never accepts — and which is
+    exactly what a user can download from a detail page.
     """
     suffix = Path(filename or "").suffix.lower()
-    if suffix not in RAW_SUFFIX_TO_FILE_TYPE:
-        supported = ", ".join(sorted(RAW_SUFFIX_TO_FILE_TYPE))
+    if suffix not in accepted:
+        supported = ", ".join(sorted(accepted))
         raise HTTPException(
             status_code=415,
             detail=f"unsupported format '{suffix or filename}' — upload one of: {supported}",

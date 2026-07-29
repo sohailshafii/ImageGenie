@@ -406,6 +406,27 @@ classifies one already-rendered model, returning the whole roster ranked plus th
   storage miss — the backends raise different exceptions, and "the pipeline hasn't rendered this
   yet" is a state worth naming. **503** when no completed run has weights, matching the launch
   route: nothing is broken, there is simply nothing to answer with.
+**`POST /models/predict-upload`** classifies a mesh that is *not* in the catalog and stores nothing —
+no blob, no `model` row.
+
+- **Not the FR-9 upload.** That one is admin-only and ingests; the file enters the pipeline and is
+  rendered minutes later. This renders in memory, answers in seconds, and forgets — which is what
+  lets it be open to viewers without handing them a way past the admin gate on ingestion.
+- **The mesh is normalized exactly as the pipeline would** (`normalize_mesh`, extracted from the
+  normalize worker for this). Training saw origin-centred, unit-scale renders; skipping that step
+  feeds the model views it has never seen, and the result is a confidently wrong prediction rather
+  than an error.
+- **PLY is accepted here but not by ingestion.** The pipeline produces PLY and never takes it as
+  input — but the normalized PLY is exactly what a detail page hands out, so refusing it would
+  reject the app's own artifact. `PREDICTABLE_TYPES` widens `RAW_SUFFIX_TO_FILE_TYPE` rather than
+  changing it, so ingest behaviour is untouched.
+- **A mesh failure is 422, a render failure is 500.** Only `load_mesh`/`normalize_mesh` raise
+  `UnusableMesh`; the render is deliberately outside that catch. The first version wrapped both and
+  reported a broken GL setup as *"unusable mesh"*, sending the reader to inspect a perfectly good
+  file. **Rendering off the main thread needs OSMesa**, which the image sets
+  (`PYOPENGL_PLATFORM=osmesa`) and macOS does not have: pyrender falls back to pyglet there and
+  refuses to start outside the main thread, so this route is container-only in practice — verified
+  by rendering 12 views from a non-main thread inside the built image.
 - **The image carries `ml/`** (`COPY ml ./ml`, `PYTHONPATH=/srv:/srv/ml`) and CPU torch. The `+cpu`
   wheel suffix is load-bearing: plain `torch==2.5.1` resolves to the CUDA build on linux/amd64 and
   drags in ~2.5 GB of nvidia wheels for a service with no GPU. Measured, the image goes 364 MB →
