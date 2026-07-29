@@ -181,3 +181,112 @@ def test_weights_are_loaded_once_and_reused(viewer_client: TestClient, monkeypat
     viewer_client.get("/models/m1/predict")
 
     assert calls["loads"] == 1
+
+
+def _stub_upload(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Record what classify_upload was handed, without rendering anything.
+
+    The render itself needs a GL context and is covered by the pipeline's own
+    tests; what this file is for is the route's contract.
+    """
+    calls: dict = {}
+
+    def fake(data, file_type, storage):
+        calls["bytes"] = len(data)
+        calls["file_type"] = file_type
+        return 7, RANKED
+
+    monkeypatch.setattr(api, "classify_upload", fake)
+    return calls
+
+
+def test_an_uploaded_mesh_is_classified(viewer_client: TestClient, monkeypatch) -> None:
+    """Open to viewers: nothing is stored, so this is not a way past the admin
+    gate on FR-9 ingestion."""
+    calls = _stub_upload(monkeypatch)
+
+    response = viewer_client.post(
+        "/models/predict-upload", files={"file": ("thing.glb", b"mesh-bytes", "model/gltf-binary")}
+    )
+
+    assert response.status_code == 200
+    assert calls == {"bytes": 10, "file_type": "glb"}
+    assert response.json()["run_id"] == 7
+
+
+def test_ply_is_accepted_even_though_ingest_refuses_it(
+    viewer_client: TestClient, monkeypatch
+) -> None:
+    """The normalized PLY is what a detail page hands out, so refusing it would
+    reject the app's own artifact."""
+    calls = _stub_upload(monkeypatch)
+
+    response = viewer_client.post(
+        "/models/predict-upload",
+        files={"file": ("mesh.ply", b"ply-bytes", "application/octet-stream")},
+    )
+
+    assert response.status_code == 200
+    assert calls["file_type"] == "ply"
+
+
+def test_an_unsupported_format_is_415(viewer_client: TestClient, monkeypatch) -> None:
+    _stub_upload(monkeypatch)
+
+    response = viewer_client.post(
+        "/models/predict-upload", files={"file": ("model.fbx", b"x", "application/octet-stream")}
+    )
+
+    assert response.status_code == 415
+
+
+def test_an_unusable_mesh_is_422_not_500(viewer_client: TestClient, monkeypatch) -> None:
+    """It parsed as its format and still cannot be rendered — points only, an
+    empty scene, zero extent. The user's problem to see."""
+
+    def fake(data, file_type, storage):
+        raise api.UnusableMesh("mesh has no faces")
+
+    monkeypatch.setattr(api, "classify_upload", fake)
+
+    response = viewer_client.post(
+        "/models/predict-upload", files={"file": ("empty.glb", b"x", "model/gltf-binary")}
+    )
+
+    assert response.status_code == 422
+    assert "no faces" in response.json()["detail"]
+
+
+def test_an_empty_file_is_refused(viewer_client: TestClient, monkeypatch) -> None:
+    _stub_upload(monkeypatch)
+
+    response = viewer_client.post(
+        "/models/predict-upload", files={"file": ("empty.glb", b"", "model/gltf-binary")}
+    )
+
+    assert response.status_code == 400
+
+
+def test_uploading_to_predict_needs_a_session(anon_client: TestClient) -> None:
+    response = anon_client.post(
+        "/models/predict-upload", files={"file": ("thing.glb", b"x", "model/gltf-binary")}
+    )
+
+    # CSRF answers before auth for unsafe methods (server.md#csrf).
+    assert response.status_code in (401, 403)
+
+
+def test_a_render_failure_is_not_blamed_on_the_file(viewer_client: TestClient, monkeypatch) -> None:
+    """A broken GL setup is the server's fault. Reporting it as "unusable mesh"
+    sent someone looking at their file the first time this ran outside a
+    container."""
+
+    def fake(data, file_type, storage):
+        raise ValueError("signal only works in main thread of the main interpreter")
+
+    monkeypatch.setattr(api, "classify_upload", fake)
+
+    with pytest.raises(ValueError):
+        viewer_client.post(
+            "/models/predict-upload", files={"file": ("thing.glb", b"x", "model/gltf-binary")}
+        )
