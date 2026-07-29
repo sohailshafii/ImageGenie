@@ -22,7 +22,7 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 import torch
-from dataset import MultiViewDataset, load_views
+from dataset import MultiViewDataset, decode_view, load_views
 from metrics import evaluation_report
 from model import MultiViewCNN
 from taxonomy import ROSTER
@@ -117,14 +117,34 @@ def classify_model(
     exactly the case worth seeing — a near-tie between `figure` and `animal`,
     where the model is not so much right as lucky.
     """
-    views = load_views(storage, uid).unsqueeze(0)  # [1, num_views, 3, H, W]
-    probabilities = predict_probabilities(model, views)[0]
-    ranked = sorted(
+    return classify_views(model, load_views(storage, uid))
+
+
+def views_from_images(images: list[bytes]) -> torch.Tensor:
+    """Stack rendered PNGs into the ``[num_views, 3, H, W]`` tensor classification
+    expects, applying the same decode and normalisation training used.
+
+    The entry point for views that were never stored — rendered in memory from an
+    upload — so the caller needs no knowledge of how a view becomes a tensor.
+    """
+    return torch.stack([decode_view(image) for image in images])
+
+
+def classify_views(
+    model: MultiViewCNN, views: torch.Tensor
+) -> list[tuple[str, float]]:
+    """Classify one model from its stacked views, ``[num_views, 3, H, W]``.
+
+    Takes the tensor rather than a uid so a caller holding views that were never
+    stored — rendered in memory from an upload — uses the same path as one
+    reading them from the bucket.
+    """
+    probabilities = predict_probabilities(model, views.unsqueeze(0))[0]
+    return sorted(
         zip(ROSTER, probabilities.tolist(), strict=True),
         key=lambda pair: pair[1],
         reverse=True,
     )
-    return ranked
 
 
 def evaluate_samples(

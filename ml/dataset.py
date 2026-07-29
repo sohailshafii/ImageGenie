@@ -29,14 +29,23 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 CLASS_TO_INDEX: dict[str, int] = {name: index for index, name in enumerate(ROSTER)}
 
 
-def _load_view(storage: Storage, key: str) -> torch.Tensor:
-    """Read one view PNG and return a normalized ``[3, H, W]`` float tensor."""
-    image = Image.open(io.BytesIO(storage.get_bytes(key))).convert("RGB")
+def decode_view(data: bytes) -> torch.Tensor:
+    """One view PNG as a normalized ``[3, H, W]`` float tensor.
+
+    Split from the storage read so prediction can decode views it just rendered
+    in memory, which never reach object storage (server/app/predict.py).
+    """
+    image = Image.open(io.BytesIO(data)).convert("RGB")
     pixels = np.asarray(image, dtype=np.float32) / 255.0  # H x W x 3, in [0, 1]
     tensor = torch.from_numpy(pixels).permute(2, 0, 1)  # -> 3 x H x W
     mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
     std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
     return (tensor - mean) / std
+
+
+def _load_view(storage: Storage, key: str) -> torch.Tensor:
+    """Read one view PNG from storage and decode it."""
+    return decode_view(storage.get_bytes(key))
 
 
 def load_views(storage: Storage, uid: str) -> torch.Tensor:
