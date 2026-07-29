@@ -102,7 +102,11 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
     is ~18%), so a falling loss can hide a model that has collapsed onto the majority class.
   - **Configuration** and **Data snapshot** panels — the `config` and `data_snapshot` JSONB blobs
     rendered as generic key/value lists, so a new hyperparameter or snapshot field appears with no
-    frontend change (config-over-code).
+    frontend change (config-over-code). A value over ~240 characters **collapses behind a summary
+    of what it holds** ("val: 1,173 · test: 1,173"), expandable into a scrolling block. That rule is
+    generic rather than a special case for `held_out`, which is what forced it: a run records every
+    uid it held out — ~2,300 at full scale — and printed inline it buried every other field on the
+    page. Folding rather than truncating keeps the bookkeeping readable *and* complete (NFR-4).
   - **Dev-set metrics** (B4) — headline accuracy and **macro** precision/recall, a per-class
     precision/recall/F1/support table, and the **confusion matrix**. Macro sits beside accuracy
     because the two disagree loudly on a ~7.7:1 corpus, and that disagreement is the finding. The
