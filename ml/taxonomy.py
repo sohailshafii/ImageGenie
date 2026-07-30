@@ -178,7 +178,9 @@ CLASS_TO_KEYWORDS: dict[str, list[str]] = {
     # category gate yields exactly {figure, animal}: only 4.3% match a keyword from
     # *both* lists, and only those could be reordered, so a "stance outranks
     # species" precedence rule would change almost nothing. 58% match a keyword
-    # from neither list, so they stay ambiguous whatever the precedence. And
+    # from neither list, so they stay ambiguous whatever the precedence — the
+    # labeler abstains on 62% of this gate overall, which is the real problem here
+    # and not one keywords can fix. And
     # "character", the one token that looks like stance, sits on 11 LVIS-gold
     # animals against 2 LVIS-gold figures — it means "game asset", not "biped".
     # Fixing this boundary is manual labeling (FR-4), not keyword work.

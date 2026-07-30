@@ -143,7 +143,10 @@ tally) and `weak_labels.csv` (`uid, class, reason` for every labeled object) —
 - **Boundary measurement.** `ml/eval_figure_animal.py` (`make evalboundary [SHARDS=N]`) answers a
   narrower question than `evalweak`: for the one ambiguous class pair, could a keyword rule resolve it
   at all? Separate script because the answer needs the *ambiguous population* rather than per-class
-  precision. See [the figure/animal boundary](#the-figureanimal-boundary).
+  precision — and because its two headline numbers (reach, abstention) are questions about the
+  labeler's behaviour rather than its correctness, so they are measured over every gated object
+  instead of the gold intersection `evalweak` is limited to. See
+  [the figure/animal boundary](#the-figureanimal-boundary).
 - **Stage 3 — gold-set eval + tuning (in progress).** `ml/eval_weak_labels.py` (`make evalweak`)
   measures the weak labels against the LVIS gold set (objects with both a weak and a clean label) to
   get per-class precision/recall and drive keyword tuning (e.g. `seat` catching toilet seats, the
@@ -222,10 +225,24 @@ number below is from that run — 120,000 objects, 7,818 of them (6.5%) gating t
   exists" is suggestive rather than settled — a token could be missed for want of gold examples. The
   reach ceiling does not depend on it.
 
-**The dominant failure here is abstention, not mislabeling** — which the 0.62 precision hides. Of the
-143 gold objects in this gate the labeler leaves **81 unlabeled (57%)** and gets only 7 outright wrong
-(4 animal→figure, 3 figure→animal). More than half of `characters-creatures` never enters training at
-all, so the fix is coverage by hand, not sharper rules.
+**The dominant failure here is abstention, not mislabeling** — which the 0.62 precision hides. The
+labeler leaves **4,819 of the 7,818 gated objects unlabeled: 61.6%**. That figure needs no gold set —
+"did the labeler answer?" is not a question about correctness — so unlike the precision numbers it is
+measured over the whole gated population rather than the 143-object gold slice, where the rate is a
+comparable 56.6%. It splits into 4,565 objects where neither keyword list fires and 254 where both
+fire and tie. On the gold slice, where correctness *can* be checked, the 143 objects break down as 81
+silent, 55 correct and only **7 outright wrong** (4 animal→figure, 3 figure→animal) — so when the
+labeler does commit here it is right **88.7%** of the time (55 of 62). That is the conservative design
+working exactly as intended: `resolve_by_keywords` returns `None` on a tie or a zero score rather than
+guessing. This class is not bad at deciding, it declines to decide.
+
+The 10 objects it called `figure` in this gate were 6 gold figures — **0.60 precision**, near enough
+to the 0.62 corpus-wide headline to suggest `figure`'s precision problem is largely *generated* by
+this one gate's animal→figure leakage rather than spread across the corpus.
+
+So nearly two-thirds of `characters-creatures` never enters training at all, and the class's real
+problem is silence rather than error. Sharper keywords do not fix silence — the rule that would
+break the ties reaches 4.3% of the population, as above. Coverage by hand (FR-4) does.
 
 ## Training
 
