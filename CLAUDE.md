@@ -121,8 +121,14 @@ Component detail and coding standards live in the domain docs:
    and it is what makes "did that change actually help?" answerable at all — without it, runs
    aren't comparable and the milestone-8 iteration loop has nothing to stand on. Everything
    beyond it is negotiable.
-7. **Evaluation** — both dev sets, confusion matrices, bias writeup
-8. **Iterate** — active learning loop (hand-label low-confidence examples, retrain)
+7. **Evaluation** — dev-set scoring, per-class precision/recall, confusion matrices, bias writeup
+8. **Iterate** — active learning loop: hand-label the classifier's **disagreements with the stored
+   label**, not merely its low-confidence cases — on a corpus with ~9% wrong labels a disagreement
+   means somebody is demonstrably wrong, while low confidence only means the model is unsure. Then
+   retrain. Also delivers **the second dev set FR-7 asks for**: it moved here from milestone 7
+   because independent annotations are what this loop is missing — a reviewer who has seen the
+   classifier's guess cannot produce an unbiased correction. See
+   [ml.md](ml/ml.md#the-review-queue-milestone-8).
 9. **(Stretch / v2)** PointNet++ comparison; inference demo endpoint
 
 ## Open Decisions
