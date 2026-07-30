@@ -1,6 +1,9 @@
 # ImageGenie
 
-![The ImageGenie mascot — a fiery nacho genie in a jewelled turban, rising from a lamp](docs/images/nacho-genie.jpg)
+<p align="center">
+  <img src="docs/images/nacho-genie.jpg" width="360"
+       alt="The ImageGenie mascot — a fiery nacho genie in a jewelled turban, rising from a lamp">
+</p>
 
 An end-to-end pipeline that mass-downloads 3D models, weak-labels them from store
 metadata, and trains a multi-view CNN to classify them — combining **distributed
