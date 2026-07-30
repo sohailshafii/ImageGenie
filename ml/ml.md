@@ -29,8 +29,15 @@ Store metadata (categories, tags, titles) → thousands of free-but-noisy labels
   long-tail classes with few examples.
 - Keep weak (`source = weak`) and manual (`source = manual`) labels as distinct rows in the DB
   ([server.md](../server/server.md#database)) so weak-vs-corrected analysis stays possible.
-- **Manual labels** come via the [labeling frontend](../web/web.md#labeling-ui), prioritized by model
-  uncertainty (active learning — milestone 8).
+- **Manual labels** come via the [labeling frontend](../web/web.md#labeling-ui), prioritized by
+  classifier/label **disagreement** rather than raw uncertainty (active learning — milestone 8; see
+  [the review queue](#the-review-queue-milestone-8)).
+- **Ambiguous boundaries are written down, not left to the labeler's judgement on the day** — an
+  unwritten rule gets applied differently by different people, and differently by the same person a
+  week apart, so the labels disagree with each other. A rule that is arguable but consistent beats
+  that. The roster has exactly one such boundary:
+  [figure vs animal](#the-figureanimal-boundary), resolved by *stance* — a biped with arms is
+  `figure` whatever its head.
 - **Precedent:** Objaverse (~800k annotated objects from Sketchfab) shows this practice is accepted.
 
 ### Metadata Exploration (milestone 1)
@@ -133,6 +140,10 @@ tally) and `weak_labels.csv` (`uid, class, reason` for every labeled object) —
   labeled, 14% ambiguous, 60% out-of-scope**; all 12 classes populated, smallest ~15/shard (×160 ≈ 2.4k,
   clears the bar). Residual ambiguity is mostly generic metadata (`furniture`/tool tags) that names no
   sub-class — correctly left for manual labeling (FR-4).
+- **Boundary measurement.** `ml/eval_figure_animal.py` (`make evalboundary [SHARDS=N]`) answers a
+  narrower question than `evalweak`: for the one ambiguous class pair, could a keyword rule resolve it
+  at all? Separate script because the answer needs the *ambiguous population* rather than per-class
+  precision. See [the figure/animal boundary](#the-figureanimal-boundary).
 - **Stage 3 — gold-set eval + tuning (in progress).** `ml/eval_weak_labels.py` (`make evalweak`)
   measures the weak labels against the LVIS gold set (objects with both a weak and a clean label) to
   get per-class precision/recall and drive keyword tuning (e.g. `seat` catching toilet seats, the
@@ -173,6 +184,48 @@ tally) and `weak_labels.csv` (`uid, class, reason` for every labeled object) —
   figure↔animal boundary is genuinely fuzzy (teddy bears/creatures bleed both ways) and stays the
   weakest class; recall spans 0.22–0.73. (The per-tuning deltas above were measured at 4 shards, so
   small-sample; these 20-shard numbers are the reproducible reference.)
+- **Not tuned — the figure/animal boundary, deliberately.** See below for why keywords cannot fix it.
+
+### The figure/animal boundary
+
+**The rule: stance decides, not the head.** A bipedal thing with arms is `figure` whatever its head —
+a cat-person, a fox in a T-pose and a robot are all `figure` — while `animal` means the animal body
+plan: quadrupeds, birds, fish, insects, dinosaurs. Chosen because it matches what the trained model
+already learned, making the disagreements cheap label fixes rather than a boundary it has to relearn.
+The LVIS merges in `ml/taxonomy.py` already followed it (`teddy_bear`, `mascot`, `puppet` are
+`figure`), and it is now written there so a labeling session doesn't have to re-derive it.
+
+This is an **FR-4 manual-labeling rule, not an FR-3 keyword rule** — and that is measured, not
+assumed. It is the roster's one genuinely ambiguous boundary, the weakest weak-label class (0.62
+precision, above) and the trained model's largest confusion pair (81 of 647 disagreements —
+[section 6](#6-what-a-hand-review-of-74-disagreements-actually-found-milestone-8)), so the obvious
+move is a "stance outranks species" precedence rule in `CLASS_TO_KEYWORDS`. Two measurements say not
+to bother. Reproduce both with **`make evalboundary SHARDS=24`** (`ml/eval_figure_animal.py`); every
+number below is from that run — 120,000 objects, 7,818 of them (6.5%) gating to `{figure, animal}`.
+
+- **Reach — 4.3%.** A precedence rule reorders a *contested* decision, so it can only touch objects
+  matching keywords from both `CLASS_TO_KEYWORDS["figure"]` and `CLASS_TO_KEYWORDS["animal"]`. Of
+  those 7,818 objects, **58.4% match neither keyword list** (already ambiguous, so there is nothing to
+  reorder), 23.8% match figure's alone and 13.4% animal's alone (already decided). That leaves
+  **339, or 4.3%**, matching both. The ceiling holds however good the stance vocabulary is, and it
+  needs no gold labels to establish, which is what makes it the load-bearing argument here.
+- **Validity — the signal points the wrong way.** Over the 143 objects in that gate carrying an LVIS
+  gold label, `character` — the one token that looks like stance — sits on **11 gold animals against 2
+  gold figures** (figure-share 0.15): Sketchfab users tag quadrupeds "character" just as readily, so
+  it means *game asset*, not *biped*. No token reaches a figure-share above 0.33 at ≥8 gold objects,
+  and the most "discriminative" ones are modelling-tool tags (`zbrush`, `substancepainter`, `blender`)
+  — milestone 1's noisy-tags finding again. An explicit stance vocabulary barely exists in the corpus:
+  against `character`'s 1,089 occurrences, `humanoid` has 38, `anthro` 32, `mascot` 11, `biped` 5,
+  `fursona` 3.
+
+  *Limitation:* only 24 of those 143 gold objects are `figure`, so "no figure-discriminative token
+  exists" is suggestive rather than settled — a token could be missed for want of gold examples. The
+  reach ceiling does not depend on it.
+
+**The dominant failure here is abstention, not mislabeling** — which the 0.62 precision hides. Of the
+143 gold objects in this gate the labeler leaves **81 unlabeled (57%)** and gets only 7 outright wrong
+(4 animal→figure, 3 figure→animal). More than half of `characters-creatures` never enters training at
+all, so the fix is coverage by hand, not sharper rules.
 
 ## Training
 
