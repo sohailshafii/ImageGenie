@@ -77,6 +77,12 @@ weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
 evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
 	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
 
+evalboundary: ## measure the figure/animal boundary — can keywords resolve it? (SHARDS=N, default 8)
+	# Reproduces the numbers ml.md#the-figureanimal-boundary rests on: how much of
+	# the ambiguous population a keyword precedence rule could even reach, and
+	# whether any token carries stance signal. SHARDS=24 for the gold figures cited.
+	$(RUN) ml/eval_figure_animal.py $(if $(SHARDS),--shards $(SHARDS),)
+
 train: ## run a baseline training run (M6); writes training_run + metrics to the DB
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
 	# no cert shim needed — this run only touches Postgres, not the network.
