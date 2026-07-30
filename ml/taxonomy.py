@@ -21,6 +21,19 @@ Curation is deliberate, not a keyword sweep: a broad grep pulls in homographs
 (``bowl``/``bowling_ball``/``bowler_hat`` are not animals; ``spear`` and
 ``steak_knife`` are not food; ``table_lamp`` is a lamp, not a table). Only
 visually-coherent members are listed; notable exclusions are noted inline.
+
+**The figure/animal boundary: stance decides, not the head.** A bipedal thing with
+arms is ``figure`` whatever its head is, so a cat-person, a fox in a T-pose and a
+robot are all ``figure``; ``animal`` means the animal body plan — quadrupeds,
+birds, fish, insects, dinosaurs. This is the roster's one genuinely ambiguous
+boundary and the largest confusion pair in the trained model
+(ml.md#the-figureanimal-boundary), so it is written down rather than left to
+whoever is labeling that day. The LVIS merges below already follow it:
+``teddy_bear``, ``mascot`` and ``puppet`` are ``figure``, not ``animal``.
+
+It is a **manual**-labeling rule (FR-4), not a weak-label rule, because stance is
+not in the metadata — measured, see ml.md. Nothing in ``CLASS_TO_KEYWORDS``
+encodes it, deliberately.
 """
 
 from __future__ import annotations
@@ -53,8 +66,9 @@ CLASS_TO_LVIS_CATEGORIES: dict[str, list[str]] = {
         "fighter_jet", "helicopter", "airplane", "drone", "blimp", "jet_plane",
         "seaplane",
     ],
-    # Live creatures. Excludes teddy_bear (-> figure) and the bowl/bowling/
-    # bowler homograph cluster.
+    # Live creatures on an animal body plan — quadrupeds, birds, fish, insects.
+    # Excludes teddy_bear and mascot (bipedal with arms -> figure, per the stance
+    # rule in the module docstring) and the bowl/bowling/bowler homograph cluster.
     "animal": [
         "owl", "lion", "rabbit", "elephant", "crab_(animal)", "shark", "pony",
         "wolf", "frog", "penguin", "butterfly", "kitten", "turtle", "horse",
@@ -63,7 +77,9 @@ CLASS_TO_LVIS_CATEGORIES: dict[str, list[str]] = {
         "chicken_(animal)", "goldfish", "octopus_(animal)", "dolphin", "bear",
         "starfish", "seahorse",
     ],
-    # Human/creature figures and figurines.
+    # Anything built on a humanoid frame — people, figurines, and animal-headed
+    # bipeds. teddy_bear and mascot sit here rather than under animal because
+    # stance decides (module docstring).
     "figure": [
         "snowman", "figurine", "teddy_bear", "sculpture", "mascot",
         "statue_(sculpture)", "puppet", "doll", "rag_doll",
@@ -156,6 +172,16 @@ CLASS_TO_KEYWORDS: dict[str, list[str]] = {
             "tractor", "tank"],
     "aircraft": ["aircraft", "airplane", "plane", "jet", "helicopter", "chopper",
                  "drone", "glider", "biplane", "seaplane", "spaceship", "rocket"],
+    # figure/animal carry the roster's one ambiguous boundary, and the two keyword
+    # lists below deliberately do NOT try to resolve it by stance (module
+    # docstring). Measured by `make evalboundary SHARDS=24`, over the objects whose
+    # category gate yields exactly {figure, animal}: only 4.3% match a keyword from
+    # *both* lists, and only those could be reordered, so a "stance outranks
+    # species" precedence rule would change almost nothing. 58% match a keyword
+    # from neither list, so they stay ambiguous whatever the precedence. And
+    # "character", the one token that looks like stance, sits on 11 LVIS-gold
+    # animals against 2 LVIS-gold figures — it means "game asset", not "biped".
+    # Fixing this boundary is manual labeling (FR-4), not keyword work.
     "figure": ["character", "figure", "figurine", "statue", "doll", "robot",
                "person", "human", "man", "woman", "girl", "boy", "soldier",
                "warrior", "knight", "hero", "zombie", "skeleton", "mannequin"],
