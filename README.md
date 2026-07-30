@@ -22,9 +22,9 @@ A single-instance deployment runs on Cloud Run:
 
 > ⚠️ **Best-effort demo — expect a slow first load, and it may be down.** The service scales to zero,
 > so the first request cold-starts the container: **~12 seconds**, because the image carries a CPU
-> build of PyTorch for the classify endpoint. After that it responds in ~0.1 s. It runs on a hobby
-> budget (~$100 total, of which the always-on database is the bulk) and may be taken offline without
-> notice. To run your own, see [Deploy to the cloud](#deploy-to-the-cloud).
+> build of PyTorch for the classify endpoint. After that it responds in about 0.1 s. It runs on a
+> hobby budget (roughly $100 total, of which the always-on database is the bulk) and may be taken
+> offline without notice. To run your own, see [Deploy to the cloud](#deploy-to-the-cloud).
 
 ## What it does
 
