@@ -32,3 +32,8 @@ server/alembic/versions/__pycache__/
 # Editor swap/backup files for the secrets file
 .env.*
 !.env.example
+
+# Full-resolution source art. The tracked cover is the derived JPG under
+# docs/images/ — ~200 KB against ~2 MB, and every visitor to the repo page pays
+# for whatever the README embeds.
+source_images/
