@@ -71,7 +71,9 @@ labels, reading renders straight from the processed bucket.
       exact uids the run held out, and stores one report per (run, dev set)
 - [x] Reported beside the run's own `val` numbers but kept visually separate, so the optimistic
       number is not mistaken for the honest one
-- [x] **Run 14 scores 0.4484 accuracy / 0.336 macro recall** on 1,173 held-out models
+- [x] **Run 14 scores 0.4484 accuracy / 0.336 macro recall** on its 1,173 held-out models
+      (`evaluation 2`), or **0.4689 / 0.3472** once 24 of those test labels were corrected in
+      milestone 8 (`evaluation 3`) — the same model against a less noisy yardstick
 - [x] Classifier usable directly: predict a catalog model from its detail page, or upload any mesh at
       `/classify` and get a class back without ingesting it
 - [x] **Bias writeup** ([ml.md](ml/ml.md#bias-analysis)) — class skew and tail collapse, a measured
@@ -91,7 +93,19 @@ label error, and only a human separates them.
 - [x] 24 corrections applied — **the corpus's first manual labels**; test accuracy 0.4484 → 0.4689,
       recorded with the caveat that this procedure can only ever move accuracy *up*
       ([ml.md](ml/ml.md#6-what-a-hand-review-of-74-disagreements-actually-found-milestone-8))
-- [ ] Retrain on the corrected labels, matching run 14's config so the before/after is comparable
+- [x] **Retrained on the corrected labels — run 15**, matching run 14's config field-for-field
+      (4 epochs, on-demand T4, 123 min) so the labels are the only difference. It scores **0.4241
+      accuracy / 0.3401 macro recall** on its own held-out split (`evaluation 4`).
+- [x] **Learned that the before/after cannot be read off those two numbers, and why.** Correcting
+      labels reshuffles the stratified split, so run 14 and run 15 held out **different sets — only
+      29% overlap** (687 of run 15's test models were in run 14's *training* set). Compared naively,
+      run 15 looks 4.5 points worse; scored on the 340 models **both** held out, it is 5.3 points
+      *better* (0.4441 vs 0.3912). The split, not the model, was driving both readings. Neither
+      direction is evidence: 24 relabels are 0.25% of the training set, far too few to move accuracy
+      5 points, so this is run-to-run variance seen through two different lenses. **The lesson is
+      that an active-learning loop cannot measure itself unless the evaluation set is frozen
+      independently of the labels being corrected** — which is the strongest argument yet for the
+      second dev set below.
 - [ ] **A second dev set — ingest ~1,000 LVIS-annotated objects** through the existing pipeline. It
       lands here rather than under milestone 7 because it does double duty: it satisfies FR-7, *and*
       independent annotations are exactly what this loop is missing. A reviewer who has seen the

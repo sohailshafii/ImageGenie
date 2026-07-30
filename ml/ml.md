@@ -465,8 +465,19 @@ distinct command is what stops "evaluate the model" becoming another training-ti
   large and nothing evaluates against it, which keeps the blob to ~2,300 uids at full scale.
   - **Labels come from the current database, not from training time** — only the uids are replayed.
     Scoring asks "is the model right?", and a corrected label answers that better than the one the
-    run trained against. It is also what makes the M8 loop legible: hand-correct, re-score the same
-    models, see the difference.
+    run trained against. It is also what makes re-scoring *the same run* legible after a correction
+    pass: same uids, better labels, honest delta (run 14 went 0.4484 → 0.4689 that way).
+  - ⚠️ **Replay does not make two *different* runs comparable, and the M8 retrain proved it.**
+    Replaying protects a run's own partition, but a run trained *after* a correction pass computed
+    its split from the corrected labels — so it held out a different set. Run 14 and run 15 overlap
+    on only **29%** of their test models; 687 of run 15's were in run 14's *training* set. Scored on
+    their own splits run 15 looks 4.5 points worse (0.4241 vs 0.4689); scored on the 340 models both
+    held out it is 5.3 points better (0.4441 vs 0.3912). **The same pair of models, opposite
+    conclusions, purely from which models each was asked about.** Neither reading is evidence about
+    the corrections — 24 relabels are 0.25% of the training set — but both look like results.
+    Comparing two runs across a label change means scoring both on the intersection of their held-out
+    sets, or freezing an evaluation set that the correction pass never touches (see
+    [the second dev set](#follow-up-a-real-second-dev-set)).
   - **A recorded model that has left the trainable set** (soft-deleted, unlabeled, unrendered) is
     skipped rather than fatal, and the count is printed — a shrinking dev set changes what the
     numbers mean.
