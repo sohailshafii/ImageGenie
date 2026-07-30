@@ -302,6 +302,14 @@ Requirements (resolves the DB TODO):
   env vars (`server/app/config.py`). Milestone 2 defined `model` (the download stage); milestone 4
   adds `artifact` — one row per (model, stage) output with a unique `(model_uid, stage)` constraint
   backing the idempotent upsert. `label`/`training_run`/`user` land with their stages.
+- **Both engines pre-ping (`pool_pre_ping=True`).** A pooled connection can be dropped while a
+  process holds it but issues no SQL, and this codebase has two jobs shaped exactly that way: a
+  training run idles between epoch writes, and an evaluation reads a run, spends ~15 minutes scoring
+  a split, then inserts one row. The Cloud SQL connector engine carried the guard from the start; the
+  plain-URL engine did not, and an evaluation duly died on `server closed the connection
+  unexpectedly` **after** completing all its work (ml.md#evaluation). A pre-ping costs one round trip
+  per checkout and converts that failure into a reconnect — a trade worth making even for the API,
+  whose requests are short.
 
 ## API Layer
 
