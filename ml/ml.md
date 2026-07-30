@@ -409,6 +409,11 @@ distinct command is what stops "evaluate the model" becoming another training-ti
     `subsample` is seeded and public for exactly this reason.
 - **An empty split is refused**, rather than reporting metrics over zero samples — which would
   render on the dashboard as a real-looking result.
+- **The score is printed before it is stored.** Scoring is minutes of compute over thousands of blob
+  reads; storing is one INSERT. Found the hard way: a 15-minute run over the 1,173-model `test` split
+  finished and then lost its report to `server closed the connection unexpectedly`, because the
+  pooled connection had gone stale while nothing touched SQL. The engine now pre-pings
+  (server.md#database), and this ordering means a failed write costs the row, not the measurement.
 - **`classify_model` returns the whole roster ranked**, not just the top class: a single label hides
   a near-tie between `figure` and `animal`, where the model is lucky rather than right.
 

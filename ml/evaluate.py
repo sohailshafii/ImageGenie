@@ -129,14 +129,19 @@ def evaluate_run(
 
     print(f"scoring run {run_id} on {len(scored)} {dev_set} models ({config.backbone})")
     report = score(model, scored, storage, dev_set, num_workers=num_workers)
-    evaluation_id = record_evaluation(run_id, dev_set, report, current_hash)
 
+    # Report before storing. Scoring is the expensive part — minutes of GPU or CPU
+    # over thousands of blob reads — and storing is one INSERT that can fail on a
+    # transient DB error after all of it. Printing first means a failed write costs
+    # the row, not the measurement.
     accuracy = report["accuracy"]
     macro_recall = report["macro_recall"]
     print(
-        f"evaluation {evaluation_id}: {dev_set} accuracy {accuracy:.4f}, "
-        f"macro recall {macro_recall if macro_recall is None else round(macro_recall, 4)}"
+        f"{dev_set} accuracy {accuracy:.4f}, macro recall "
+        f"{macro_recall if macro_recall is None else round(macro_recall, 4)}"
     )
+    evaluation_id = record_evaluation(run_id, dev_set, report, current_hash)
+    print(f"stored as evaluation {evaluation_id}")
     return report
 
 

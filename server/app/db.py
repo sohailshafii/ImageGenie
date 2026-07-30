@@ -82,7 +82,13 @@ def get_engine() -> Engine:
     url = _resolve_database_url(settings)
     if settings.cloudsql_instance:
         return _cloudsql_connector_engine(settings, url)
-    return create_engine(url, future=True)
+    # pool_pre_ping for the same reason the connector engine above sets it, which
+    # this branch was missing: a pooled connection can go stale across a long
+    # compute phase that touches no SQL. `ml/evaluate.py` reads the run, spends
+    # ~15 minutes scoring a split, then inserts one row — and that insert died on
+    # "server closed the connection unexpectedly", losing the whole report. A
+    # pre-ping costs one round trip per checkout and turns that into a reconnect.
+    return create_engine(url, pool_pre_ping=True, future=True)
 
 
 def init_db() -> None:
