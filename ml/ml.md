@@ -529,6 +529,10 @@ Note the two measurements are not independent methods: both FR-3's 0.91 and this
 comparison against LVIS gold. They are different *samples* — FR-3 over sampled shards, this over the
 ingested corpus — which is corroboration, not confirmation by a second technique.
 
+A hand review of run 14's most-confident disagreements confirmed this ceiling directly — and found
+that `figure` is where it concentrates, exactly as the 0.62 predicts. See (6), including why the
+resulting accuracy gain must **not** be read as the model improving.
+
 #### 4. It has converged at ~0.45 — the ceiling is upstream of training
 
 At shakedown scale this looked like under-training: run 3 ended with train loss 1.7661 against val
@@ -570,6 +574,57 @@ representation in (5). Distinguishing them needs independently-annotated data �
   problem in (1) is partly the price.
 - **The corpus is Sketchfab's, not the world's.** Whatever artists choose to model and upload sets
   the distribution; nothing here corrects for it, and the skew in (1) is that choice showing through.
+
+#### 6. What a hand review of 74 disagreements actually found (milestone 8)
+
+The first hand-labeling pass ([the review queue](#the-review-queue-milestone-8)) judged the **74
+disagreements above 0.7 confidence** from run 14's `test` split, from 12-view contact sheets
+(`capture_renders.py --gcs`). Verdicts: **24 label_wrong · 27 model_wrong · 23 unclear**.
+
+**Confidence separates the three, which makes it a usable triage signal.**
+
+| confidence | label_wrong | model_wrong | unclear | n |
+|------------|------------:|------------:|--------:|---:|
+| >0.95      | **10**      | 1           | 0       | 11 |
+| 0.85–0.95  | 5           | 6           | 2       | 13 |
+| 0.70–0.85  | 9           | **20**      | **21**  | 50 |
+
+Where the classifier commits hardest against a label it is almost always right and the *label* is
+wrong. Lower down, disagreement mostly means the model is wrong or the object is unlabelable. So a
+future pass should work from the top and stop when the mix turns, rather than budget a fixed count.
+
+**`figure` absorbs almost every model error: 24 of the 27 wrong predictions were `figure`**, the
+largest class at 1,594 training examples — against true labels of `animal` ×14 (bison, mammoth
+skeleton, two dinosaurs, a fish, birds, quadrupeds), `aircraft` ×4, `weapon` ×4, and one each of
+`chair` (a bar stool, at 0.945), `electronics`, `food`, `building`. This is (1)'s precise-but-
+under-predicted tail seen from the other side: the failure is not that a bison is unrecognisable, it
+is that the majority class collects everything the model is unsure of. That is a **calibration**
+mechanism rather than a capability limit, and it is the concrete case for rerunning the (2)
+class-weighting A/B at full scale.
+
+**23 of 74 have no correct answer in the roster** — an architectural corbel with a carved face
+(twice), a fluted column, gridded wall panels, a lattice truss, a bone specimen, concentric rings, a
+cube with an arm attached, several unidentifiable slivers. Nobody can label these correctly, so they
+cap achievable accuracy independently of both the label ceiling in (3) and the representation limit
+in (5). At ~31% of this band it is not a rounding error, and it argues for either an explicit
+`other` class or an out-of-roster exclusion — see (5) on the roster being a choice.
+
+**⚠️ The accuracy gain from correcting labels is a biased estimator — read it with care.** Applying
+the 24 corrections moved `test` accuracy **0.4484 → 0.4689** and macro recall **0.336 → 0.3472**
+(`evaluation 3`, the same 1,173 replayed uids). But 24/1173 = **+0.0205**, exactly the observed gain:
+*every* correction flipped a prediction from wrong to right. That is guaranteed by the method — a
+`label_wrong` verdict is the reviewer siding with the classifier — so **this procedure can only ever
+move accuracy up**, whether or not the new labels are truer. The reviewer also saw the same
+shape-only renders and knew the prediction. What the pass legitimately establishes is that the old
+number *overstated* error by at least two points; it establishes nothing about the model. The
+counterweight against rubber-stamping is that the reviewer sided with the **label** more often (27
+model_wrong), and those move accuracy by exactly zero. An unbiased estimate needs an annotator who
+never sees the prediction — which is what the [second dev set](#follow-up-a-real-second-dev-set)
+would provide.
+
+**The tail is untouched by any of this.** After correction `aircraft` recall is still **0.000** on 26
+models — the model has never once got an aircraft right — with `table` at 0.120 and `electronics` at
+0.254. Twenty-four labels do not dent that, and nothing in this pass suggests they would.
 
 #### Follow-up (post-MVP): render textures, and A/B them
 
