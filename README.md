@@ -1,8 +1,27 @@
 # ImageGenie
 
+![The ImageGenie mascot — a fiery nacho genie in a jewelled turban, rising from a lamp](docs/images/nacho-genie.jpg)
+
 An end-to-end pipeline that mass-downloads 3D models, weak-labels them from store
 metadata, and trains a multi-view CNN to classify them — combining **distributed
 systems, ML, and a web frontend**. Portfolio project.
+
+## Live demo
+
+A single-instance deployment runs on Cloud Run:
+**[imagegenie-api-hhitzs4jka-uc.a.run.app](https://imagegenie-api-hhitzs4jka-uc.a.run.app)**
+
+> 🔑 **Signup is invite-only — you can't self-register.** Accounts are created from an invite minted
+> by an admin, then confirmed by email; there is no open signup route. Ask me and I'll issue one for
+> your address. An invited **viewer** can browse the catalog, open a model in the three.js viewer,
+> see the training dashboard, and classify a mesh at `/classify`; correcting labels and uploading
+> models are **admin**-only (NFR-7).
+
+> ⚠️ **Best-effort demo — expect a slow first load, and it may be down.** The service scales to zero,
+> so the first request cold-starts the container: **~12 seconds**, because the image carries a CPU
+> build of PyTorch for the classify endpoint. After that it responds in ~0.1 s. It runs on a hobby
+> budget (~$100 total, of which the always-on database is the bulk) and may be taken offline without
+> notice. To run your own, see [Deploy to the cloud](#deploy-to-the-cloud).
 
 ## What it does
 

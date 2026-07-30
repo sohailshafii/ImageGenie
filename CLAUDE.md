@@ -129,7 +129,10 @@ Component detail and coding standards live in the domain docs:
    because independent annotations are what this loop is missing — a reviewer who has seen the
    classifier's guess cannot produce an unbiased correction. See
    [ml.md](ml/ml.md#the-review-queue-milestone-8).
-9. **(Stretch / v2)** PointNet++ comparison; inference demo endpoint
+9. **(Stretch / v2)** PointNet++ comparison. ~~Inference demo endpoint~~ — **already shipped**, pulled
+   forward into v1 because it shares its whole spine with M7's evaluation path (load a run's weights,
+   run the model over renders): `GET /models/{uid}/predict` for a catalog model and
+   `POST /models/predict-upload` for an uploaded mesh, behind the `/classify` page.
 
 ## Open Decisions
 
