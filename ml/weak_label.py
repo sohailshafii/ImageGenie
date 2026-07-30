@@ -57,8 +57,14 @@ def category_candidates(annotation: dict) -> set[str]:
     return candidates_set
 
 
-def _tokens(annotation: dict) -> set[str]:
-    """Lowercase word tokens from the object's title + tag names."""
+def tokens(annotation: dict) -> set[str]:
+    """Lowercase word tokens from the object's title + tag names.
+
+    Public because `ml/eval_figure_animal.py` measures which of these tokens carry
+    class signal, and it has to tokenize *exactly* as the resolver does or the
+    measurement describes a different function than the one being graded — the same
+    reason `train.subsample` is public.
+    """
     text_fields = [annotation.get("name") or ""]
     text_fields += [tag.get("name") or "" for tag in annotation.get("tags") or []]
     return {token for field in text_fields for token in _TOKEN.findall(field.lower())}
@@ -71,7 +77,7 @@ def resolve_by_keywords(annotation: dict, candidates_set: set[str]) -> str | Non
     object's tokens; returns the sole top scorer, or None on a zero or tied top
     (stay conservative — an unresolved object is better than a wrong label).
     """
-    tokens_set = _tokens(annotation)
+    tokens_set = tokens(annotation)
     class_to_score = {
         class_name: sum(keyword in tokens_set for keyword in CLASS_TO_KEYWORDS.get(class_name, []))
         for class_name in candidates_set
