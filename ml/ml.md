@@ -264,10 +264,12 @@ non-negotiable is NFR-4 bookkeeping.
   a `[num_views, 3, H, W]` tensor, plus the class index from the canonical `ROSTER`
   (`ml/taxonomy.py`, a sorted tuple so the index order is stable and recorded per run). Reads through
   the `Storage` abstraction, so the same code trains local and cloud (NFR-5).
-- **Splits** (`ml/splits.py`, `stratified_split`) — the trainable set is partitioned **per class**
-  into train/val/test (~80/10/10), deterministic from `Config.seed` (sorted → seeded shuffle →
-  `floor` slice, train keeps the remainder), so a run reproduces (NFR-4); tiny classes fall back to
-  train. The test split is held for [evaluation](#evaluation) (M7).
+- **Splits** (`ml/splits.py`, `stratified_split`) — every model is assigned to train/val/test by
+  **hashing its uid with the seed** into one of 10,000 buckets (`<1000` test, `<2000` val, else
+  train), so the partition is ~80/10/10 and reproducible from `Config.seed` (NFR-4). The test split
+  is held for [evaluation](#evaluation) (M7). See [why hashing](#why-the-split-is-hashed-not-shuffled)
+  — it is the one design choice here that a previous version got wrong in a way that silently
+  invalidated a comparison.
   - **NOT IMPLEMENTED: the fractions are fixed at 10/10 regardless of dataset size.** The right
     proportions depend on how much data there is — a small set needs a *larger* held-out share (or
     k-fold cross-validation) to measure anything stably, while at hundreds of thousands of examples
@@ -278,6 +280,44 @@ non-negotiable is NFR-4 bookkeeping.
     1,173, which is fine, so the defect only bites on limited runs. Fixing it means scaling
     `val_fraction`/`test_fraction` with `len(samples)` — or at minimum warning when a split leaves
     fewer than ~20 models in the smallest class.
+
+#### Why the split is hashed, not shuffled
+
+The first implementation partitioned each class with **one shared seeded RNG** — sort the class's
+uids, shuffle, take the first 10% as test — which is perfectly *deterministic* (same input, same
+output) but not *stable*: a slightly different input gives a wildly different output. Those are not
+the same property, and only the second one lets two runs be compared.
+
+Changing one label breaks it twice over. The model leaves one class list and joins another, and both
+lists change length — so each shuffles differently, **and** the shorter list consumes one fewer draw
+from the shared RNG, which shifts the stream for every class after it in sort order. Classes whose
+labels nobody touched get re-randomised. Measured on a 12-class toy corpus: **one changed label out
+of 3,600 moved 127 models in or out of the test split.**
+
+That is what broke the milestone-8 loop. Run 14 and run 15 straddled a 24-label correction pass and
+shared only **29%** of their test sets, with 687 of run 15's test models sitting in run 14's
+*training* set. Scored on their own splits the retrain looked 4.5 points worse; scored on the 340
+models both held out it looked 5.3 points better. Same two models, opposite conclusions, from nothing
+but which models each was asked about — and both readings look like results.
+
+So a model's bucket is now `sha256(f"{seed}:{uid}")` mod 10,000 and depends on **nothing else** —
+not the labels, not the corpus size, not any other model. Correcting a label moves a model between
+classes but never between train and test, so runs across a correction pass are comparable by
+construction rather than by remembering to check.
+
+- **sha256, not the builtin `hash()`** — the latter is randomised per process unless `PYTHONHASHSEED`
+  is pinned, so a run's partition would depend on the interpreter that produced it. That is
+  reproducibility which evaporates silently on the next process, which is worse than none.
+- **The cost is exact per-class proportions.** Each class now lands *near* 80/10/10 rather than on
+  it. At ~300+ members per roster class the drift is a handful of models, every run records its
+  actual sizes, and stratification survives where it matters: the hash is independent of class, so
+  each class enters each partition at the same expected rate.
+- **Runs 2 through 4 predate this** and recorded no `held_out` either, so recomputing their split
+  gives a partition that is not theirs under *any* label state. Both `ml/evaluate.py` and
+  `ml/review_queue.py` now warn unconditionally on that path rather than only when the `label_hash`
+  moved — an unchanged hash says the data is the same, not that the partition is.
+- **Runs 5 onward are unaffected**: they recorded `held_out`, and replaying recorded uids never
+  consults the split function at all.
 - **`Config` dataclass** — all hyperparameters, persisted verbatim to `training_run.config` so
   adding a knob needs no migration (config-over-code). Four groups: *Architecture* (`backbone`,
   `pretrained`, `num_views`, `view_pool`, `feature_dim`, `head_hidden_dims` — one int = nodes in a

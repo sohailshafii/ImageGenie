@@ -29,7 +29,7 @@ from pathlib import Path
 from infer import load_run_model, rank_samples
 from io_utils import write_csv
 from splits import stratified_split
-from train import data_snapshot, load_trainable_samples, subsample
+from train import load_trainable_samples, subsample
 
 from app.config import get_settings
 from app.storage import build_storage
@@ -78,15 +78,14 @@ def review_rows(
 
     uids = held_out_uids(snapshot, dev_set)
     if uids is None:
-        # Runs 2-4 predate `held_out`; recomputing is the documented fallback and
-        # carries the same caveat as evaluation (ml.md#scoring-a-finished-run).
+        # Runs 2-4 predate `held_out` and the hash-bucket scheme both, so a
+        # recomputed partition is not theirs regardless of label drift — same
+        # unconditional caveat as evaluation (ml.md#scoring-a-finished-run).
         split = stratified_split(samples, config.seed)
-        current = data_snapshot(samples, split)["label_hash"]
-        if snapshot.get("label_hash") not in (None, current):
-            print(
-                f"WARNING: run {run_id} recorded no {dev_set} split and the labels "
-                "have changed since, so this queue is not drawn from the set it held out."
-            )
+        print(
+            f"WARNING: run {run_id} recorded no {dev_set} split, so this queue is drawn "
+            "from a partition recomputed under the current scheme, not the one it held out."
+        )
         uids = [uid for uid, _ in getattr(split, dev_set)]
 
     # A uid can leave the trainable set after the run — soft-deleted, label

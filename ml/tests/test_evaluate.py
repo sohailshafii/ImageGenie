@@ -69,8 +69,8 @@ def test_records_the_report_with_the_current_label_hash(monkeypatch) -> None:
 
 
 def test_warns_when_the_labels_moved_since_the_run(monkeypatch, capsys) -> None:
-    """A label added since the run shifts the partition, so the recomputed
-    `test` split is not the one the run held out. Reported, not fatal."""
+    """A run with no recorded split cannot be scored on the partition it held
+    out. Reported, not fatal — and the message names the label drift too."""
     samples = [(f"m{index}", "chair") for index in range(10)]
 
     config = SimpleNamespace(seed=0, backbone="resnet18")
@@ -80,15 +80,42 @@ def test_warns_when_the_labels_moved_since_the_run(monkeypatch, capsys) -> None:
 
     evaluate.evaluate_run(4)
 
-    assert "WARNING" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "WARNING" in output
+    assert "also changed" in output
 
 
-def test_no_warning_when_the_labels_are_unchanged(monkeypatch, capsys) -> None:
+def test_still_warns_without_a_recorded_split_even_if_the_labels_held(
+    monkeypatch, capsys
+) -> None:
+    """Unchanged labels are not enough to trust a recomputed partition.
+
+    Runs predating `held_out` also predate hash-bucketed splitting, so the scheme
+    that produced their split no longer exists — a matching label_hash says the
+    data is the same, not that the partition is (ml.md#dataset-splits).
+    """
     samples = [(f"m{index}", "chair") for index in range(10)]
     split = stratified_split(samples, 0)
     current = evaluate.data_snapshot(samples, split)["label_hash"]
 
     _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), {"label_hash": current})
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    monkeypatch.setattr(evaluate, "score", lambda *args, **kwargs: _REPORT)
+
+    evaluate.evaluate_run(4)
+
+    output = capsys.readouterr().out
+    assert "WARNING" in output
+    assert "does not help here" in output
+
+
+def test_no_warning_when_the_run_recorded_its_split(monkeypatch, capsys) -> None:
+    """The replay path is the trustworthy one and must stay quiet — otherwise the
+    warning becomes noise that gets ignored on the runs that need it."""
+    samples = [(f"m{index}", "chair") for index in range(10)]
+    snapshot = {"label_hash": "sha256:whatever", "held_out": {"test": ["m0", "m1", "m2"]}}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
     monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
     monkeypatch.setattr(evaluate, "score", lambda *args, **kwargs: _REPORT)
 

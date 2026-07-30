@@ -216,7 +216,7 @@ the app where pressing a button spends money on a GPU, which shapes the whole de
   in 144s — and the fixed ~12-minute provisioning wait is shown separately, since it dominates a
   small run and is invisible in a per-model rate.
 - **The exact image tag is displayed.** Training images are pinned by commit, never `:latest`
-  ([ml.md](../ml/ml.md#running-in-the-cloud)), so the tag the API is configured with can predate the
+  ([ml.md](../ml/ml.md#running-in-the-cloud-m6-chunk-g)), so the tag the API is configured with can predate the
   code being tested. Showing it makes that checkable instead of implicit.
 - **Unconfigured deployments say so.** With no Vertex target (local dev) the form is replaced by an
   explanation pointing at `make train-cloud`, rather than offering a button that 503s.

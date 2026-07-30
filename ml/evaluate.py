@@ -79,14 +79,25 @@ def resolve_scored_samples(
     uid_to_class = dict(samples)
 
     if recorded is None:
+        # Runs 2 through 4 predate `held_out` AND predate hash-bucketed splitting
+        # (ml.md#dataset-splits), so a recomputed partition is not theirs whatever
+        # the labels have done — the shuffle-and-slice scheme that produced their
+        # split no longer exists. The warning is therefore unconditional here, not
+        # contingent on drift; the label_hash comparison only says how *much* else
+        # has moved.
         recorded_hash = snapshot.get("label_hash")
         current_hash = data_snapshot(samples, split)["label_hash"]
-        if recorded_hash and recorded_hash != current_hash:
-            print(
-                f"WARNING: run {run_id} recorded no {dev_set} split and the labeled "
-                f"set has changed since ({recorded_hash[:19]}… -> "
-                f"{current_hash[:19]}…), so this partition is not the one it held out."
-            )
+        drift = (
+            "the labeled set has also changed since "
+            f"({recorded_hash[:19]}… -> {current_hash[:19]}…)"
+            if recorded_hash and recorded_hash != current_hash
+            else "the labeled set is unchanged, but that does not help here"
+        )
+        print(
+            f"WARNING: run {run_id} recorded no {dev_set} split, so this partition is "
+            f"recomputed under the current hash-bucket scheme rather than the one it "
+            f"actually held out — {drift}. Treat the number as indicative."
+        )
         return getattr(split, dev_set)
 
     # A recorded uid can leave the trainable set: soft-deleted, label removed, or
