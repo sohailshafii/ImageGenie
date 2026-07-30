@@ -26,56 +26,13 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 
 ## Status
 
-- ✅ **Milestone 1** — metadata exploration + locked 12-class list
-- ✅ **Weak labeling (FR-3)** — category gate → keyword resolution → out-of-scope rescue; 57% gold
-  coverage at ~0.91 precision, graded against the curated LVIS gold set
-- ✅ **Milestone 2** — pipeline skeleton (queue + download worker), verified end-to-end in Docker
-- ✅ **Milestone 3** — cloud deployment (Terraform: APIs, budget alerts, storage, Pub/Sub, Cloud SQL,
-  Cloud Run); pipeline runs end-to-end on GCP
-- ✅ **Milestone 4** — full ingestion. Convert → normalize → render stages deployed to Cloud Run
-  (scale-to-zero, per-stage Pub/Sub push + DLQ); ran the labeled 12-class set (32k seeded) with
-  resilience tuning (2–4 GiB, one-model-per-instance, in-worker retry + backoff) and a DLQ-replay tool
-  to recover transient mirror failures
-- ✅ **Milestone 5** — labeling frontend (React + TS + Vite) on a FastAPI backend-for-frontend,
-  deployed to Cloud Run. The labeling loop works end to end: sign in, browse real rendered previews,
-  open a model in the three.js viewer (its normalized mesh from the pipeline), and confirm or correct
-  the label — attributed to the admin who made the change. Also done: admin data upload (FR-9),
-  invite-gated signup with email verification (Resend), session cookies with CSRF and rate limiting,
-  the weak-label and Objaverse-metadata backfills that populate the catalog, sort-by-least-confidence
-  and a keyboard sweep for fast review, an admin dead-letter view over recorded pipeline failures, and
-  Alembic migrations. The API and SPA ship as one image on one origin; `scripts/adopt_schema.sh`
-  rebuilds the database from the buckets on deploy.
-- ✅ **Milestone 6** — baseline training. `ml/train.py` trains a multi-view CNN (resnet18 over the 12
-  rendered views → pool → head) on the weak labels, reading renders from the processed bucket, with
-  reproducible per-class stratified splits, per-epoch checkpoints, and the NFR-4 bookkeeping every
-  run records. It runs **on a Vertex AI spot T4** — proven end-to-end on a real GPU, including
-  Cloud SQL over the IAM connector and parallel GCS reads — and can be started either from the
-  command line (`make train-cloud`) or from the dashboard's **Start a run** page, which shows the
-  measured GPU time and cost before the button. The **dashboard** (run list, cost curve with train /
-  val loss and validation accuracy, per-class precision/recall and a confusion matrix) is deployed.
-  **The one thing not yet done is the full-set run itself** — the ~11.8k-model baseline is a
-  button-press, not missing machinery; it is deferred deliberately because at ~55 min/epoch it wants
-  a considered epoch count rather than a default.
-- 🚧 **Milestone 7** — evaluation. The full-set baseline is **run 14**: 11,783 models × 4 epochs on an
-  on-demand T4 (1h53m), scoring **0.4484 accuracy / 0.336 macro recall** on the 1,173 held-out `test`
-  models it recorded as its own split. `make evaluate RUN=n` scores a finished run against the held-out
-  **test** split and stores the report per (run, dev set); the run detail page renders it beside the
-  run's own `val` metrics, kept deliberately separate so the optimistic number is not mistaken for
-  the honest one. The classifier is also usable directly — predict a catalog model from its detail
-  page, or upload any mesh at `/classify` and get a class back without ingesting it. The **bias
-  writeup** is in [ml/ml.md](ml/ml.md#bias-analysis): class skew and tail collapse, a measured ~9%
-  weak-label error ceiling, evidence that training has converged so the ceiling is upstream of it, and
-  the bias the pipeline itself introduces by rendering shape only.
-  **Outstanding:** FR-7 asks for *two* dev sets and only one exists — and after run 14 that gap
-  matters more than it did: more data and epochs did **not** raise accuracy, so what caps the model
-  is upstream of training, and only independently-annotated labels distinguish a label ceiling from a
-  representation limit. Just 49 LVIS-gold-labeled models
-  fall in our held-out split — too few to report — so a real second dev set means ingesting ~1,000
-  independently-annotated objects through the existing pipeline. A second post-MVP thread is the
-  **texture A/B**: renders are shape-only, and because the convert stage exports PLY (which carries no
-  UV textures) using materials means changing the pipeline and re-rendering everything — see
-  [ml.md](ml/ml.md#bias-analysis). Both are scoped as data runs, deliberately
-  after the remaining MVP work.
+**Milestones 1–6 are done; 7 and 8 are in progress.** The pipeline ingests and renders ~12k models,
+the labeling UI and training dashboard are deployed, and the full-set baseline (**run 14**) scores
+**0.4484 accuracy / 0.336 macro recall** on a sealed held-out split.
+
+Per-milestone checklists, including what is deliberately outstanding and why, are in
+**[STATUS.md](STATUS.md)**. The bias analysis behind those numbers is in
+[ml/ml.md](ml/ml.md#bias-analysis).
 
 ## Layout
 
@@ -86,7 +43,8 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 | `infra/` | Terraform for the GCP resources |
 | `web/` | labeling UI + training dashboard ([web/web.md](web/web.md)) |
 
-Design docs are the source of truth — see [CLAUDE.md](CLAUDE.md) for the project hub.
+Design docs are the source of truth — see [CLAUDE.md](CLAUDE.md) for the project hub and
+[STATUS.md](STATUS.md) for milestone progress.
 
 ## Run locally
 
