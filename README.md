@@ -48,7 +48,9 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 
 ## Status
 
-**Milestones 1–6 are done; 7 and 8 are in progress.** The pipeline ingests and renders ~12k models,
+**Milestones 1–6 are done. 7 and 8 are complete but for one item they share** — a second, independently
+annotated dev set, which FR-7 asks for and which the active-learning loop needs in order to measure
+itself. The pipeline ingests and renders ~12k models,
 the labeling UI and training dashboard are deployed, and the current model (**run 15**) scores
 **0.4241 accuracy / 0.3401 macro recall** on a sealed held-out split — inside the ~0.42–0.47 band
 every full-set run has landed in, on a corpus where the majority-class baseline is ~18%.
