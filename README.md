@@ -48,12 +48,17 @@ Vertex AI (training). Every worker is idempotent; the whole thing targets a **~$
 
 ## Status
 
-**Milestones 1–6 are done. 7 and 8 are complete but for one item they share** — a second, independently
-annotated dev set, which FR-7 asks for and which the active-learning loop needs in order to measure
-itself. The pipeline ingests and renders ~12k models,
-the labeling UI and training dashboard are deployed, and the current model (**run 15**) scores
+**Milestones 1–8 are done — v1 is complete.** The pipeline ingests and renders ~13k models, the
+labeling UI and training dashboard are deployed, and the current model (**run 15**) scores
 **0.4241 accuracy / 0.3401 macro recall** on a sealed held-out split — inside the ~0.42–0.47 band
 every full-set run has landed in, on a corpus where the majority-class baseline is ~18%.
+
+Against the **second dev set** — 984 objects annotated by LVIS, with no reference to this model — it
+scores **0.3730 / 0.3712**. Compare the macro recalls, not the accuracies: that set is balanced, so
+accuracy and macro recall coincide on it, and the lower accuracy is the class skew being removed
+rather than the model degrading. Independent labels are worth **~3 points of macro recall**, which is
+the useful finding — too small to be what caps the model, so the shape-only renders are the leading
+suspect rather than the ~9% label noise.
 
 Per-milestone checklists, including what is deliberately outstanding and why, are in
 **[STATUS.md](STATUS.md)**. The bias analysis behind those numbers is in
