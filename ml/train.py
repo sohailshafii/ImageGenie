@@ -145,6 +145,20 @@ def load_trainable_samples() -> list[tuple[str, str]]:
     return samples
 
 
+def label_hash(samples: list[tuple[str, str]]) -> str:
+    """A content hash over the sorted (uid, class) pairs — same hash, same data.
+
+    Its job is to make a labeled set *identifiable* after the fact, so a stored
+    report can say which data it was scored against and a changed hash flags
+    drift. Shared with the evaluator so a dev set defined outside the corpus
+    (`ml/build_dev_set.py`) is fingerprinted exactly like one inside it.
+    """
+    digest = hashlib.sha256()
+    for model_uid, class_name in sorted(samples):
+        digest.update(f"{model_uid}\t{class_name}\n".encode())
+    return "sha256:" + digest.hexdigest()
+
+
 def data_snapshot(samples: list[tuple[str, str]], split: DatasetSplit) -> dict:
     """Capture *which data* this run trained on, for reproducibility (NFR-4).
 
@@ -153,15 +167,13 @@ def data_snapshot(samples: list[tuple[str, str]], split: DatasetSplit) -> dict:
     set is identifiable (same hash → same data; a changed hash flags drift), the
     filter that produced it, and the train/val/test split sizes.
     """
-    digest = hashlib.sha256()
     class_to_count: Counter[str] = Counter()
-    for model_uid, class_name in sorted(samples):
-        digest.update(f"{model_uid}\t{class_name}\n".encode())
+    for _, class_name in samples:
         class_to_count[class_name] += 1
 
     return {
         "label_count": len(samples),
-        "label_hash": "sha256:" + digest.hexdigest(),
+        "label_hash": label_hash(samples),
         "as_of": datetime.now(UTC).isoformat(),
         "filter": {
             "deleted": "excluded",
