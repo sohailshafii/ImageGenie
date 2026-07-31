@@ -2,7 +2,7 @@
 #
 # macOS framework-Python doesn't trust the system cert store, so any command that
 # hits the network (objaverse downloads) must point OpenSSL at certifi's CA bundle
-# via SSL_CERT_FILE. $(RUN) wires that in for you.
+# via SSL_CERT_FILE. $(PYRUN) wires that in for you.
 
 PYTHON ?= python3
 VENV   := .venv
@@ -39,7 +39,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # python that actually runs the script (the cert shim; see header). Uses shell
 # `$$(...)`, not make's $(shell ...), so certifi is located at recipe time — not
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
-RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
+PYRUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
 .PHONY: setup cloud-tools lint test explore clean help devset compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
@@ -69,27 +69,27 @@ test: ## run the test suite (server tests spin up Postgres via testcontainers)
 	$(BIN)/pytest
 
 explore: ## run milestone-1 metadata exploration (MODE=lvis|raw|both)
-	$(RUN) ml/explore_metadata.py --mode $(MODE)
+	$(PYRUN) ml/explore_metadata.py --mode $(MODE)
 
 classlist: ## build + validate the final class list from LVIS merges (ml/taxonomy.py)
-	$(RUN) ml/build_class_list.py
+	$(PYRUN) ml/build_class_list.py
 
 weaklabel: ## Sketchfab weak labeling over sampled shards (SHARDS=N, default 1)
-	$(RUN) ml/weak_label.py --shards $(SHARDS)
+	$(PYRUN) ml/weak_label.py --shards $(SHARDS)
 
 evalweak: ## evaluate weak labels vs the LVIS gold set (SHARDS=N, default 1)
-	$(RUN) ml/eval_weak_labels.py --shards $(SHARDS)
+	$(PYRUN) ml/eval_weak_labels.py --shards $(SHARDS)
 
 evalboundary: ## measure the figure/animal boundary — can keywords resolve it? (SHARDS=N, default 8)
 	# Reproduces the numbers ml.md#the-figureanimal-boundary rests on: how much of
 	# the ambiguous population a keyword precedence rule could even reach, and
 	# whether any token carries stance signal. SHARDS=24 for the gold figures cited.
-	$(RUN) ml/eval_figure_animal.py $(if $(SHARDS),--shards $(SHARDS),)
+	$(PYRUN) ml/eval_figure_animal.py $(if $(SHARDS),--shards $(SHARDS),)
 
 devset: ## select the second dev set from un-ingested LVIS gold objects (FR-7; DEVSET_COUNT=N)
 	# Needs BOTH the cert shim (it reads LVIS annotations over the network) and
 	# PYTHONPATH=server (it asks the DB what is already ingested), so it is the one
-	# ml target that combines $(RUN)'s shim with the DB path. Point it at Cloud SQL
+	# ml target that combines $(PYRUN)'s shim with the DB path. Point it at Cloud SQL
 	# through the proxy — against a local DB every uid looks un-ingested.
 	SSL_CERT_FILE=$$($(BIN)/python -m certifi) PYTHONPATH=server $(BIN)/python \
 	    ml/build_dev_set.py --count $(DEVSET_COUNT)
