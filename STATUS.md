@@ -1,9 +1,10 @@
 # Status
 
-Milestone-by-milestone progress. **v1 = milestones 1–8.** The design rationale behind each item lives
-in the domain docs — [ml/ml.md](ml/ml.md), [server/server.md](server/server.md),
-[web/web.md](web/web.md) — and the scope itself in [CLAUDE.md](CLAUDE.md); this file is only the
-score.
+Milestone-by-milestone progress. **v1 = milestones 1–8, and all eight are done.** The design rationale
+behind each item lives in the domain docs — [ml/ml.md](ml/ml.md),
+[server/server.md](server/server.md), [web/web.md](web/web.md) — and the scope itself in
+[CLAUDE.md](CLAUDE.md); this file is the score, plus the [post-v1 backlog](#post-v1-backlog) at the
+end, which is the single place remaining work is tracked.
 
 ## ✅ Milestone 1 — metadata exploration
 
@@ -134,3 +135,63 @@ label error, and only a human separates them.
       calibration problem are both confirmed on data the model cannot have gamed. **The shape-only
       renders are now the leading explanation for the ~0.45 plateau**
       ([ml.md](ml/ml.md#what-it-says-run-15-evaluation-5)).
+
+## Post-v1 backlog
+
+**v1 is complete — milestones 1–8 are all closed.** Everything here is optional work beyond it, kept
+in one place so it does not scatter across the domain docs. Ordered by evidence, not by appeal.
+
+### What would actually move the model
+
+The temptation is to reach for hyperparameters. The measurements say otherwise, and they are worth
+restating because they are easy to forget:
+
+- **Label noise is not the cap.** The [second dev set](#-milestone-8--active-learning) put a number
+  on it: independently annotated labels are worth **~3 points of macro recall**. If labels were the
+  binding constraint, perfect ones would have bought far more.
+- **Training is exhausted.** Run 14 saw 5.8× the data change nothing (0.4611 → 0.4552), with val loss
+  flat after epoch 1. That is not a model waiting for a better learning rate.
+
+So the ceiling is in the *representation* or the *calibration*, in that order:
+
+1. **Texture/material A/B — the leading candidate.** Renders are shape-only: `render.py` overrides
+   every material with neutral grey, and `convert` exports PLY, which carries no UVs at all, so
+   colour is gone two stages before rendering. Testing it means preserving textured geometry through
+   convert + normalize and re-rendering a subset, then scoring that subset against the same models
+   rendered shape-only. A few dollars of parallel Cloud Run. Most likely to help `food`, `plant` and
+   `electronics`, where colour carries the signal that shape does not.
+2. **Class weighting at full scale.** The calibration failure is now measured twice: small classes
+   are precise but under-predicted, and `weapon` precision falls 0.74 → 0.49 the moment the dev set
+   is balanced. The run 3/4 A/B lost its conclusion to the split-fraction defect, not to a null
+   result, so this is unfinished rather than answered.
+3. **Generic hyperparameter search — last.** Listed for completeness. Nothing measured points here.
+
+### Operational
+
+4. **Deploy `pool_pre_ping`** (`server/app/db.py`) — reaches prod on the next `make deploy-image` +
+   roll. Harmless to defer; it only bites a long-running job holding an idle connection.
+5. **Batch the seed the way the replay is batched.** Publishing 1,000 uids at once overruns the
+   download worker (maxScale 10 × one model per instance): Pub/Sub push gets 429s from Cloud Run,
+   `max_delivery_attempts = 5` quarantines the message, and the job dead-letters **before the worker
+   ever runs**. The 2026-07-30 dev-set seed landed 501 of 1,000 that way and needed
+   `app.replay_dlq --max 250` in rounds to recover (496 → 750 → 947 → 984). The recovery logic is the
+   fix; it just belongs at seed time.
+6. **Push-level rejections leave no `dead_letter` row.** Failures are recorded by the worker at nack
+   time — the only place the error text exists — so a message rejected *before* delivery is invisible
+   in the admin dead-letter view. During the seed above, 499 quarantined models showed up nowhere in
+   the database; only the Pub/Sub backlog metric knew. A real observability gap.
+7. **16 models stuck in the convert/normalize/render DLQs** from the dev-set ingestion. The standing
+   broken-mesh tail rather than anything transient — replaying them just re-fails. Fine to leave;
+   worth a look only to characterise what breaks.
+
+### Optional / housekeeping
+
+8. **Run 16 on the hash-bucketed split**, for a clean post-fix baseline. Nothing requires it — runs
+   14 and 15 stay interpretable via intersection scoring.
+9. **Promote `common_test.py` into `ml/`** if cross-run intersection scoring recurs. Pattern:
+   `load_run_model` both runs → `evaluate_samples` on the intersection of their `held_out` uids.
+10. **Retire the `--limit` split-fraction defect** from the backlog after confirming it. It described
+    fixed per-class 10/10 slicing, which PR #49 replaced with hash buckets outright, so it is very
+    likely already gone. A glance, not a project.
+11. **M9 / PointNet++ comparison** — the original stretch goal. Its inference-demo half already
+    shipped into v1.

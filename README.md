@@ -60,9 +60,9 @@ rather than the model degrading. Independent labels are worth **~3 points of mac
 the useful finding — too small to be what caps the model, so the shape-only renders are the leading
 suspect rather than the ~9% label noise.
 
-Per-milestone checklists, including what is deliberately outstanding and why, are in
-**[STATUS.md](STATUS.md)**. The bias analysis behind those numbers is in
-[ml/ml.md](ml/ml.md#bias-analysis).
+Per-milestone checklists, and the **[post-v1 backlog](STATUS.md#post-v1-backlog)** — the one place
+remaining work is tracked — are in **[STATUS.md](STATUS.md)**. The bias analysis behind those numbers
+is in [ml/ml.md](ml/ml.md#bias-analysis).
 
 > **Scoring a run is a deliberate, manual step — for *both* dev sets.** Training reports on `val`,
 > which it consults every epoch and therefore cannot score honestly. Every other number comes from
