@@ -106,6 +106,15 @@ label error, and only a human separates them.
       that an active-learning loop cannot measure itself unless the evaluation set is frozen
       independently of the labels being corrected** — which is the strongest argument yet for the
       second dev set below.
+- [x] **Fixed the reshuffling itself.** A model's partition is now `sha256(f"{seed}:{uid}") mod 10000`,
+      a pure function of its own uid, so editing a label can no longer move any *other* model across
+      the split boundary ([ml.md](ml/ml.md#why-the-split-is-hashed-not-shuffled)). The old split was
+      deterministic but not stable — one shared RNG shuffled the classes in order, so a class losing a
+      member re-randomised every class after it alphabetically; measured, **one changed label out of
+      3,600 moved 127 models across the test boundary**. Accepted cost: per-class proportions are now
+      approximate, and **run 16 onwards gets a split unrelated to runs 14/15** — a one-time
+      discontinuity. Runs 14 and 15 stay comparable to each other by scoring both on the intersection
+      of their held-out sets.
 - [ ] **A second dev set — ingest ~1,000 LVIS-annotated objects** through the existing pipeline. It
       lands here rather than under milestone 7 because it does double duty: it satisfies FR-7, *and*
       independent annotations are exactly what this loop is missing. A reviewer who has seen the
