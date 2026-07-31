@@ -10,6 +10,9 @@ BIN    := $(VENV)/bin
 MODE   ?= lvis
 SHARDS ?= 1
 COUNT  ?= 100
+# Separate from COUNT (which sizes a compose smoke-seed) because the dev set is a
+# real data run: 1,000 is the size FR-7 is scoped at, not a pilot default.
+DEVSET_COUNT ?= 1000
 COMPOSE := docker compose -f server/docker-compose.yml
 
 GCP_PROJECT  ?= imagegenie-pipeline
@@ -38,7 +41,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 RUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help devset compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -82,6 +85,14 @@ evalboundary: ## measure the figure/animal boundary — can keywords resolve it?
 	# the ambiguous population a keyword precedence rule could even reach, and
 	# whether any token carries stance signal. SHARDS=24 for the gold figures cited.
 	$(RUN) ml/eval_figure_animal.py $(if $(SHARDS),--shards $(SHARDS),)
+
+devset: ## select the second dev set from un-ingested LVIS gold objects (FR-7; DEVSET_COUNT=N)
+	# Needs BOTH the cert shim (it reads LVIS annotations over the network) and
+	# PYTHONPATH=server (it asks the DB what is already ingested), so it is the one
+	# ml target that combines $(RUN)'s shim with the DB path. Point it at Cloud SQL
+	# through the proxy — against a local DB every uid looks un-ingested.
+	SSL_CERT_FILE=$$($(BIN)/python -m certifi) PYTHONPATH=server $(BIN)/python \
+	    ml/build_dev_set.py --count $(DEVSET_COUNT)
 
 train: ## run a baseline training run (M6); writes training_run + metrics to the DB
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
