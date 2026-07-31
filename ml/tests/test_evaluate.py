@@ -7,11 +7,14 @@ import pytest
 from splits import stratified_split
 
 
-def test_the_parser_only_accepts_real_splits() -> None:
-    assert evaluate.build_parser().parse_args(["--run", "4"]).split == "test"
+def test_the_parser_only_accepts_real_dev_sets() -> None:
+    assert evaluate.build_parser().parse_args(["--run", "4"]).dev_set == "test"
+    assert evaluate.build_parser().parse_args(
+        ["--run", "4", "--dev-set", "lvis"]
+    ).dev_set == "lvis"
 
     with pytest.raises(SystemExit):
-        evaluate.build_parser().parse_args(["--run", "4", "--split", "holdout"])
+        evaluate.build_parser().parse_args(["--run", "4", "--dev-set", "holdout"])
 
 
 def test_scores_the_requested_split_using_the_runs_own_seed(monkeypatch, capsys) -> None:
@@ -239,3 +242,88 @@ def test_a_limited_run_is_scored_against_its_own_subset(monkeypatch) -> None:
     # And nothing the run trained on leaks into what is scored.
     trained_on = {uid for uid, _ in stratified_split(subset, 0).train}
     assert not [uid for uid, _ in scored["samples"] if uid in trained_on]
+
+
+# --- The second dev set (FR-7) ----------------------------------------------
+# `lvis` is not a partition of our corpus, so none of the split machinery above
+# applies to it: no seed, no replay, no recomputation. What it needs instead is
+# proof that the two things which would silently invalidate it are handled —
+# models that have not rendered yet, and models that have acquired a label.
+
+
+def _stub_lvis(monkeypatch, dev_set, rendered, trainable) -> dict:
+    scored: dict = {}
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), {})
+    monkeypatch.setattr(evaluate, "load_dev_set", lambda: dev_set)
+    monkeypatch.setattr(evaluate, "load_rendered_uids", lambda uids: set(rendered))
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: trainable)
+    monkeypatch.setattr(
+        evaluate,
+        "score",
+        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+            samples=samples, split_name=split_name
+        )
+        or _REPORT,
+    )
+    return scored
+
+
+def test_lvis_scores_only_the_models_that_have_rendered(monkeypatch, capsys) -> None:
+    dev_set = [("a", "chair"), ("b", "lamp"), ("c", "car")]
+
+    scored = _stub_lvis(monkeypatch, dev_set, rendered=["a", "c"], trainable=[])
+    evaluate.evaluate_run(4, "lvis")
+
+    assert scored["samples"] == [("a", "chair"), ("c", "car")]
+    assert scored["split_name"] == "lvis"
+    assert "1 of 3 dev-set models are not rendered" in capsys.readouterr().out
+
+
+def test_lvis_drops_models_that_acquired_a_label(monkeypatch, capsys) -> None:
+    """A labeled dev-set model is a trainable one, and scoring a run on its own
+    training data is the exact failure this dev set exists to avoid."""
+    dev_set = [("a", "chair"), ("b", "lamp")]
+
+    scored = _stub_lvis(
+        monkeypatch, dev_set, rendered=["a", "b"], trainable=[("b", "weapon")]
+    )
+    evaluate.evaluate_run(4, "lvis")
+
+    assert scored["samples"] == [("a", "chair")]
+    assert "carry a label in the database" in capsys.readouterr().out
+
+
+def test_lvis_refuses_to_score_before_the_data_lands(monkeypatch) -> None:
+    _stub_lvis(monkeypatch, [("a", "chair")], rendered=[], trainable=[])
+    with pytest.raises(SystemExit, match="are rendered yet"):
+        evaluate.evaluate_run(4, "lvis")
+
+
+def test_lvis_refuses_when_everything_is_contaminated(monkeypatch) -> None:
+    _stub_lvis(
+        monkeypatch, [("a", "chair")], rendered=["a"], trainable=[("a", "chair")]
+    )
+    with pytest.raises(SystemExit, match="nothing independent left"):
+        evaluate.evaluate_run(4, "lvis")
+
+
+def test_lvis_fingerprints_the_pairs_it_actually_scored(monkeypatch) -> None:
+    """The stored hash must identify the dev set, not the corpus — a partition
+    report hashes the trainable set, but `lvis` has no relationship to it."""
+    dev_set = [("a", "chair"), ("b", "lamp")]
+    recorded: dict = {}
+
+    _stub_lvis(monkeypatch, dev_set, rendered=["a", "b"], trainable=[])
+    monkeypatch.setattr(
+        evaluate,
+        "record_evaluation",
+        lambda run_id, dev_set_name, report, label_hash: recorded.update(
+            dev_set=dev_set_name, label_hash=label_hash
+        )
+        or 1,
+    )
+
+    evaluate.evaluate_run(4, "lvis")
+
+    assert recorded["dev_set"] == "lvis"
+    assert recorded["label_hash"] == evaluate.label_hash(dev_set)

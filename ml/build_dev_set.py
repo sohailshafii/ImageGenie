@@ -14,8 +14,8 @@ meaningless because the model trained on them. So the second dev set has to be
 objects we have never ingested: this script picks them, and the existing
 (idempotent) M4 pipeline ingests them.
 
-    make devset                    # 1,000 candidates, balanced across the roster
-    make devset COUNT=200          # a pilot
+    make devset                       # 1,000 candidates, balanced across the roster
+    make devset DEVSET_COUNT=200      # a pilot
 
 Writes ``uid,class,reason`` — the same shape ``weak_labels.csv`` has — so the
 selection feeds the seeder unchanged:
@@ -47,6 +47,35 @@ from taxonomy import ROSTER
 
 from app.db import session_scope
 from app.models import Model
+
+# Where the selection lands, and where the evaluator reads it back from. One
+# constant because the two ends must agree on a path no migration guards: the
+# labels live in a file precisely so they never reach the `label` table.
+DEV_SET_PATH = Path("data/devset/lvis_dev.csv")
+
+
+def load_dev_set(path: Path = DEV_SET_PATH) -> list[tuple[str, str]]:
+    """Read the selection back as (uid, gold class) pairs.
+
+    Rows outside the roster are dropped rather than raising, matching
+    `train.load_trainable_samples`: an unknown class name would otherwise surface
+    as a KeyError deep inside a DataLoader worker, and one stray row should not
+    lose a scoring pass. The count is printed so it cannot pass silently.
+    """
+    if not path.exists():
+        raise SystemExit(
+            f"{path} not found — run `make devset` to build the selection. "
+            "It is gitignored (NFR-6), so a fresh checkout has to regenerate it; "
+            "the hash ordering makes that reproduce the same objects."
+        )
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        rows = [(row["uid"], row["class"]) for row in csv.DictReader(csv_file)]
+
+    samples = [(uid, class_name) for uid, class_name in rows if class_name in ROSTER]
+    dropped = len(rows) - len(samples)
+    if dropped:
+        print(f"skipped {dropped} dev-set row(s) outside the roster")
+    return samples
 
 
 def load_ingested_uids() -> set[str]:
@@ -156,7 +185,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build the second dev set (FR-7).")
     parser.add_argument("--count", type=int, default=1000,
                         help="how many objects to select (default: 1,000)")
-    parser.add_argument("--out", type=Path, default=Path("data/devset/lvis_dev.csv"),
+    parser.add_argument("--out", type=Path, default=DEV_SET_PATH,
                         help="where to write the uid,class,reason CSV (gitignored)")
     parser.add_argument("--weak-labels", type=Path,
                         default=Path("data/exploration/weak_labels.csv"),
