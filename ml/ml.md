@@ -433,20 +433,58 @@ Resolves the dev-set-percentage TODO.
 Two dev sets:
 
 1. **Held-out split from own labeled data** → measures the model itself.
-2. **Objaverse slice** → measures generalization / domain gap.
-   - Requires mapping own taxonomy onto Objaverse annotations.
+2. **Independently annotated slice** → measures whether the *labels* are right, not just whether the
+   model reproduces them. Realized as un-ingested **LVIS gold** objects ([below](#the-second-dev-set));
+   the original plan was a broader Objaverse slice, which would have needed a taxonomy mapping built
+   from scratch where LVIS already has one.
    - Expect distribution shift (different artists, styles, mesh quality) — analyze it explicitly
      rather than treating it as noise.
 
-**MVP scope: (1) only** (decided 2026-07-27). The `evaluation` table is keyed by dev set precisely so
-(2) can be added later without a migration or a second code path. What is being given up is worth
-stating plainly rather than discovering later: every label in (1) comes from the *same* weak-labeling
+**(1) shipped first** (decided 2026-07-27); the `evaluation` table is keyed by dev set precisely so (2)
+could be added later without a migration or a second code path. What (1) alone gives up is worth
+stating plainly rather than discovering later: every label in it comes from the *same* weak-labeling
 pipeline as the training data, so the test split inherits its biases — including the measured 0.62
 precision on `figure`. A model can therefore score well by faithfully reproducing the weak labeler's
 mistakes, and (1) alone cannot tell that apart from being right. It measures generalization to unseen
-**objects**; it does not measure whether the labels themselves are correct. If a cheap version of (2)
-is wanted, the **LVIS gold set** from milestone 1 is already independently annotated and already has
-tooling (`ml/eval_weak_labels.py`) — a far smaller job than the Objaverse-slice mapping above.
+**objects**; it does not measure whether the labels themselves are correct.
+
+Milestone 8 then made (2) load-bearing rather than merely desirable — see below.
+
+### The second dev set
+
+Built from the **LVIS gold set**: independently annotated, already mapped onto the roster by
+`taxonomy.CLASS_TO_LVIS_CATEGORIES`, and far cheaper than the Objaverse-slice mapping above.
+
+**Why it stopped being optional.** Milestone 8's review pass corrects labels by showing a human the
+classifier's prediction, so a `label_wrong` verdict *is* the reviewer siding with the classifier —
+the resulting accuracy gain can only ever point up, whatever the model does. An active-learning loop
+cannot grade itself on labels it just edited. LVIS annotations were made without reference to this
+model at all, which is the one property no amount of in-house relabeling buys.
+
+**Why it has to be objects we have never ingested.** Of the 13,118 LVIS gold objects on the roster,
+12,029 uids are already in the corpus, and only ~475 of those are trainable with just ~49 landing in
+`test` — about 4 per class, too thin to report. Scoring the other ~426 is meaningless because the
+model trained on them. So the dev set comes from the **12,635 gold objects with no `model` row**,
+selected by `ml/build_dev_set.py` and ingested through the existing idempotent M4 pipeline:
+
+```
+make devset                      # 1,000 objects, balanced across the roster
+make devset DEVSET_COUNT=200     # a pilot
+python -m app.seed --from-labels data/devset/lvis_dev.csv --count 1000
+```
+
+- **Balanced, not proportional.** The corpus is skewed ~7.7:1 and the tail is where the model
+  actually fails, so mirroring the skew would spend the budget re-confirming `weapon`. Every class
+  clears its quota at 1,000 (83 each; the 4-object remainder goes to the lowest-hash leftovers).
+- **Selection is hashed, not shuffled** — `sha256(uid)` orders the candidates, so ingesting more
+  models later extends the dev set instead of redrawing it. Same property, same reason as
+  [the training split](#why-the-split-is-hashed-not-shuffled).
+- **The gold labels stay in the CSV and out of the `label` table.** A model is trainable exactly when
+  it is labeled **and** rendered, so leaving these unlabeled makes them structurally impossible to
+  train on: the dev set cannot leak into a future run through an absent-minded backfill. The one
+  remaining route is `make backfill-labels`, since **75 of the 1,000 also appear in
+  `weak_labels.csv`** — `build_dev_set.py` counts and warns about exactly that overlap.
+- **Ingesting is a data run, not a code problem**: a couple of dollars and mostly waiting.
 
 ### Metrics
 
