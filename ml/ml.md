@@ -503,6 +503,52 @@ The stored `label_hash` fingerprints the **scored pairs**, not the trainable cor
 the corpus hash is the right question (did the data move under the split?); for `lvis` the corpus is
 irrelevant and the dev set's own content is what has to be identifiable.
 
+#### What it says (run 15, `evaluation 5`)
+
+Ingested 2026-07-30: **1,000 of 1,000 downloaded, 984 rendered**; the 16 missing failed in
+convert/normalize/render, the pipeline's standing broken-mesh tail. The evaluator reports the
+shortfall rather than absorbing it.
+
+| | LVIS — independent labels, balanced | `test` — own weak labels, 7.7:1 skew |
+|---|---|---|
+| models | 984 | 1,172 |
+| accuracy | **0.3730** | 0.4241 |
+| macro recall | **0.3712** | 0.3401 |
+
+**Read macro recall, not accuracy, across these two.** On a balanced set accuracy *is* macro recall
+up to rounding, and the two agree here to within 0.002 — a free check that the selection is balanced
+and the metrics behave. The skewed split has no such property, so its 8-point gap between the two
+numbers is the skew talking. Comparing accuracies (0.4241 → 0.3730) measures the change of
+class balance; comparing macro recalls (0.3401 → **0.3712**) measures the model.
+
+So the model scores **~3 points better against labels made without reference to it**. That is the
+headline, and it is smaller than the ~9% weak-label error rate might suggest.
+
+Per class, three findings — the first is the one that matters:
+
+- **The tail collapse is real, not a labeling artifact.** `aircraft` is never predicted on either dev
+  set: 0.00 recall against **81 independent gold examples**, precision undefined because the model
+  emits the class not at all. `plant` recall is 0.06 here against 0.07 there. These reproduce against
+  clean labels, so they are model failure and cannot be explained away as weak-label noise.
+- **The calibration finding holds on data the model cannot have gamed.** `weapon` precision falls
+  0.74 → 0.49 and `building` 0.32 → 0.19 once the skew is removed. The model over-predicts the
+  corpus's majority classes; a balanced dev set charges it for that, where the skewed split quietly
+  rewarded it. Run 14 inferred this from precision/recall asymmetry — here it is measured directly.
+- **Some weak labels were suppressing the score.** `food` goes 0.24/0.15 → 0.53/0.32, by far the
+  largest single-class gain, which localises real weak-label noise to `food` rather than leaving it
+  as a corpus-wide average.
+
+**What this settles, and what it does not.** Clean labels buy ~3 points of macro recall: real, and
+far short of closing the gap to a useful classifier. **The ~9% label ceiling is therefore not the
+dominant cap on the ~0.45 plateau**, which promotes the shape-only renders ([the texture
+A/B](#follow-up-a-real-second-dev-set)) from co-equal candidate to leading explanation.
+
+⚠️ **Label quality and distribution shift are confounded here.** LVIS gold is a curated subset of
+Objaverse, not a random sample of our corpus, so the +3.1 points mixes "cleaner labels" with
+"different objects". Isolating them needs a set that is independently annotated *and* drawn the same
+way — which does not exist and is not worth building for this project. Treat the number as evidence
+bounding the label ceiling from above, not as a measurement of it.
+
 ### Metrics
 
 - **Per-class precision and recall** on both dev sets.
@@ -836,13 +882,14 @@ unseen **objects**, not whether the labels are right. After (4), that is no long
 training exhausted, the open question is *what* caps the model at ~0.45, and only clean labels
 separate "the labels are wrong" from "the representation cannot express it".
 
-**Built, and waiting on data.** `make devset` selects it and `make evaluate RUN=n DEVSET=lvis`
-scores it; the selection rationale, the counts that ruled out the cheap version, and the
-contamination guard are in [The second dev set](#the-second-dev-set). What remains is the data run
-itself — ~1,000 un-ingested LVIS-annotated objects through the existing idempotent pipeline, a couple
-of dollars and mostly waiting. Until that lands the evaluator refuses to score rather than reporting
-a number over the handful of gold objects already in the corpus, which would be the same
-train-on-your-own-test-set mistake in a new costume.
+**Built, ingested and scored** (2026-07-30). 984 independently annotated models, and the answer is
+that clean labels are worth **~3 points of macro recall** (0.3401 → 0.3712) — real, and far too small
+to be what caps the model at ~0.45. Full numbers and the three per-class findings, including
+`aircraft` scoring 0.00 recall against 81 gold examples, are in
+[The second dev set](#the-second-dev-set).
+
+**That makes the shape-only renders the leading explanation** rather than one of two co-equal ones,
+and the texture A/B below the experiment worth running next.
 
 ## Coding Standards (ML)
 

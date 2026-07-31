@@ -65,7 +65,7 @@ labels, reading renders straight from the processed bucket.
       precision/recall, confusion matrix
 - [x] **The full-set run — run 14:** 11,783 models × 4 epochs, on-demand T4, 1h53m, ~$1.40
 
-## 🚧 Milestone 7 — evaluation
+## ✅ Milestone 7 — evaluation
 
 - [x] `make evaluate RUN=n` scores a finished run against the sealed **test** split, replaying the
       exact uids the run held out, and stores one report per (run, dev set)
@@ -79,10 +79,11 @@ labels, reading renders straight from the processed bucket.
 - [x] **Bias writeup** ([ml.md](ml/ml.md#bias-analysis)) — class skew and tail collapse, a measured
       ~9% weak-label error ceiling, evidence that training has *converged* so the ceiling sits
       upstream of it, and the bias the pipeline itself adds by rendering shape only
-- [ ] **FR-7 asks for two dev sets and only one exists.** The work is tracked under milestone 8
-      below, where the same ingestion serves both purposes.
+- [x] **Both dev sets exist.** The second is 984 independently annotated LVIS objects, ingested
+      through the same pipeline and scored with `make evaluate RUN=n DEVSET=lvis` — detail under
+      milestone 8, where the same ingestion serves both purposes.
 
-## 🚧 Milestone 8 — active learning
+## ✅ Milestone 8 — active learning
 
 Queues the models where the classifier **disagrees** with the stored label, rather than the ones it is
 least sure about: on a corpus with ~9% wrong labels, each disagreement is either a model error or a
@@ -115,11 +116,21 @@ label error, and only a human separates them.
       approximate, and **run 16 onwards gets a split unrelated to runs 14/15** — a one-time
       discontinuity. Runs 14 and 15 stay comparable to each other by scoring both on the intersection
       of their held-out sets.
-- [ ] **A second dev set — ingest ~1,000 LVIS-annotated objects** through the existing pipeline. It
-      lands here rather than under milestone 7 because it does double duty: it satisfies FR-7, *and*
+- [x] **A second dev set — 1,000 LVIS-annotated objects ingested, 984 rendered and scored.** It lands
+      here rather than under milestone 7 because it does double duty: it satisfies FR-7, *and*
       independent annotations are exactly what this loop is missing. A reviewer who has seen the
       classifier's guess cannot produce an unbiased correction — which is why the accuracy gain above
-      carries a caveat — whereas LVIS labels were made without reference to this model at all. It
-      also answers the question run 14 raised: 5.8× the data changed nothing, so the ceiling is
+      carries a caveat — whereas LVIS labels were made without reference to this model at all. The
+      gold labels stay in a CSV and never enter the `label` table, which makes the dev set
+      structurally untrainable rather than untrainable by convention.
+- [x] **It answers the question run 14 raised.** 5.8× the data changed nothing, so the ceiling sits
       upstream of training, and only independent labels separate a *label* ceiling from a
-      *representation* limit. Scoped as a data run of a couple of dollars, mostly waiting.
+      *representation* limit. Run 15 scores **0.3730 accuracy / 0.3712 macro recall** on it
+      (`evaluation 5`) against 0.4241 / 0.3401 on its own test split. Read macro recall across the
+      two — on a balanced set accuracy *is* macro recall, and the fall in accuracy is the skew being
+      removed, not the model getting worse. **Clean labels are worth ~3 points of macro recall**:
+      real, and far too small to be the cap. `aircraft` scores 0.00 recall against 81 gold examples
+      and `weapon` precision falls 0.74 → 0.49 once the skew is gone, so the tail collapse and the
+      calibration problem are both confirmed on data the model cannot have gamed. **The shape-only
+      renders are now the leading explanation for the ~0.45 plateau**
+      ([ml.md](ml/ml.md#what-it-says-run-15-evaluation-5)).
