@@ -486,6 +486,23 @@ python -m app.seed --from-labels data/devset/lvis_dev.csv --count 1000
   `weak_labels.csv`** — `build_dev_set.py` counts and warns about exactly that overlap.
 - **Ingesting is a data run, not a code problem**: a couple of dollars and mostly waiting.
 
+**Scoring it** — `make evaluate RUN=n DEVSET=lvis`. None of the split machinery applies: there is no
+partition to replay and none to recompute, because these objects were never in the corpus the run
+partitioned. That is what makes it a second dev set rather than another view of the first. Two
+filters stand between the CSV and the report, and both print what they dropped:
+
+- **Not rendered → skipped.** The selection is made before ingestion, so at scoring time some of it
+  may have dead-lettered, failed conversion, or simply not arrived. With *nothing* rendered the
+  command exits rather than scoring an empty set.
+- **Labeled → dropped, loudly.** A label in the `label` table is what makes a model trainable, so a
+  labeled dev-set model is one a run could have trained on. This should be unreachable — the gold
+  labels never enter the table — so the warning firing means `make backfill-labels` reached the ~75
+  uids this selection shares with `weak_labels.csv`.
+
+The stored `label_hash` fingerprints the **scored pairs**, not the trainable corpus. For a partition
+the corpus hash is the right question (did the data move under the split?); for `lvis` the corpus is
+irrelevant and the dev set's own content is what has to be identifiable.
+
 ### Metrics
 
 - **Per-class precision and recall** on both dev sets.
@@ -517,9 +534,14 @@ over both dev sets.
 ### Scoring a finished run (M7 / C1)
 
 ```
-make evaluate RUN=4              # the held-out test split
-make evaluate RUN=4 SPLIT=val    # re-score val, e.g. to compare two methods
+make evaluate RUN=4                # the held-out test split
+make evaluate RUN=4 DEVSET=val     # re-score val, e.g. to compare two methods
+make evaluate RUN=4 DEVSET=lvis    # the second dev set (below)
 ```
+
+The flag is `DEVSET`, not `SPLIT`, because `lvis` is not a partition of anything — it is a
+different corpus, and calling it a split would misdescribe the only dev set that measures something
+the first cannot.
 
 `ml/infer.py` rebuilds the model and `ml/evaluate.py` scores it, storing one `evaluation` row per
 (run, dev set) — see [server.md](../server/server.md#database). Separate from training on purpose:
@@ -812,12 +834,15 @@ the one it removes.
 Everything above rests on one corpus labeled by one weak labeler, so it measures generalization to
 unseen **objects**, not whether the labels are right. After (4), that is no longer a nicety: with
 training exhausted, the open question is *what* caps the model at ~0.45, and only clean labels
-separate "the labels are wrong" from "the representation cannot express it". The intended fix is measured and scoped rather
-than hypothetical: LVIS gold has 13,118 objects, of which only **475** are in our trainable set and
-only **49** in the held-out split — roughly 4 per class, too thin to report. A genuine second dev set
-means **ingesting ~1,000 of the ~12,600 LVIS-annotated objects not yet in the corpus** through the
-existing (idempotent) pipeline: a data run, not a code change. That closes FR-7 properly and answers
-the (3)-versus-(4) question in the same stroke.
+separate "the labels are wrong" from "the representation cannot express it".
+
+**Built, and waiting on data.** `make devset` selects it and `make evaluate RUN=n DEVSET=lvis`
+scores it; the selection rationale, the counts that ruled out the cheap version, and the
+contamination guard are in [The second dev set](#the-second-dev-set). What remains is the data run
+itself — ~1,000 un-ingested LVIS-annotated objects through the existing idempotent pipeline, a couple
+of dollars and mostly waiting. Until that lands the evaluator refuses to score rather than reporting
+a number over the handful of gold objects already in the corpus, which would be the same
+train-on-your-own-test-set mistake in a new costume.
 
 ## Coding Standards (ML)
 
