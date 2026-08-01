@@ -37,3 +37,10 @@ server/alembic/versions/__pycache__/
 # docs/images/ — ~200 KB against ~2 MB, and every visitor to the repo page pays
 # for whatever the README embeds.
 source_images/
+
+# Screen-recorded demos — tens of MB each (33 MB raw, 9 MB cropped). They reach
+# the README as GitHub attachment URLs, which live on GitHub's CDN rather than in
+# the tree, so a clone never pays for them. Committing one is effectively
+# permanent: history can't be pruned without a rewrite.
+*.mov
+*.mp4
