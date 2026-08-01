@@ -11,6 +11,8 @@ systems, ML, and a web frontend**. Portfolio project.
 
 ## Live demo
 
+https://github.com/user-attachments/assets/eb8afa95-b462-47b0-b44b-d29d2e4274f7
+
 A single-instance deployment runs on Cloud Run:
 **[imagegenie-api-hhitzs4jka-uc.a.run.app](https://imagegenie-api-hhitzs4jka-uc.a.run.app)**
 
