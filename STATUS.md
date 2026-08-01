@@ -168,8 +168,9 @@ So the ceiling is in the *representation* or the *calibration*, in that order:
 
 ### Operational
 
-4. **Deploy `pool_pre_ping`** (`server/app/db.py`) — reaches prod on the next `make deploy-image` +
-   roll. Harmless to defer; it only bites a long-running job holding an idle connection.
+4. ~~**Deploy `pool_pre_ping`**~~ (`server/app/db.py`) — **DONE 2026-07-31**, revision
+   `imagegenie-api-00011-m75`. Shipped alongside the collapsed `held_out` list on the run detail
+   page; the database was already at Alembic head, so the deploy carried no migration.
 5. **Batch the seed the way the replay is batched.** Publishing 1,000 uids at once overruns the
    download worker (maxScale 10 × one model per instance): Pub/Sub push gets 429s from Cloud Run,
    `max_delivery_attempts = 5` quarantines the message, and the job dead-letters **before the worker
