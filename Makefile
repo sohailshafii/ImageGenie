@@ -94,6 +94,14 @@ devset: ## select the second dev set from un-ingested LVIS gold objects (FR-7; D
 	SSL_CERT_FILE=$$($(BIN)/python -m certifi) PYTHONPATH=server $(BIN)/python \
 	    ml/build_dev_set.py --count $(DEVSET_COUNT)
 
+devset-push: ## copy the existing dev-set CSV to the processed bucket, so cloud jobs can score it
+	# Push-only, and deliberately not folded into `devset`: the candidate filter is
+	# "no model row", and these objects were ingested so they could be rendered, so
+	# re-selecting now would skip the whole current dev set and draw a different
+	# 1,000. This uploads what is on disk and selects nothing.
+	# No cert shim — it talks to GCS, not the LVIS annotation host.
+	PYTHONPATH=server $(BIN)/python ml/build_dev_set.py --push-only
+
 train: ## run a baseline training run (M6); writes training_run + metrics to the DB
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
 	# no cert shim needed — this run only touches Postgres, not the network.

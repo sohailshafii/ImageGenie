@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 from collections import Counter
 from pathlib import Path
 
@@ -45,37 +46,90 @@ from io_utils import write_csv
 from sqlalchemy import select
 from taxonomy import ROSTER
 
+from app.artifact_keys import dev_set_key
+from app.config import get_settings
 from app.db import session_scope
 from app.models import Model
+from app.storage import build_storage
 
 # Where the selection lands, and where the evaluator reads it back from. One
 # constant because the two ends must agree on a path no migration guards: the
 # labels live in a file precisely so they never reach the `label` table.
 DEV_SET_PATH = Path("data/devset/lvis_dev.csv")
+# What the stored copy is called. `evaluate.py --dev-set lvis` names the same
+# thing, and the stored key is derived from it (app.artifact_keys.dev_set_key).
+DEV_SET_NAME = "lvis"
 
 
-def load_dev_set(path: Path = DEV_SET_PATH) -> list[tuple[str, str]]:
+def push_dev_set(path: Path = DEV_SET_PATH, name: str = DEV_SET_NAME) -> str:
+    """Copy a selection into the processed bucket and return the key it landed on.
+
+    A Vertex job has no checkout and no `data/` directory, so a dev set that only
+    exists on a laptop can only ever be scored from that laptop. This is what
+    makes `make evaluate DEVSET=lvis` reachable from the button.
+
+    Copying it does **not** make it a label. The reason the gold classes live in a
+    file is that a labeled model is a trainable one (`train.load_trainable_
+    samples`), so a blob in a bucket keeps exactly the property the CSV had.
+    """
+    if not path.exists():
+        raise SystemExit(f"{path} not found — nothing to push; run `make devset` first")
+    storage = build_storage(get_settings())
+    key = dev_set_key(name)
+    storage.put_bytes(key, path.read_bytes())
+    print(f"pushed {path} to {key}")
+    return key
+
+
+def load_dev_set(
+    path: Path = DEV_SET_PATH, name: str = DEV_SET_NAME
+) -> list[tuple[str, str]]:
     """Read the selection back as (uid, gold class) pairs.
+
+    Local file first, stored copy second. The local file is authoritative where it
+    exists because that is where `make devset` writes and where an operator would
+    edit; the bucket is how a job with no checkout reads the same selection.
+
+    The two can disagree if a selection is rebuilt and not pushed. That is
+    detectable rather than silent: an `lvis` evaluation records a `label_hash` of
+    the exact pairs it scored, so two reports over different selections do not
+    look alike.
 
     Rows outside the roster are dropped rather than raising, matching
     `train.load_trainable_samples`: an unknown class name would otherwise surface
     as a KeyError deep inside a DataLoader worker, and one stray row should not
     lose a scoring pass. The count is printed so it cannot pass silently.
     """
-    if not path.exists():
-        raise SystemExit(
-            f"{path} not found — run `make devset` to build the selection. "
-            "It is gitignored (NFR-6), so a fresh checkout has to regenerate it; "
-            "the hash ordering makes that reproduce the same objects."
-        )
-    with path.open(newline="", encoding="utf-8") as csv_file:
-        rows = [(row["uid"], row["class"]) for row in csv.DictReader(csv_file)]
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+    else:
+        text = _read_stored_dev_set(name, path)
+    rows = [(row["uid"], row["class"]) for row in csv.DictReader(io.StringIO(text))]
 
     samples = [(uid, class_name) for uid, class_name in rows if class_name in ROSTER]
     dropped = len(rows) - len(samples)
     if dropped:
         print(f"skipped {dropped} dev-set row(s) outside the roster")
     return samples
+
+
+def _read_stored_dev_set(name: str, path: Path) -> str:
+    """The bucket copy, or an error naming both places it was not found.
+
+    A job that cannot find its dev set has to say which of the two things is
+    missing — the push, or the selection itself — because the fixes are different
+    and one of them costs a network round trip over LVIS annotations.
+    """
+    key = dev_set_key(name)
+    try:
+        return build_storage(get_settings()).get_bytes(key).decode("utf-8")
+    except Exception as error:  # noqa: BLE001 - every backend fails differently
+        raise SystemExit(
+            f"no dev set at {path} and none stored at {key} ({error}). Build the "
+            "selection with `make devset`, then `make devset-push` to make it "
+            "readable from a cloud job. It is gitignored (NFR-6), so a fresh "
+            "checkout has neither."
+        ) from error
 
 
 def load_ingested_uids() -> set[str]:
@@ -190,7 +244,22 @@ def main() -> None:
     parser.add_argument("--weak-labels", type=Path,
                         default=Path("data/exploration/weak_labels.csv"),
                         help="weak-label CSV to check for overlap (see module docstring)")
+    # Push separately from select, and *never* re-select in order to push. The
+    # candidate filter is "no `model` row", these objects were ingested so the
+    # pipeline could render them, and so they all have one now — a fresh
+    # selection would skip the entire current dev set and draw the next 1,000.
+    # `hash_order` does not save this: it keeps the order stable as candidates
+    # are ADDED to the pool, and ingestion removes them from it.
+    pushing = parser.add_mutually_exclusive_group()
+    pushing.add_argument("--push", action="store_true",
+                         help="also copy the new selection to the processed bucket")
+    pushing.add_argument("--push-only", action="store_true",
+                         help="copy the existing CSV to the bucket and select nothing")
     args = parser.parse_args()
+
+    if args.push_only:
+        push_dev_set(args.out)
+        return
 
     uid_to_gold_class = build_uid_to_gold_class()
     ingested_uids_set = load_ingested_uids()
@@ -212,6 +281,8 @@ def main() -> None:
         [(uid, class_name, "lvis-gold") for uid, class_name in selected],
     )
     print(f"\nwrote {args.out}")
+    if args.push:
+        push_dev_set(args.out)
 
 
 if __name__ == "__main__":

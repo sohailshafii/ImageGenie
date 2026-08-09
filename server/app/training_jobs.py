@@ -66,16 +66,15 @@ MAX_BATCH_SIZE = MAX_IMAGES_PER_FORWARD // VIEWS_PER_MODEL
 EVALUATE_COMMAND = ["python", "evaluate.py"]
 
 # The dev sets a run can be scored against, duplicated from ml/evaluate.py's
-# `PARTITIONS` for the same reason as app/roster.py — the API image ships without
+# `DEV_SETS` for the same reason as app/roster.py — the API image ships without
 # the ml package. `tests/test_training_launch.py` asserts the copy still matches.
 #
-# `lvis` (the second dev set, FR-7) is missing here for one removable reason, not
-# by policy: it is read from `data/devset/lvis_dev.csv`, which is gitignored and
-# therefore not in the training image, so a job asked for it would queue ~12
-# minutes for a GPU and then die on a missing file. It joins this tuple as soon as
-# that file is reachable from the job. Until then `make evaluate DEVSET=lvis`
-# scores it locally, where the file exists.
-EVALUATION_DEV_SETS: tuple[str, ...] = ("test", "val", "train")
+# `lvis` is the second dev set (FR-7) and behaves unlike the other three: it is a
+# separate corpus rather than a slice of ours, and its selection lives in a file
+# rather than the database. A job reads that file from the processed bucket
+# (`make devset-push` puts it there), so **an evaluation asked for `lvis` fails if
+# nobody has pushed it** — with a message naming the push, not a stack trace.
+EVALUATION_DEV_SETS: tuple[str, ...] = ("test", "val", "train", "lvis")
 
 
 class TrainingLaunchError(RuntimeError):
