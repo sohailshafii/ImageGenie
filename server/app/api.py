@@ -65,6 +65,7 @@ from .models import (
     Model,
     TrainingMetric,
     TrainingRun,
+    TrainingStatus,
     User,
     UserRole,
 )
@@ -336,7 +337,9 @@ class EvaluationOut(BaseModel):
 
     id: int
     dev_set: str  # "test" today; a second, independently-annotated set later
-    report: dict  # same shape as training_run.metrics (ml/metrics.py)
+    status: TrainingStatus  # running while a scoring job is in flight
+    report: dict | None  # same shape as training_run.metrics (ml/metrics.py)
+    error: str | None  # why a `failed` evaluation failed
     label_hash: str | None
     created_at: datetime
 
@@ -958,7 +961,9 @@ def get_training_run_evaluations(run_id: int) -> list[EvaluationOut]:
             EvaluationOut(
                 id=evaluation.id,
                 dev_set=evaluation.dev_set,
+                status=evaluation.status,
                 report=evaluation.report,
+                error=evaluation.error,
                 label_hash=evaluation.label_hash,
                 created_at=evaluation.created_at,
             )
