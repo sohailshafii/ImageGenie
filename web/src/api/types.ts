@@ -219,6 +219,12 @@ export interface TrainingLaunchConfig {
   image: string | null; // the exact commit-tagged image that will run
   region: string | null;
   trainableCount: number; // models both labeled and rendered — the full-set size
+  // Batch size is typed in models but spent in images: each model's views go
+  // through the backbone in the same forward pass. Both numbers come from the
+  // API (server/app/training_jobs.py) so the form has no copy to drift from —
+  // unlike TRAINING_DEFAULTS below, where a stale value is only a wrong hint.
+  viewsPerModel: number;
+  maxBatchSize: number;
 }
 
 /**

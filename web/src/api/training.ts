@@ -137,6 +137,8 @@ interface TrainingLaunchConfigResponse {
   image: string | null;
   region: string | null;
   trainable_count: number;
+  views_per_model: number;
+  max_batch_size: number;
 }
 
 interface TrainingLaunchResponse {
@@ -153,6 +155,8 @@ export async function getTrainingLaunchConfig(): Promise<TrainingLaunchConfig> {
     image: body.image,
     region: body.region,
     trainableCount: body.trainable_count,
+    viewsPerModel: body.views_per_model,
+    maxBatchSize: body.max_batch_size,
   };
 }
 

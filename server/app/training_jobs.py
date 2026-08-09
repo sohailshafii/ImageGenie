@@ -32,6 +32,30 @@ ACCELERATOR_TYPE = "NVIDIA_TESLA_T4"
 # submit call, not the training itself, so it should be quick or fail.
 SUBMIT_TIMEOUT_SECONDS = 30.0
 
+# ── How large a batch the machine above can actually hold ───────────────────
+#
+# `batch_size` counts *models*, but a model is 12 rendered views and
+# `ml/model.py`'s forward folds them into the batch (`views.flatten(0, 1)`), so
+# the shared backbone sees `batch_size * VIEWS_PER_MODEL` images per pass. The
+# multiplier is invisible at the point where the number is typed, which is how
+# runs 18-20 came to die of `torch.OutOfMemoryError` ~45s in, on a billed GPU.
+#
+# Duplicated from `ml/train.py`'s `Config.num_views` for the same reason as
+# `app/roster.py`: the API image ships `server/app` and the built SPA and nothing
+# else, so importing the ml package here would crash the service in production
+# while working in every local test. `tests/test_roster.py` asserts it still
+# matches.
+VIEWS_PER_MODEL = 12
+
+# Measured on the T4 above, not estimated. 384 images per pass (batch 32) trained
+# fine; 768 (batch 64) died 148 MiB past the card's 14.58 GiB. The ceiling sits
+# below the failure rather than at it, because the margin an allocator has left
+# after fragmentation is not something a form can know.
+MAX_IMAGES_PER_FORWARD = 512
+
+# What the admin actually types, in models.
+MAX_BATCH_SIZE = MAX_IMAGES_PER_FORWARD // VIEWS_PER_MODEL
+
 
 class TrainingLaunchError(RuntimeError):
     """Vertex refused the job, or the API is not configured to submit one."""

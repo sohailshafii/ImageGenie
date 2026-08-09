@@ -97,6 +97,9 @@ from .security import (
 )
 from .storage import Storage, build_storage
 from .training_jobs import (
+    MAX_BATCH_SIZE,
+    MAX_IMAGES_PER_FORWARD,
+    VIEWS_PER_MODEL,
     TrainingLaunchError,
     launch_configured,
     submit_training_job,
@@ -231,6 +234,10 @@ class TrainingLaunchConfigOut(BaseModel):
     image: str | None  # the exact commit-tagged image that will run
     region: str | None
     trainable_count: int  # models that are labeled AND rendered — the full-set size
+    # Batch size is quoted in models but paid for in images, so the form is given
+    # both halves of that arithmetic rather than keeping its own copy of either.
+    views_per_model: int
+    max_batch_size: int
 
 
 class TrainingLaunchIn(BaseModel):
@@ -241,12 +248,18 @@ class TrainingLaunchIn(BaseModel):
     the admin deliberately changed, and a knob gaining a better default in code
     improves runs that never mentioned it.
 
-    The bounds are typo-catchers, not opinions. A training job fails ~15 minutes
+    Most bounds are typo-catchers, not opinions. A training job fails ~15 minutes
     after submission (queue for a spot GPU, pull a multi-GB image) and bills for
     the privilege, so `dropout=1.5` is worth refusing here rather than
     discovering there. Run *size* is deliberately unbounded — a big run is a
     judgment call the form prices out, and the guardrail for it is informed
     consent; `dropout=1.5` is just a mistake.
+
+    `batch_size` is the exception: its ceiling is a property of the hardware, not
+    a matter of taste. It counts models, but each model carries 12 views into the
+    same forward pass, so the figure the GPU is asked for is 12x the one typed —
+    and a value that cannot fit is neither a typo nor a judgment call, just an
+    OOM ~45s into a paid run (`training_jobs.MAX_BATCH_SIZE`).
 
     Architecture is absent on purpose: backbone, pooling and head shape change
     the checkpoint's shape, so a run's weights only load back into the
@@ -271,6 +284,24 @@ class TrainingLaunchIn(BaseModel):
     weight_decay: float | None = Field(None, ge=0)
     label_smoothing: float | None = Field(None, ge=0, lt=1)
     class_weighting: Literal["none", "balanced"] | None = None
+
+    @field_validator("batch_size")
+    @classmethod
+    def _batch_must_fit_the_gpu(cls, value: int | None) -> int | None:
+        """Reject a batch the training GPU cannot hold, and say why.
+
+        A plain `le=` bound would report "less than or equal to 42", which reads
+        as an arbitrary limit — the number that matters is the one the admin
+        never sees, so the message states it rather than the ceiling alone.
+        """
+        if value is not None and value > MAX_BATCH_SIZE:
+            raise ValueError(
+                f"batch_size {value} puts {value * VIEWS_PER_MODEL} images on the GPU: "
+                f"each model's {VIEWS_PER_MODEL} rendered views go through the backbone "
+                f"in the same pass. The training GPU fits {MAX_IMAGES_PER_FORWARD}, "
+                f"so {MAX_BATCH_SIZE} models is the ceiling."
+            )
+        return value
 
 
 # Payload field -> the flag ml/train.py parses. Every one of these is optional;
@@ -1006,6 +1037,8 @@ def get_training_launch_config() -> TrainingLaunchConfigOut:
         image=settings.train_image,
         region=settings.vertex_region if launch_configured(settings) else None,
         trainable_count=trainable,
+        views_per_model=VIEWS_PER_MODEL,
+        max_batch_size=MAX_BATCH_SIZE,
     )
 
 

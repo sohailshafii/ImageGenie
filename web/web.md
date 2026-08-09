@@ -207,9 +207,22 @@ the app where pressing a button spends money on a GPU, which shapes the whole de
   yet — `ml/train.py` writes that itself once the container starts, minutes later, after a GPU is
   provisioned and a multi-GB image is pulled. The confirmation says so, so the empty dashboard
   doesn't read as a failure.
-- **Recommend, don't enforce.** Defaults start small (500 models, 5 epochs) so the expensive choice
-  is a deliberate edit rather than the path of least resistance, but every field is editable and the
-  API caps nothing. The guardrail is informed consent.
+- **Recommend, don't enforce — except where the hardware does.** Defaults start small (500 models,
+  5 epochs) so the expensive choice is a deliberate edit rather than the path of least resistance,
+  but every field is editable and nothing caps how *big* a run may be. The guardrail there is
+  informed consent. Batch size is the one exception, below: a batch that cannot fit in GPU memory is
+  not an expensive choice, it is a run that cannot happen.
+- **Batch size shows what it actually asks for.** The box is in models, but a model is 12 rendered
+  views and they go through the backbone in the same forward pass, so the GPU is asked for 12× the
+  number typed. That multiplier used to be invisible — a batch of 64 meant 768 images, which OOMed
+  the T4 about 45 seconds into a job that had already queued and billed. The hint now states the
+  figure live ("asks the GPU for 384 images per pass"), the input carries a `max`, and an
+  over-large value blocks the submit with the reason. Both the ceiling and the views-per-model
+  figure come from `GET /training-launch`, so this page keeps no copy of either to drift from — the
+  API enforces the same bound for callers that skip the form
+  ([server.md](../server/server.md#api-layer)). When the value is out of range with `Tuning` folded
+  away, the message repeats next to the disabled button: a dead button whose explanation is hidden
+  behind a disclosure is just a broken page.
 - **The disclaimer is a live estimate, not boilerplate.** Model count, epochs, GPU time and rough
   dollars update as the inputs change, so the cost of "just train on everything" is visible before
   the click rather than after. The rate is **measured** — a real spot-T4 run did 500 models × 1 epoch
