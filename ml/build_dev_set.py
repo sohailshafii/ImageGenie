@@ -74,7 +74,19 @@ def push_dev_set(path: Path = DEV_SET_PATH, name: str = DEV_SET_NAME) -> str:
     """
     if not path.exists():
         raise SystemExit(f"{path} not found — nothing to push; run `make devset` first")
-    storage = build_storage(get_settings())
+    settings = get_settings()
+    # `storage_backend` defaults to "local", and a "push" that copies the file
+    # into `data/storage/` is not a push at all: it prints success, changes
+    # nothing a Vertex job can reach, and the failure only surfaces ~12 minutes
+    # into a paid job that cannot find its dev set. Refuse instead.
+    if settings.storage_backend != "gcs":
+        raise SystemExit(
+            f"storage backend is {settings.storage_backend!r}, so this would copy the "
+            "dev set into the local data/storage directory, where no cloud job can "
+            "read it. Re-run with IMAGEGENIE_STORAGE_BACKEND=gcs (`make devset-push` "
+            "sets it)."
+        )
+    storage = build_storage(settings)
     key = dev_set_key(name)
     storage.put_bytes(key, path.read_bytes())
     print(f"pushed {path} to {key}")

@@ -99,8 +99,11 @@ devset-push: ## copy the existing dev-set CSV to the processed bucket, so cloud 
 	# "no model row", and these objects were ingested so they could be rendered, so
 	# re-selecting now would skip the whole current dev set and draw a different
 	# 1,000. This uploads what is on disk and selects nothing.
-	# No cert shim — it talks to GCS, not the LVIS annotation host.
-	PYTHONPATH=server $(BIN)/python ml/build_dev_set.py --push-only
+	# No cert shim — it talks to GCS, not the LVIS annotation host. The backend is
+	# forced here because it defaults to `local`, and a push into data/storage/ is
+	# not reachable from the job this exists to serve (build_dev_set refuses it).
+	IMAGEGENIE_STORAGE_BACKEND=gcs PYTHONPATH=server $(BIN)/python \
+	    ml/build_dev_set.py --push-only
 
 train: ## run a baseline training run (M6); writes training_run + metrics to the DB
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);

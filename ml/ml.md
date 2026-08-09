@@ -498,6 +498,11 @@ because that is the copy being edited; the two can drift if a selection is rebui
 and an `lvis` report records a `label_hash` of the exact pairs it scored, so two reports over
 different selections do not look alike.
 
+`make devset-push` forces `IMAGEGENIE_STORAGE_BACKEND=gcs`, and `push_dev_set` refuses to run without
+it. The backend defaults to `local`, where a "push" copies the file into `data/storage/` and prints
+success — reaching nothing, and surfacing only ~12 minutes into a paid job that cannot find its dev
+set. That is not a hypothetical: the first push of this file did exactly that.
+
 ⚠️ **Never re-run `make devset` in order to push**, and note that the hash-ordering property above
 does *not* protect this case. Hashing keeps the selection stable when candidates are **added** to the
 pool: a new gold object slots into the order without moving the ones already chosen. What it cannot
