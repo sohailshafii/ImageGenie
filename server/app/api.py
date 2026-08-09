@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from .artifact_keys import (
     MESH_SUFFIX,
+    NUM_VIEWS,
     RAW_SUFFIX_TO_FILE_TYPE,
     normalized_key,
     raw_key,
@@ -102,7 +103,6 @@ from .training_jobs import (
     EVALUATION_DEV_SETS,
     MAX_BATCH_SIZE,
     MAX_IMAGES_PER_FORWARD,
-    VIEWS_PER_MODEL,
     TrainingLaunchError,
     launch_configured,
     submit_training_job,
@@ -299,8 +299,8 @@ class TrainingLaunchIn(BaseModel):
         """
         if value is not None and value > MAX_BATCH_SIZE:
             raise ValueError(
-                f"batch_size {value} puts {value * VIEWS_PER_MODEL} images on the GPU: "
-                f"each model's {VIEWS_PER_MODEL} rendered views go through the backbone "
+                f"batch_size {value} puts {value * NUM_VIEWS} images on the GPU: "
+                f"each model's {NUM_VIEWS} rendered views go through the backbone "
                 f"in the same pass. The training GPU fits {MAX_IMAGES_PER_FORWARD}, "
                 f"so {MAX_BATCH_SIZE} models is the ceiling."
             )
@@ -1132,7 +1132,7 @@ def get_training_launch_config() -> TrainingLaunchConfigOut:
         image=settings.train_image,
         region=settings.vertex_region if launch_configured(settings) else None,
         trainable_count=trainable,
-        views_per_model=VIEWS_PER_MODEL,
+        views_per_model=NUM_VIEWS,
         max_batch_size=MAX_BATCH_SIZE,
     )
 
