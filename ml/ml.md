@@ -617,6 +617,12 @@ The flag is `DEVSET`, not `SPLIT`, because `lvis` is not a partition of anything
 different corpus, and calling it a split would misdescribe the only dev set that measures something
 the first cannot.
 
+The same scoring is reachable without a checkout, from the **Evaluate** button on a run's detail page
+([web.md](../web/web.md#training-dashboard)). It runs *this* script — a Vertex job on the training
+image, which already contains it — rather than a second implementation, so a report says the same
+thing however it was asked for. The row it writes is `running` from the moment scoring starts and
+`failed` with a reason if it dies, which is what makes an unattended job legible.
+
 `ml/infer.py` rebuilds the model and `ml/evaluate.py` scores it, storing one `evaluation` row per
 (run, dev set) — see [server.md](../server/server.md#database). Separate from training on purpose:
 the trainer reports on `val`, which it consults every epoch and therefore cannot score honestly,
