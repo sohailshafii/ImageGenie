@@ -356,6 +356,7 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
 | `GET /models/{uid}/predict` | login | classify a rendered model with the newest trained run |
 | `GET /training-runs/{id}/evaluations` | login | dev-set reports for a run, newest first (FR-7) |
+| `POST /training-runs/{id}/evaluations` | **admin** | submits a Vertex job that scores the run; **202**, no evaluation row yet |
 | `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count, the batch ceiling |
 | `POST /training-runs` | **admin** | submits a Vertex spot-GPU training job; **202**, no run row yet |
 
@@ -367,6 +368,28 @@ them apart for that reason, and so does the detail page. Each row exposes its `l
 than hiding it, because the split is recomputed rather than stored: if it differs from the run's own
 hash, the labels moved in between and the scored split is not the one held out — the one fact that
 decides whether the number can be trusted, and one only the reader can weigh.
+
+`POST /training-runs/{id}/evaluations` launches the scoring rather than performing it. The API image
+ships `server/app` and the built SPA — no torch, no ml package — so it could not score a run given
+any amount of time. The **training image** can and already does: `ml/Dockerfile` does `COPY ml/*.py`,
+so `evaluate.py` sits next to `train.py` in it, and the only thing separating them is the
+ENTRYPOINT. So the job is submitted through the same path a training run uses, with
+`containerSpec.command` overridden to `python evaluate.py` (`training_jobs.EVALUATE_COMMAND`). No
+second image, no second set of IAM bindings.
+
+Two refusals happen here rather than 15 minutes later on a billed GPU: an unknown run (404) and a run
+with no saved weights (409 — a failed or still-training run has nothing to load). The dev sets on
+offer are `training_jobs.EVALUATION_DEV_SETS`, a copy of ml/evaluate.py's `PARTITIONS` kept honest by
+a test. **`lvis` is not on that list yet**, for one removable reason: the second dev set is read from
+`data/devset/lvis_dev.csv`, which is gitignored and so absent from the training image — a job asked
+for it would queue ~12 minutes for a GPU and then die on a missing file. It joins the list once that
+file is reachable from the job; until then `make evaluate DEVSET=lvis` scores it locally, where the
+file exists.
+
+⚠️ **The training image must be rebuilt when ml/evaluate.py changes** (`make train-image`, then set
+`TF_VAR_train_image`). The image is pinned by commit, and an older one carries an older
+`evaluate.py`. Since the status handling lives in that script, a stale image writes evaluation rows
+that never leave `running` — a failure that looks like a job still working.
 
 `POST /training-runs` carries the run shape (`epochs`, `limit`, `notes`) plus optional
 hyperparameters — `learning_rate`, `batch_size`, `optimizer`, `momentum`, `dropout`, `weight_decay`,

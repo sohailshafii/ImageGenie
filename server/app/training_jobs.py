@@ -56,6 +56,27 @@ MAX_IMAGES_PER_FORWARD = 512
 # What the admin actually types, in models.
 MAX_BATCH_SIZE = MAX_IMAGES_PER_FORWARD // VIEWS_PER_MODEL
 
+# ── Scoring a finished run ──────────────────────────────────────────────────
+#
+# The same image, a different entrypoint. `ml/Dockerfile` does `COPY ml/*.py`, so
+# evaluate.py and everything it imports are already in there next to train.py —
+# the only thing standing between them is the ENTRYPOINT, which this overrides.
+# A second image would double the build time and the Artifact Registry footprint
+# to ship a copy of files that are already present.
+EVALUATE_COMMAND = ["python", "evaluate.py"]
+
+# The dev sets a run can be scored against, duplicated from ml/evaluate.py's
+# `PARTITIONS` for the same reason as app/roster.py — the API image ships without
+# the ml package. `tests/test_training_launch.py` asserts the copy still matches.
+#
+# `lvis` (the second dev set, FR-7) is missing here for one removable reason, not
+# by policy: it is read from `data/devset/lvis_dev.csv`, which is gitignored and
+# therefore not in the training image, so a job asked for it would queue ~12
+# minutes for a GPU and then die on a missing file. It joins this tuple as soon as
+# that file is reachable from the job. Until then `make evaluate DEVSET=lvis`
+# scores it locally, where the file exists.
+EVALUATION_DEV_SETS: tuple[str, ...] = ("test", "val", "train")
+
 
 class TrainingLaunchError(RuntimeError):
     """Vertex refused the job, or the API is not configured to submit one."""
@@ -85,8 +106,25 @@ def _access_token() -> str:
     return credentials.token
 
 
-def build_job_spec(settings: Settings, args: list[str], display_name: str) -> dict:
-    """The CustomJob body. Split out from the POST so tests can assert on it."""
+def build_job_spec(
+    settings: Settings,
+    args: list[str],
+    display_name: str,
+    command: list[str] | None = None,
+) -> dict:
+    """The CustomJob body. Split out from the POST so tests can assert on it.
+
+    `command` overrides the image's ENTRYPOINT, which is `python train.py`. The
+    training image already carries every ml module — `COPY ml/*.py` — so scoring a
+    run needs no second image, only a different entrypoint. Left unset for
+    training, where the image's own default is the right one.
+    """
+    container = {
+        "imageUri": settings.train_image,
+        "args": args,
+    }
+    if command is not None:
+        container["command"] = command
     return {
         "displayName": display_name,
         "jobSpec": {
@@ -99,8 +137,7 @@ def build_job_spec(settings: Settings, args: list[str], display_name: str) -> di
                     },
                     "replicaCount": 1,
                     "containerSpec": {
-                        "imageUri": settings.train_image,
-                        "args": args,
+                        **container,
                         "env": [
                             # Vertex has no Cloud SQL socket and a dynamic egress
                             # IP, so the job dials through the connector over IAM.
@@ -133,7 +170,12 @@ def build_job_spec(settings: Settings, args: list[str], display_name: str) -> di
     }
 
 
-def submit_training_job(settings: Settings, args: list[str], display_name: str) -> str:
+def submit_training_job(
+    settings: Settings,
+    args: list[str],
+    display_name: str,
+    command: list[str] | None = None,
+) -> str:
     """Create the job and return its Vertex resource name.
 
     Raises `TrainingLaunchError` on a refusal, with Vertex's own message — a
@@ -153,7 +195,7 @@ def submit_training_job(settings: Settings, args: list[str], display_name: str) 
     try:
         response = httpx.post(
             endpoint,
-            json=build_job_spec(settings, args, display_name),
+            json=build_job_spec(settings, args, display_name, command),
             headers={"Authorization": f"Bearer {_access_token()}"},
             timeout=SUBMIT_TIMEOUT_SECONDS,
         )
