@@ -167,9 +167,16 @@ covering all four (`test`, `val`, `train`, `lvis`).
 - [x] Refusals that used to cost ~15 minutes on a billed GPU happen at the request: an unknown run
       (404) and a run with no saved weights (409).
 
-**Deploy note:** the training image is pinned by commit and now carries the evaluation status
-handling, so this needs `make train-image` + a `TF_VAR_train_image` bump, not just an API roll. A
-stale image would write evaluation rows that never leave `running`.
+**Deployed 2026-08-09** as revision `imagegenie-api-00012-fbk` on `train:4cb861c`, database migrated
+`a2f9bcd2c0c0` → `4cbd7fc5f228` (the five existing evaluations backfilled `completed`, none stuck).
+The training image had to be rebuilt, not just the API rolled — it is pinned by commit and carries
+the status handling, and a stale one would write rows that never leave `running`.
+
+**The deploy found a bug worth recording**, because the symptom was success: `make devset-push`
+reported that it had pushed the LVIS selection while writing to `data/storage/` on the laptop —
+`storage_backend` defaults to `local`. GCS was empty, and the first `lvis` evaluation would have
+queued ~12 minutes for a GPU before dying on a missing file. `push_dev_set` now refuses any backend
+but `gcs`. **Still unproven: an actual evaluation on Vertex** — see backlog item 5.
 
 ### The batch size no longer OOMs the GPU (2026-08-09)
 
@@ -195,6 +202,11 @@ in one place so it does not scatter across the domain docs. Ordered by evidence,
 
 ### What would actually move the model
 
+**This is the active workstream** — the features are done, so accuracy is now the thing worth
+spending on. Run 15 sits at **0.4241 accuracy / 0.3401 macro recall** on its own held-out split and
+**0.3730 / 0.3712** on the independently annotated set; the goal is to move the second number, since
+it is the one not inflated by the corpus's skew.
+
 The temptation is to reach for hyperparameters. The measurements say otherwise, and they are worth
 restating because they are easy to forget:
 
@@ -218,33 +230,52 @@ So the ceiling is in the *representation* or the *calibration*, in that order:
    result, so this is unfinished rather than answered.
 3. **Generic hyperparameter search — last.** Listed for completeness. Nothing measured points here.
 
+**Every attempt gets a logged run**, whatever it is. `training_run` already records config, data
+snapshot and metrics for each one (NFR-4), and an experiment scored with `make evaluate` or the
+Evaluate button leaves an `evaluation` row beside it — so "did that change actually help?" is
+answerable from the database rather than from memory. Two rules the project has already paid to
+learn, both in [ml.md](ml/ml.md#evaluation): compare macro recall rather than accuracy whenever the
+dev set changes, and score both runs on the **intersection** of their held-out sets whenever labels
+moved in between.
+
 ### Operational
 
 4. ~~**Deploy `pool_pre_ping`**~~ (`server/app/db.py`) — **DONE 2026-07-31**, revision
    `imagegenie-api-00011-m75`. Shipped alongside the collapsed `held_out` list on the run detail
    page; the database was already at Alembic head, so the deploy carried no migration.
-5. **Batch the seed the way the replay is batched.** Publishing 1,000 uids at once overruns the
+5. **Prove the evaluate button end-to-end on Vertex.** Everything about it is verified locally or
+   against a stubbed submit; **no evaluation has actually run as a cloud job**. Cheapest proof is
+   scoring **run 17 on `test`** — a 500-object experiment, so ~50 held-out models and a couple of
+   minutes once a GPU appears — followed by **run 21 on `lvis`**, which is the only path that
+   exercises reading the pushed selection out of the bucket. Watch for: the row appearing as
+   `running` rather than nothing, a `failed` row carrying a readable reason if it dies, and the
+   report landing on the row that was claimed rather than a second one. Each is a spot T4: ~12
+   minutes of provisioning, a few cents. This matters more than its size suggests — an image/code
+   mismatch in a job nobody is watching fails *silently*, which is the lesson chunk G already taught
+   once.
+
+6. **Batch the seed the way the replay is batched.** Publishing 1,000 uids at once overruns the
    download worker (maxScale 10 × one model per instance): Pub/Sub push gets 429s from Cloud Run,
    `max_delivery_attempts = 5` quarantines the message, and the job dead-letters **before the worker
    ever runs**. The 2026-07-30 dev-set seed landed 501 of 1,000 that way and needed
    `app.replay_dlq --max 250` in rounds to recover (496 → 750 → 947 → 984). The recovery logic is the
    fix; it just belongs at seed time.
-6. **Push-level rejections leave no `dead_letter` row.** Failures are recorded by the worker at nack
+7. **Push-level rejections leave no `dead_letter` row.** Failures are recorded by the worker at nack
    time — the only place the error text exists — so a message rejected *before* delivery is invisible
    in the admin dead-letter view. During the seed above, 499 quarantined models showed up nowhere in
    the database; only the Pub/Sub backlog metric knew. A real observability gap.
-7. **16 models stuck in the convert/normalize/render DLQs** from the dev-set ingestion. The standing
+8. **16 models stuck in the convert/normalize/render DLQs** from the dev-set ingestion. The standing
    broken-mesh tail rather than anything transient — replaying them just re-fails. Fine to leave;
    worth a look only to characterise what breaks.
 
 ### Optional / housekeeping
 
-8. **Run 16 on the hash-bucketed split**, for a clean post-fix baseline. Nothing requires it — runs
+9. **Run 16 on the hash-bucketed split**, for a clean post-fix baseline. Nothing requires it — runs
    14 and 15 stay interpretable via intersection scoring.
-9. **Promote `common_test.py` into `ml/`** if cross-run intersection scoring recurs. Pattern:
+10. **Promote `common_test.py` into `ml/`** if cross-run intersection scoring recurs. Pattern:
    `load_run_model` both runs → `evaluate_samples` on the intersection of their `held_out` uids.
-10. **Retire the `--limit` split-fraction defect** from the backlog after confirming it. It described
+11. **Retire the `--limit` split-fraction defect** from the backlog after confirming it. It described
     fixed per-class 10/10 slicing, which PR #49 replaced with hash buckets outright, so it is very
     likely already gone. A glance, not a project.
-11. **M9 / PointNet++ comparison** — the original stretch goal. Its inference-demo half already
+12. **M9 / PointNet++ comparison** — the original stretch goal. Its inference-demo half already
     shipped into v1.
