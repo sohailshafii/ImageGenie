@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from app import api, config, db, training_jobs
+from app import api, artifact_keys, config, db, training_jobs
 from app.artifact_keys import renders_prefix
 from app.models import (
     Artifact,
@@ -350,8 +350,8 @@ def test_batch_size_that_would_oom_the_gpu_is_rejected(
     # The multiplier is the part the admin cannot see, so the refusal has to name
     # it — a bare "too large" would leave the 12x still hidden.
     message = response.text
-    assert str(training_jobs.VIEWS_PER_MODEL) in message
-    assert str((training_jobs.MAX_BATCH_SIZE + 1) * training_jobs.VIEWS_PER_MODEL) in message
+    assert str(artifact_keys.NUM_VIEWS) in message
+    assert str((training_jobs.MAX_BATCH_SIZE + 1) * artifact_keys.NUM_VIEWS) in message
 
 
 def test_the_largest_fitting_batch_is_accepted(
@@ -382,18 +382,19 @@ def test_launch_config_reports_the_batch_ceiling(
     has no copy of either to drift from."""
     body = admin_client.get("/training-launch").json()
 
-    assert body["views_per_model"] == training_jobs.VIEWS_PER_MODEL
+    assert body["views_per_model"] == artifact_keys.NUM_VIEWS
     assert body["max_batch_size"] == training_jobs.MAX_BATCH_SIZE
 
 
-def test_views_per_model_matches_the_trainer() -> None:
-    """`VIEWS_PER_MODEL` is a copy of ml/train.py's `Config.num_views` (the API
-    image ships without the ml package, see app/roster.py). If the render stage
-    ever produces a different number of views, the copy has to move with it — the
-    batch ceiling is derived from it, so drift silently mis-sizes the limit."""
+def test_the_view_count_matches_the_trainer() -> None:
+    """The batch ceiling is `MAX_IMAGES_PER_FORWARD // NUM_VIEWS`, and NUM_VIEWS is
+    the render stage's own view count (app/artifact_keys.py). ml/train.py holds the
+    same number as `Config.num_views` — the API image ships without the ml package
+    (see app/roster.py), so the two cannot be one constant. If they drift, the
+    ceiling is silently mis-sized."""
     import train
 
-    assert training_jobs.VIEWS_PER_MODEL == train.Config().num_views
+    assert artifact_keys.NUM_VIEWS == train.Config().num_views
 
 
 def test_every_emitted_flag_is_one_the_trainer_parses() -> None:

@@ -415,9 +415,11 @@ fragmentation is not something a form can know — and `MAX_BATCH_SIZE` is that 
 view count.
 The rejection message names the image count and the multiplier, since the number the admin never
 sees is the one that explains the limit. `GET /training-launch` serves both figures so the form
-renders the ceiling instead of holding a second copy. `VIEWS_PER_MODEL` duplicates `Config.num_views`
-for the same reason the roster is duplicated (below), and `tests/test_training_launch.py` asserts it
-still matches.
+renders the ceiling instead of holding a second copy. The view count is `artifact_keys.NUM_VIEWS` —
+the render stage's own, already used by the workers and the reconciler, rather than a constant
+invented for this — and `ml/train.py` holds the same number as `Config.num_views`, which the API
+image cannot import for the reason the roster is duplicated (below);
+`tests/test_training_launch.py` asserts the two still agree.
 `--device`/`--num-workers` stay server-side: they describe the job's machine shape, not the
 experiment. **Architecture is deliberately not exposed** — backbone, pooling and head shape change
 the checkpoint's shape, so a run's weights only load back into the architecture that produced them.

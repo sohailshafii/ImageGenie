@@ -19,6 +19,7 @@ import logging
 
 import httpx
 
+from .artifact_keys import NUM_VIEWS
 from .config import Settings
 
 logger = logging.getLogger(__name__)
@@ -34,19 +35,16 @@ SUBMIT_TIMEOUT_SECONDS = 30.0
 
 # ── How large a batch the machine above can actually hold ───────────────────
 #
-# `batch_size` counts *models*, but a model is 12 rendered views and
+# `batch_size` counts *models*, but a model is `NUM_VIEWS` rendered views and
 # `ml/model.py`'s forward folds them into the batch (`views.flatten(0, 1)`), so
-# the shared backbone sees `batch_size * VIEWS_PER_MODEL` images per pass. The
+# the shared backbone sees `batch_size * NUM_VIEWS` images per pass. The
 # multiplier is invisible at the point where the number is typed, which is how
 # runs 18-20 came to die of `torch.OutOfMemoryError` ~45s in, on a billed GPU.
 #
-# Duplicated from `ml/train.py`'s `Config.num_views` for the same reason as
-# `app/roster.py`: the API image ships `server/app` and the built SPA and nothing
-# else, so importing the ml package here would crash the service in production
-# while working in every local test. `tests/test_roster.py` asserts it still
-# matches.
-VIEWS_PER_MODEL = 12
-
+# `NUM_VIEWS` comes from `app/artifact_keys.py`, which is where the render stage's
+# view count already lives — the same number `ml/train.py`'s `Config.num_views`
+# holds, and `tests/test_training_launch.py` asserts the two still agree.
+#
 # Measured on the T4 above, not estimated. 384 images per pass (batch 32) trained
 # fine; 768 (batch 64) died 148 MiB past the card's 14.58 GiB. The ceiling sits
 # below the failure rather than at it, because the margin an allocator has left
@@ -54,7 +52,7 @@ VIEWS_PER_MODEL = 12
 MAX_IMAGES_PER_FORWARD = 512
 
 # What the admin actually types, in models.
-MAX_BATCH_SIZE = MAX_IMAGES_PER_FORWARD // VIEWS_PER_MODEL
+MAX_BATCH_SIZE = MAX_IMAGES_PER_FORWARD // NUM_VIEWS
 
 # ── Scoring a finished run ──────────────────────────────────────────────────
 #
