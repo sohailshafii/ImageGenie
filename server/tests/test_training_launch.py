@@ -550,7 +550,6 @@ def test_the_offered_dev_sets_are_ones_the_scorer_accepts() -> None:
     assert accepted.dev_set == "test"  # the same default the API applies
     for dev_set in training_jobs.EVALUATION_DEV_SETS:
         assert dev_set in evaluate.DEV_SETS, f"{dev_set} is not one evaluate.py scores"
-    # The partitions, exactly. `lvis` is absent only because its CSV is not in the
-    # training image; when that changes this assertion is the thing to update, and
-    # until then it stops the dev set being offered before it can work.
-    assert training_jobs.EVALUATION_DEV_SETS == evaluate.PARTITIONS
+    # Every dev set evaluate.py knows, including `lvis` — which reads its
+    # selection from the processed bucket rather than the split machinery.
+    assert training_jobs.EVALUATION_DEV_SETS == evaluate.DEV_SETS

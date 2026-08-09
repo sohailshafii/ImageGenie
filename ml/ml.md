@@ -471,14 +471,17 @@ selected by `ml/build_dev_set.py` and ingested through the existing idempotent M
 make devset                      # 1,000 objects, balanced across the roster
 make devset DEVSET_COUNT=200     # a pilot
 python -m app.seed --from-labels data/devset/lvis_dev.csv --count 1000
+make devset-push                 # copy the CSV to the bucket, for cloud scoring
 ```
 
 - **Balanced, not proportional.** The corpus is skewed ~7.7:1 and the tail is where the model
   actually fails, so mirroring the skew would spend the budget re-confirming `weapon`. Every class
   clears its quota at 1,000 (83 each; the 4-object remainder goes to the lowest-hash leftovers).
-- **Selection is hashed, not shuffled** — `sha256(uid)` orders the candidates, so ingesting more
+- **Selection is hashed, not shuffled** — `sha256(uid)` orders the candidates, so ingesting *other*
   models later extends the dev set instead of redrawing it. Same property, same reason as
-  [the training split](#why-the-split-is-hashed-not-shuffled).
+  [the training split](#why-the-split-is-hashed-not-shuffled). This covers candidates being added to
+  the pool, not removed from it — see the warning below about re-selecting after **this** dev set was
+  itself ingested.
 - **The gold labels stay in the CSV and out of the `label` table.** A model is trainable exactly when
   it is labeled **and** rendered, so leaving these unlabeled makes them structurally impossible to
   train on: the dev set cannot leak into a future run through an absent-minded backfill. The one
@@ -486,7 +489,32 @@ python -m app.seed --from-labels data/devset/lvis_dev.csv --count 1000
   `weak_labels.csv`** — `build_dev_set.py` counts and warns about exactly that overlap.
 - **Ingesting is a data run, not a code problem**: a couple of dollars and mostly waiting.
 
-**Scoring it** — `make evaluate RUN=n DEVSET=lvis`. None of the split machinery applies: there is no
+**Where the selection is read from.** The local CSV first, the processed bucket second
+(`processed/devsets/lvis.csv`, put there by `make devset-push`). A Vertex job has no checkout and no
+`data/` directory, so without the pushed copy the second dev set could only ever be scored from the
+laptop that built it — which is precisely the limitation the evaluate button removes. The bucket copy
+is **still not a label**, so it keeps the untrainability property above. Local wins where it exists,
+because that is the copy being edited; the two can drift if a selection is rebuilt and not pushed,
+and an `lvis` report records a `label_hash` of the exact pairs it scored, so two reports over
+different selections do not look alike.
+
+⚠️ **Never re-run `make devset` in order to push**, and note that the hash-ordering property above
+does *not* protect this case. Hashing keeps the selection stable when candidates are **added** to the
+pool: a new gold object slots into the order without moving the ones already chosen. What it cannot
+survive is candidates **leaving** the pool — and ingesting the dev set is exactly that. The candidate
+filter is "no `model` row" (`load_ingested_uids`), these 1,000 objects were then ingested so the
+pipeline could render them, and every one of them therefore now has a `model` row. A fresh `make
+devset` would skip the entire current dev set and draw the next 1,000 from the ~11,635 remaining,
+silently replacing the set every past `lvis` report was scored against. `make devset-push` uploads
+what is on disk and selects nothing, which is why it is a separate target.
+
+Worth keeping the two "don't contaminate the dev set" rules apart, since they guard different things:
+the **CSV-not-`label`-table** rule above keeps these objects *untrainable* (they are rendered, so a
+label is the only thing standing between them and a training run); this one keeps the *membership*
+of the dev set fixed so reports stay comparable.
+
+**Scoring it** — `make evaluate RUN=n DEVSET=lvis`, or the evaluate button on a run's page. None of
+the split machinery applies: there is no
 partition to replay and none to recompute, because these objects were never in the corpus the run
 partitioned. That is what makes it a second dev set rather than another view of the first. Two
 filters stand between the CSV and the report, and both print what they dropped:

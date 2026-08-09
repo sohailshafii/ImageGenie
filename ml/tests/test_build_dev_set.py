@@ -1,5 +1,7 @@
 """Second-dev-set selection (FR-7, ml.md#the-second-dev-set)."""
 
+import build_dev_set
+import pytest
 from build_dev_set import hash_order, select_dev_set
 from taxonomy import ROSTER
 
@@ -76,3 +78,86 @@ def test_labels_match_the_gold_map():
     uid_to_gold_class = _plentiful()
     for uid, class_name in select_dev_set(uid_to_gold_class, set(), 120):
         assert uid_to_gold_class[uid] == class_name
+
+
+# ── Reading and pushing the selection ────────────────────────────────────────
+# The file is gitignored and a Vertex job has no checkout, so where it is read
+# from decides whether `lvis` can be scored anywhere but a laptop.
+
+
+class _FakeStorage:
+    """Just enough Storage to see which key was written or read."""
+
+    def __init__(self, contents: dict[str, bytes] | None = None) -> None:
+        self.contents = contents or {}
+
+    def put_bytes(self, key: str, data: bytes) -> None:
+        self.contents[key] = data
+
+    def get_bytes(self, key: str) -> bytes:
+        return self.contents[key]  # KeyError where a real backend 404s
+
+
+_CSV = "uid,class,reason\na,chair,lvis-gold\nb,lamp,lvis-gold\n"
+
+
+def test_the_local_file_wins_when_it_exists(tmp_path, monkeypatch) -> None:
+    """Where a checkout has the selection, that is the copy being edited and
+    regenerated — reading the bucket instead would silently score something else."""
+    path = tmp_path / "lvis_dev.csv"
+    path.write_text(_CSV, encoding="utf-8")
+    stored = _FakeStorage({build_dev_set.dev_set_key("lvis"): b"uid,class\nz,car\n"})
+    monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: stored)
+    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+
+    assert build_dev_set.load_dev_set(path) == [("a", "chair"), ("b", "lamp")]
+
+
+def test_falls_back_to_the_stored_copy(tmp_path, monkeypatch) -> None:
+    """The case the push exists for: a job with no `data/` directory."""
+    stored = _FakeStorage({build_dev_set.dev_set_key("lvis"): _CSV.encode("utf-8")})
+    monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: stored)
+    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+
+    samples = build_dev_set.load_dev_set(tmp_path / "absent.csv")
+
+    assert samples == [("a", "chair"), ("b", "lamp")]
+
+
+def test_missing_everywhere_names_both_places(tmp_path, monkeypatch) -> None:
+    """Two different fixes — build the selection, or push it — so the message has
+    to say which one is missing rather than just failing."""
+    monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: _FakeStorage())
+    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+
+    with pytest.raises(SystemExit) as failure:
+        build_dev_set.load_dev_set(tmp_path / "absent.csv")
+
+    message = str(failure.value)
+    assert "absent.csv" in message
+    assert build_dev_set.dev_set_key("lvis") in message
+    assert "devset-push" in message
+
+
+def test_push_puts_the_file_where_a_job_reads_it(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "lvis_dev.csv"
+    path.write_text(_CSV, encoding="utf-8")
+    stored = _FakeStorage()
+    monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: stored)
+    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+
+    key = build_dev_set.push_dev_set(path)
+
+    assert key == build_dev_set.dev_set_key("lvis")
+    # Byte-for-byte, and readable back by the loader — the two halves of the round
+    # trip that has to hold for a cloud evaluation to score the same objects.
+    assert stored.contents[key] == _CSV.encode("utf-8")
+    assert build_dev_set.load_dev_set(tmp_path / "absent.csv") == [
+        ("a", "chair"),
+        ("b", "lamp"),
+    ]
+
+
+def test_pushing_a_selection_that_does_not_exist_is_refused(tmp_path) -> None:
+    with pytest.raises(SystemExit, match="nothing to push"):
+        build_dev_set.push_dev_set(tmp_path / "absent.csv")

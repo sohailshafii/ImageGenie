@@ -133,7 +133,11 @@ the [metadata DB](#database) stores only the object keys, never the blobs themse
 - `imagegenie-processed` — converted / normalized / rendered outputs, separated by prefix, **plus
   trained model weights** at `processed/models/<run_id>.pt` (`artifact_keys.weights_key`, referenced
   by `training_run.weights_uri`). The weights are deliberately *not* one of the reconcile "families",
-  since they're training output, not a per-model pipeline artifact.
+  since they're training output, not a per-model pipeline artifact. The same goes for **dev-set
+  selections** at `processed/devsets/<name>.csv` (`artifact_keys.dev_set_key`): a list of uids and
+  gold classes, stored so a Vertex evaluation job — which has no checkout — can read the same
+  selection a laptop does. It stays a file rather than becoming `label` rows precisely because a
+  labeled model is a trainable one ([ml.md](../ml/ml.md#the-second-dev-set)).
 
 **The source mesh's format is carried by its key**, not assumed. Ingestion only ever writes GLB
 (that is what Objaverse serves), but an [admin upload](../web/web.md#data-upload) may be STL or OBJ,
@@ -380,11 +384,12 @@ second image, no second set of IAM bindings.
 Two refusals happen here rather than 15 minutes later on a billed GPU: an unknown run (404) and a run
 with no saved weights (409 — a failed or still-training run has nothing to load). The dev sets on
 offer are `training_jobs.EVALUATION_DEV_SETS`, a copy of ml/evaluate.py's `PARTITIONS` kept honest by
-a test. **`lvis` is not on that list yet**, for one removable reason: the second dev set is read from
-`data/devset/lvis_dev.csv`, which is gitignored and so absent from the training image — a job asked
-for it would queue ~12 minutes for a GPU and then die on a missing file. It joins the list once that
-file is reachable from the job; until then `make evaluate DEVSET=lvis` scores it locally, where the
-file exists.
+a test — the three partitions plus `lvis`. The second dev set behaves unlike the others: its
+selection is a **file**, not a slice of the corpus, and it stays a file so the gold classes never
+become labels (a labeled model is a trainable one). A job reads it from `processed/devsets/lvis.csv`,
+which `make devset-push` puts there; an evaluation asked for `lvis` before anyone has pushed fails
+with a message naming the push rather than a stack trace. See
+[ml.md](../ml/ml.md#the-second-dev-set).
 
 ⚠️ **The training image must be rebuilt when ml/evaluate.py changes** (`make train-image`, then set
 `TF_VAR_train_image`). The image is pinned by commit, and an older one carries an older

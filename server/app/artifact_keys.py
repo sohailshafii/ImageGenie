@@ -85,6 +85,20 @@ def weights_key(run_id: int) -> str:
     return f"{WEIGHTS_PREFIX}{run_id}.pt"
 
 
+# A dev-set selection, likewise not a pipeline artifact. The LVIS set is a list of
+# uids and their gold classes, and it lives in a file rather than the `label`
+# table on purpose (ml/build_dev_set.py): a labeled model is a trainable one, so
+# storing these as labels would let the second dev set leak into a training run.
+# Putting a copy in the bucket keeps that property — it is still not a label — and
+# makes the file reachable from a Vertex job, which has no checkout.
+DEV_SET_PREFIX = "processed/devsets/"
+
+
+def dev_set_key(name: str) -> str:
+    """The stored copy of a dev-set selection, e.g. ``lvis`` -> the LVIS gold set."""
+    return f"{DEV_SET_PREFIX}{name}.csv"
+
+
 def view_key(uid: str, view_index: int) -> str:
     """One rendered view, ``view_00.png`` … ``view_11.png``."""
     return f"{renders_prefix(uid)}view_{view_index:02d}.png"
