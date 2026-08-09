@@ -95,6 +95,29 @@ export function StartTrainingRunPage() {
     };
   }, []);
 
+  // Batch size is the one knob whose real cost is invisible at the point it is
+  // typed: a model is `viewsPerModel` rendered images and ml/model.py folds them
+  // into the batch, so the GPU is asked for 12x the number in the box. Runs
+  // 18-20 died of that ~45s into a billed job. Both figures come from the API
+  // (server/app/training_jobs.py), so this page states the arithmetic rather
+  // than keeping its own idea of the ceiling.
+  const viewsPerModel = config?.viewsPerModel ?? null;
+  const maxBatchSize = config?.maxBatchSize ?? null;
+  const resolvedBatchSize = asNumber(tuning.batchSize) ?? TRAINING_DEFAULTS.batchSize;
+  const imagesPerForward =
+    viewsPerModel === null || !Number.isFinite(resolvedBatchSize)
+      ? null
+      : resolvedBatchSize * viewsPerModel;
+  const batchTooLarge =
+    maxBatchSize !== null && Number.isFinite(resolvedBatchSize) && resolvedBatchSize > maxBatchSize;
+  // Said once, shown wherever the admin is looking: in the field while tuning is
+  // open, and next to the dead submit button when it is folded away — a disabled
+  // button with its explanation hidden behind a disclosure is just a broken page.
+  const batchTooLargeMessage =
+    `Batch size ${resolvedBatchSize} is too large for the training GPU — it runs out of ` +
+    `memory about a minute in, after the job has queued and billed. ` +
+    `Use ${maxBatchSize} or fewer.`;
+
   const trainable = config?.trainableCount ?? 0;
   // A limit above the trainable count trains on everything, matching
   // ml/train.py's `_subsample`, so the estimate must not claim otherwise.
@@ -266,6 +289,7 @@ export function StartTrainingRunPage() {
                     id="run-batch-size"
                     type="number"
                     min={1}
+                    max={maxBatchSize ?? undefined}
                     value={tuning.batchSize}
                     placeholder={String(TRAINING_DEFAULTS.batchSize)}
                     onChange={(event) => setField('batchSize', event.target.value)}
@@ -273,7 +297,18 @@ export function StartTrainingRunPage() {
                   <span className="field-hint">
                     Models per weight update. Doubling it halves the updates per epoch, so the
                     same epoch count learns less.
+                    {imagesPerForward !== null && viewsPerModel !== null && (
+                      <>
+                        {' '}
+                        A model is {viewsPerModel} rendered views and they all go through the
+                        network together, so this asks the GPU for{' '}
+                        <strong>{imagesPerForward.toLocaleString()} images per pass</strong>
+                        {maxBatchSize !== null && <> — {maxBatchSize} models is the most it fits</>}
+                        .
+                      </>
+                    )}
                   </span>
+                  {batchTooLarge && <span className="form-error">{batchTooLargeMessage}</span>}
                 </div>
 
                 <div className="field">
@@ -410,8 +445,13 @@ export function StartTrainingRunPage() {
           </div>
 
           {error !== null && <p className="form-error">{error}</p>}
+          {batchTooLarge && !showAdvanced && <p className="form-error">{batchTooLargeMessage}</p>}
 
-          <button type="submit" className="btn-primary" disabled={busy || config === null}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={busy || config === null || batchTooLarge}
+          >
             {busy ? 'Starting…' : 'Start run'}
           </button>
         </form>

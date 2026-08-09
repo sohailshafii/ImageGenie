@@ -258,7 +258,7 @@ def test_hyperparameters_travel_as_flags(
         json={
             "epochs": 6,
             "learning_rate": 0.001,
-            "batch_size": 64,
+            "batch_size": 16,
             "optimizer": "sgd",
             "momentum": 0.9,
             "dropout": 0.3,
@@ -272,7 +272,7 @@ def test_hyperparameters_travel_as_flags(
     assert response.status_code == 202
     assert captured["args"] == [
         "--device", "cuda", "--num-workers", "4", "--epochs", "6",
-        "--learning-rate", "0.001", "--batch-size", "64",
+        "--learning-rate", "0.001", "--batch-size", "16",
         "--optimizer", "sgd", "--momentum", "0.9", "--dropout", "0.3",
         "--weight-decay", "0.0001", "--label-smoothing", "0.1",
         "--class-weighting", "balanced",
@@ -323,6 +323,75 @@ def test_nonsense_hyperparameters_are_rejected_before_vertex(
     response = admin_client.post("/training-runs", json={"epochs": 1, **payload})
 
     assert response.status_code == 422
+
+
+def test_batch_size_that_would_oom_the_gpu_is_rejected(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure this stops is silent for ~45s and then bills for a dead run.
+
+    Runs 18-20 were one Vertex job retrying itself three times, each dying of
+    `torch.OutOfMemoryError` on a batch of 64 — which is 768 images, because the
+    12 views ride along. Nothing said no.
+    """
+
+    def fail_if_called(settings, args, display_name):  # pragma: no cover
+        raise AssertionError("a batch this size must never reach Vertex")
+
+    monkeypatch.setattr(api, "submit_training_job", fail_if_called)
+
+    response = admin_client.post(
+        "/training-runs", json={"epochs": 1, "batch_size": training_jobs.MAX_BATCH_SIZE + 1}
+    )
+
+    assert response.status_code == 422
+    # The multiplier is the part the admin cannot see, so the refusal has to name
+    # it — a bare "too large" would leave the 12x still hidden.
+    message = response.text
+    assert str(training_jobs.VIEWS_PER_MODEL) in message
+    assert str((training_jobs.MAX_BATCH_SIZE + 1) * training_jobs.VIEWS_PER_MODEL) in message
+
+
+def test_the_largest_fitting_batch_is_accepted(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ceiling itself must launch: an off-by-one here reads as a knob that
+    lies about its own range."""
+    captured = {}
+
+    def fake_submit(settings, args, display_name):
+        captured["args"] = args
+        return "job"
+
+    monkeypatch.setattr(api, "submit_training_job", fake_submit)
+
+    response = admin_client.post(
+        "/training-runs", json={"epochs": 1, "batch_size": training_jobs.MAX_BATCH_SIZE}
+    )
+
+    assert response.status_code == 202
+    assert "--batch-size" in captured["args"]
+
+
+def test_launch_config_reports_the_batch_ceiling(
+    admin_client: TestClient, configured: None
+) -> None:
+    """The form renders the limit and the 12x multiplier from these, so that it
+    has no copy of either to drift from."""
+    body = admin_client.get("/training-launch").json()
+
+    assert body["views_per_model"] == training_jobs.VIEWS_PER_MODEL
+    assert body["max_batch_size"] == training_jobs.MAX_BATCH_SIZE
+
+
+def test_views_per_model_matches_the_trainer() -> None:
+    """`VIEWS_PER_MODEL` is a copy of ml/train.py's `Config.num_views` (the API
+    image ships without the ml package, see app/roster.py). If the render stage
+    ever produces a different number of views, the copy has to move with it — the
+    batch ceiling is derived from it, so drift silently mis-sizes the limit."""
+    import train
+
+    assert training_jobs.VIEWS_PER_MODEL == train.Config().num_views
 
 
 def test_every_emitted_flag_is_one_the_trainer_parses() -> None:

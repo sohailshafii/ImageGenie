@@ -356,7 +356,7 @@ session**; label writes additionally require the `admin` role (FR-8, NFR-7).
 | `GET /training-runs/{id}/weights` | **admin** | the run's saved `.pt` checkpoint, as an attachment |
 | `GET /models/{uid}/predict` | login | classify a rendered model with the newest trained run |
 | `GET /training-runs/{id}/evaluations` | login | dev-set reports for a run, newest first (FR-7) |
-| `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count |
+| `GET /training-launch` | **admin** | whether a launch is possible here, the image tag, the trainable count, the batch ceiling |
 | `POST /training-runs` | **admin** | submits a Vertex spot-GPU training job; **202**, no run row yet |
 
 `GET /training-runs/{id}/evaluations` returns the `evaluation` rows written by `make evaluate`
@@ -376,6 +376,20 @@ gains a better default in code improves runs that never mentioned it. Ranges are
 (`dropout` in [0,1), `learning_rate` > 0, enum membership for the two string knobs) because the
 alternative is discovering a typo ~15 minutes in, on a billed GPU, when argparse or torch rejects it.
 Run *size* is deliberately uncapped — that is a judgment call the form prices out, not a mistake.
+
+**`batch_size` is capped, and for a different reason than the rest.** It counts models, but
+`ml/model.py`'s forward folds each model's 12 views into the batch, so the GPU is asked for
+`batch_size × 12` images at once. A batch of 64 is 768 images, which exhausted the T4's 14.58 GiB
+about 45 seconds into a paid job (one Vertex job retrying itself three times, recorded as runs
+18–20); 384 images trained fine. `training_jobs.MAX_IMAGES_PER_FORWARD` sets the budget at 512 —
+below the observed failure rather than at it, because how much room the allocator has left after
+fragmentation is not something a form can know — and `MAX_BATCH_SIZE` is that budget divided by the
+view count.
+The rejection message names the image count and the multiplier, since the number the admin never
+sees is the one that explains the limit. `GET /training-launch` serves both figures so the form
+renders the ceiling instead of holding a second copy. `VIEWS_PER_MODEL` duplicates `Config.num_views`
+for the same reason the roster is duplicated (below), and `tests/test_training_launch.py` asserts it
+still matches.
 `--device`/`--num-workers` stay server-side: they describe the job's machine shape, not the
 experiment. **Architecture is deliberately not exposed** — backbone, pooling and head shape change
 the checkpoint's shape, so a run's weights only load back into the architecture that produced them.
