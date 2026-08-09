@@ -64,26 +64,60 @@ LVIS = "lvis"
 DEV_SETS = (*PARTITIONS, LVIS)
 
 
-def record_evaluation(
-    run_id: int, dev_set: str, report: dict, label_hash: str | None
-) -> int:
-    """Store one finished dev-set report and return its id.
+# A failure message is for a human reading a page, not a log aggregator. Long
+# enough for a torch or GCS error to arrive intact, short enough that a runaway
+# message cannot turn one bad evaluation into a large row.
+MAX_ERROR_CHARS = 2000
 
-    `status` is passed explicitly rather than left to the column default, which is
-    `running`: this writes a row that is already done. A scoring job that wants to
-    announce itself before it starts is a different call (see the button path).
+
+def start_evaluation(run_id: int, dev_set: str) -> int:
+    """Announce an evaluation before it does any work, and return its id.
+
+    Written first, not last. Scoring takes minutes — loading weights, then a
+    forward pass over thousands of blob reads — and until this row exists there is
+    nothing anywhere to say it is happening: no run row of its own, and a Vertex
+    job id only the submitter saw. Claiming the row up front is what lets the page
+    say "scoring" instead of showing nothing, and what gives a failure somewhere
+    to be recorded.
+
+    The insert also doubles as the existence check on `run_id`: the foreign key
+    refuses an unknown run here, before any weights are fetched.
     """
     with session_scope() as session:
         evaluation = Evaluation(
-            run_id=run_id,
-            dev_set=dev_set,
-            status=TrainingStatus.completed,
-            report=report,
-            label_hash=label_hash,
+            run_id=run_id, dev_set=dev_set, status=TrainingStatus.running
         )
         session.add(evaluation)
         session.flush()  # assigns the id before the scope commits
         return evaluation.id
+
+
+def finish_evaluation(
+    evaluation_id: int, report: dict, label_hash: str | None
+) -> None:
+    """Attach the report to a running evaluation and mark it completed."""
+    with session_scope() as session:
+        evaluation = session.get(Evaluation, evaluation_id)
+        evaluation.status = TrainingStatus.completed
+        evaluation.report = report
+        evaluation.label_hash = label_hash
+
+
+def fail_evaluation(evaluation_id: int, reason: str) -> None:
+    """Mark a running evaluation failed, with the reason it stopped.
+
+    Best-effort by design: this runs while an exception is already propagating,
+    and a second failure here would replace the real cause with a database error.
+    The row staying `running` is a worse outcome than a lost message, but not
+    worth losing the traceback over.
+    """
+    try:
+        with session_scope() as session:
+            evaluation = session.get(Evaluation, evaluation_id)
+            evaluation.status = TrainingStatus.failed
+            evaluation.error = reason[:MAX_ERROR_CHARS]
+    except Exception:  # noqa: BLE001 - see above; the original error must win
+        print(f"warning: could not mark evaluation {evaluation_id} failed")
 
 
 def load_rendered_uids(uids: list[str]) -> set[str]:
@@ -222,6 +256,7 @@ def resolve_scored_samples(
 
 def score_and_record(
     model: MultiViewCNN,
+    evaluation_id: int,
     run_id: int,
     dev_set: str,
     scored: list[tuple[str, str]],
@@ -230,7 +265,7 @@ def score_and_record(
     backbone: str,
     scored_label_hash: str | None = None,
 ) -> dict:
-    """Score `scored`, print the headline, store the report, return it.
+    """Score `scored`, print the headline, complete the evaluation, return it.
 
     Shared by both kinds of dev set so a partition report and an external one are
     produced by the same code — the two are only comparable if nothing differs
@@ -245,7 +280,7 @@ def score_and_record(
     report = score(model, scored, storage, dev_set, num_workers=num_workers)
 
     # Report before storing. Scoring is the expensive part — minutes of GPU or CPU
-    # over thousands of blob reads — and storing is one INSERT that can fail on a
+    # over thousands of blob reads — and storing is one UPDATE that can fail on a
     # transient DB error after all of it. Printing first means a failed write costs
     # the row, not the measurement.
     accuracy = report["accuracy"]
@@ -256,7 +291,7 @@ def score_and_record(
     )
     if scored_label_hash is None:
         scored_label_hash = label_hash(scored)
-    evaluation_id = record_evaluation(run_id, dev_set, report, scored_label_hash)
+    finish_evaluation(evaluation_id, report, scored_label_hash)
     print(f"stored as evaluation {evaluation_id}")
     return report
 
@@ -264,7 +299,31 @@ def score_and_record(
 def evaluate_run(
     run_id: int, dev_set: str = "test", num_workers: int = 0
 ) -> dict:
-    """Load a run, score it on `dev_set`, store the report, and return it."""
+    """Load a run, score it on `dev_set`, store the report, and return it.
+
+    The evaluation row is claimed first and finalized either way, so an
+    evaluation that dies leaves a `failed` row saying why rather than nothing at
+    all. Everything below can fail for reasons worth reading later: a run with no
+    saved weights, a dev set that has not been ingested, a split that came back
+    empty, a GCS read that timed out mid-scoring.
+    """
+    evaluation_id = start_evaluation(run_id, dev_set)
+    try:
+        return _score_run(evaluation_id, run_id, dev_set, num_workers)
+    except (Exception, SystemExit) as error:
+        # SystemExit as well as Exception: this module refuses several conditions
+        # that way (an empty split, an unrendered dev set), and from the caller's
+        # side those are failed evaluations, not clean exits. The original is
+        # re-raised untouched — the CLI still prints it and exits non-zero.
+        reason = str(error) or type(error).__name__
+        fail_evaluation(evaluation_id, reason)
+        raise
+
+
+def _score_run(
+    evaluation_id: int, run_id: int, dev_set: str, num_workers: int
+) -> dict:
+    """The work itself. Split out so `evaluate_run`'s try block reads as one line."""
     storage = build_storage(get_settings())
     model, config, snapshot = load_run_model(run_id, storage)
 
@@ -274,7 +333,8 @@ def evaluate_run(
         # second dev set rather than another view of the first.
         scored = resolve_lvis_dev_set()
         return score_and_record(
-            model, run_id, dev_set, scored, storage, num_workers, config.backbone
+            model, evaluation_id, run_id, dev_set, scored, storage, num_workers,
+            config.backbone,
         )
 
     samples = load_trainable_samples()
@@ -295,8 +355,8 @@ def evaluate_run(
         raise SystemExit(f"the {dev_set} split is empty — nothing to score")
 
     return score_and_record(
-        model, run_id, dev_set, scored, storage, num_workers, config.backbone,
-        current_hash,
+        model, evaluation_id, run_id, dev_set, scored, storage, num_workers,
+        config.backbone, current_hash,
     )
 
 
