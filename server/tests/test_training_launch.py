@@ -19,6 +19,8 @@ from app.models import (
     Label,
     LabelSource,
     Model,
+    TrainingRun,
+    TrainingStatus,
     User,
     UserRole,
 )
@@ -42,8 +44,8 @@ def anon_client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClien
     with pg_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE training_metric, training_run, label, artifact, model,"
-                " session, app_user RESTART IDENTITY CASCADE"
+                "TRUNCATE evaluation, training_metric, training_run, label,"
+                " artifact, model, session, app_user RESTART IDENTITY CASCADE"
             )
         )
     with db.session_scope() as session:
@@ -411,3 +413,144 @@ def test_every_emitted_flag_is_one_the_trainer_parses() -> None:
     # The run-shape and runtime flags the route hardcodes travel the same path.
     for flag in ("--device", "--num-workers", "--epochs", "--limit", "--notes"):
         assert flag in accepted
+
+
+# ── Launching an evaluation (M7) ─────────────────────────────────────────────
+# Same submit path, same image, different entrypoint. What is new is the state
+# these have to check *before* a GPU is billed for 15 minutes to find out.
+
+
+def _seed_scorable_run(*, weights: bool = True) -> int:
+    """A finished run with saved weights — the only kind that can be scored."""
+    with db.session_scope() as session:
+        run = TrainingRun(
+            status=TrainingStatus.completed,
+            config={},
+            data_snapshot={},
+            weights_uri="processed/models/1.pt" if weights else None,
+        )
+        session.add(run)
+        session.flush()
+        return run.id
+
+
+def test_a_viewer_cannot_launch_an_evaluation(anon_client: TestClient) -> None:
+    """Scoring spends GPU time, so it is admin-only like training."""
+    run_id = _seed_scorable_run()
+    viewer = _login(anon_client, VIEWER_EMAIL)
+
+    response = viewer.post(f"/training-runs/{run_id}/evaluations", json={})
+
+    assert response.status_code == 403
+
+
+def test_evaluating_an_unknown_run_is_404(
+    admin_client: TestClient, configured: None
+) -> None:
+    assert admin_client.post("/training-runs/999/evaluations", json={}).status_code == 404
+
+
+def test_evaluating_a_run_without_weights_is_refused(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed or still-training run has nothing to load. Caught here rather
+    than ~15 minutes in, when the container finds no checkpoint."""
+
+    def fail_if_called(settings, args, display_name, command=None):  # pragma: no cover
+        raise AssertionError("a run with no weights must never reach Vertex")
+
+    monkeypatch.setattr(api, "submit_training_job", fail_if_called)
+    run_id = _seed_scorable_run(weights=False)
+
+    response = admin_client.post(f"/training-runs/{run_id}/evaluations", json={})
+
+    assert response.status_code == 409
+
+
+def test_an_unknown_dev_set_is_refused(
+    admin_client: TestClient, configured: None
+) -> None:
+    run_id = _seed_scorable_run()
+
+    response = admin_client.post(
+        f"/training-runs/{run_id}/evaluations", json={"dev_set": "holdout"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_evaluation_runs_the_scorer_not_the_trainer(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole difference between the two jobs is this command override. Get it
+    wrong and the job trains a *new* model on a GPU instead of scoring one."""
+    captured = {}
+
+    def fake_submit(settings, args, display_name, command=None):
+        captured.update(args=args, display_name=display_name, command=command)
+        return "projects/p/locations/l/customJobs/1"
+
+    monkeypatch.setattr(api, "submit_training_job", fake_submit)
+    run_id = _seed_scorable_run()
+
+    response = admin_client.post(
+        f"/training-runs/{run_id}/evaluations", json={"dev_set": "val"}
+    )
+
+    assert response.status_code == 202
+    assert captured["command"] == training_jobs.EVALUATE_COMMAND
+    assert captured["args"] == [
+        "--run", str(run_id), "--dev-set", "val", "--num-workers", "4",
+    ]
+    assert str(run_id) in captured["display_name"]
+
+
+def test_the_default_dev_set_is_the_sealed_split(
+    admin_client: TestClient, configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`test` is the one number nothing steered against, so it is what an admin
+    who expresses no preference gets."""
+    captured = {}
+    monkeypatch.setattr(
+        api,
+        "submit_training_job",
+        lambda settings, args, display_name, command=None: captured.update(args=args)
+        or "job",
+    )
+    run_id = _seed_scorable_run()
+
+    admin_client.post(f"/training-runs/{run_id}/evaluations", json={})
+
+    assert "--dev-set" in captured["args"]
+    assert captured["args"][captured["args"].index("--dev-set") + 1] == "test"
+
+
+def test_the_command_override_is_absent_for_training() -> None:
+    """Training must keep using the image's own ENTRYPOINT — passing a command
+    there would be a silent way to run the wrong script on a paid GPU."""
+    settings = config.Settings(**CONFIGURED)
+
+    training = training_jobs.build_job_spec(settings, ["--epochs", "1"], "train")
+    scoring = training_jobs.build_job_spec(
+        settings, ["--run", "1"], "evaluate", training_jobs.EVALUATE_COMMAND
+    )
+
+    container = training["jobSpec"]["workerPoolSpecs"][0]["containerSpec"]
+    assert "command" not in container
+    scoring_container = scoring["jobSpec"]["workerPoolSpecs"][0]["containerSpec"]
+    assert scoring_container["command"] == ["python", "evaluate.py"]
+
+
+def test_the_offered_dev_sets_are_ones_the_scorer_accepts() -> None:
+    """The API's copy and ml/evaluate.py's argparse are in different packages, so
+    a dev set offered here but unknown there fails ~15 minutes into a paid job."""
+    import evaluate
+
+    accepted = evaluate.build_parser().parse_args(["--run", "1"])
+    assert accepted.dev_set == "test"  # the same default the API applies
+    for dev_set in training_jobs.EVALUATION_DEV_SETS:
+        assert dev_set in evaluate.DEV_SETS, f"{dev_set} is not one evaluate.py scores"
+    # The partitions, exactly. `lvis` is absent only because its CSV is not in the
+    # training image; when that changes this assertion is the thing to update, and
+    # until then it stops the dev set being offered before it can work.
+    assert training_jobs.EVALUATION_DEV_SETS == evaluate.PARTITIONS

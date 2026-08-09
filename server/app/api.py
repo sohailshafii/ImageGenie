@@ -98,6 +98,8 @@ from .security import (
 )
 from .storage import Storage, build_storage
 from .training_jobs import (
+    EVALUATE_COMMAND,
+    EVALUATION_DEV_SETS,
     MAX_BATCH_SIZE,
     MAX_IMAGES_PER_FORWARD,
     VIEWS_PER_MODEL,
@@ -342,6 +344,35 @@ class EvaluationOut(BaseModel):
     error: str | None  # why a `failed` evaluation failed
     label_hash: str | None
     created_at: datetime
+
+
+class EvaluationLaunchIn(BaseModel):
+    """Which dev set to score a finished run against."""
+
+    dev_set: str = "test"  # the sealed split; the one number nothing steered against
+
+    @field_validator("dev_set")
+    @classmethod
+    def _must_be_a_known_dev_set(cls, value: str) -> str:
+        if value not in EVALUATION_DEV_SETS:
+            raise ValueError(
+                f"unknown dev set {value!r}; expected one of "
+                f"{', '.join(EVALUATION_DEV_SETS)}"
+            )
+        return value
+
+
+class EvaluationLaunchOut(BaseModel):
+    """The accepted scoring job. No evaluation id: the row is written by the job.
+
+    Deliberately not `TrainingLaunchOut` despite the identical shape — these
+    describe different work, and one type serving both would have to be named for
+    neither.
+    """
+
+    job_name: str  # Vertex resource name
+    image: str
+    args: list[str]
 
 
 class TrainingMetricOut(BaseModel):
@@ -969,6 +1000,65 @@ def get_training_run_evaluations(run_id: int) -> list[EvaluationOut]:
             )
             for evaluation in evaluations
         ]
+
+
+@app.post(
+    "/training-runs/{run_id}/evaluations",
+    response_model=EvaluationLaunchOut,
+    status_code=202,
+    dependencies=[Depends(require_admin)],
+)
+def launch_evaluation(run_id: int, body: EvaluationLaunchIn) -> EvaluationLaunchOut:
+    """Score a finished run against a dev set, on a Vertex GPU (admin-only).
+
+    **202, not 201**: this hands the job to Vertex. The `evaluation` row is
+    written by the job itself once the container starts — minutes later, after a
+    spot GPU is provisioned and a multi-GB image pulled — and it appears on the
+    run's page as `running` from that moment (ml/evaluate.py).
+
+    Why a job at all, when scoring is far cheaper than training: the API image
+    ships `server/app` and the built SPA, with no torch and no ml package, so it
+    could not score a run even given hours to do it in. The training image can,
+    and already contains `evaluate.py`.
+
+    The two refusals here are the ones worth catching before a GPU is billed for
+    15 minutes to discover them: a run that does not exist, and one with no saved
+    weights — a failed or still-running run has nothing to load.
+    """
+    settings = get_settings()
+    if not launch_configured(settings):
+        raise HTTPException(
+            status_code=503, detail="training launches are not configured here"
+        )
+
+    with session_scope() as session:
+        run = session.get(TrainingRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="unknown training run")
+        if not run.weights_uri:
+            # 409, not 422: the request is well-formed and the run is real. What
+            # is wrong is the run's state, and it may not stay wrong — a run still
+            # training will have weights shortly.
+            raise HTTPException(
+                status_code=409,
+                detail=f"training run {run_id} has no saved weights to score",
+            )
+
+    args = ["--run", str(run_id), "--dev-set", body.dev_set, "--num-workers", "4"]
+    try:
+        job_name = submit_training_job(
+            settings,
+            args,
+            display_name=f"imagegenie-evaluate-{run_id}",
+            command=EVALUATE_COMMAND,
+        )
+    except TrainingLaunchError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    logger.info("evaluation job launched", extra={"job": job_name, "args": args})
+    return EvaluationLaunchOut(
+        job_name=job_name, image=settings.train_image or "", args=args
+    )
 
 
 @app.get(
