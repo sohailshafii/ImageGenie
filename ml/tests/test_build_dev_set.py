@@ -1,5 +1,7 @@
 """Second-dev-set selection (FR-7, ml.md#the-second-dev-set)."""
 
+from types import SimpleNamespace
+
 import build_dev_set
 import pytest
 from build_dev_set import hash_order, select_dev_set
@@ -101,6 +103,11 @@ class _FakeStorage:
 _CSV = "uid,class,reason\na,chair,lvis-gold\nb,lamp,lvis-gold\n"
 
 
+def _gcs_settings():
+    """Settings as they are wherever a push is legitimate — see push_dev_set."""
+    return SimpleNamespace(storage_backend="gcs")
+
+
 def test_the_local_file_wins_when_it_exists(tmp_path, monkeypatch) -> None:
     """Where a checkout has the selection, that is the copy being edited and
     regenerated — reading the bucket instead would silently score something else."""
@@ -108,7 +115,7 @@ def test_the_local_file_wins_when_it_exists(tmp_path, monkeypatch) -> None:
     path.write_text(_CSV, encoding="utf-8")
     stored = _FakeStorage({build_dev_set.dev_set_key("lvis"): b"uid,class\nz,car\n"})
     monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: stored)
-    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+    monkeypatch.setattr(build_dev_set, "get_settings", _gcs_settings)
 
     assert build_dev_set.load_dev_set(path) == [("a", "chair"), ("b", "lamp")]
 
@@ -117,7 +124,7 @@ def test_falls_back_to_the_stored_copy(tmp_path, monkeypatch) -> None:
     """The case the push exists for: a job with no `data/` directory."""
     stored = _FakeStorage({build_dev_set.dev_set_key("lvis"): _CSV.encode("utf-8")})
     monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: stored)
-    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+    monkeypatch.setattr(build_dev_set, "get_settings", _gcs_settings)
 
     samples = build_dev_set.load_dev_set(tmp_path / "absent.csv")
 
@@ -128,7 +135,7 @@ def test_missing_everywhere_names_both_places(tmp_path, monkeypatch) -> None:
     """Two different fixes — build the selection, or push it — so the message has
     to say which one is missing rather than just failing."""
     monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: _FakeStorage())
-    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+    monkeypatch.setattr(build_dev_set, "get_settings", _gcs_settings)
 
     with pytest.raises(SystemExit) as failure:
         build_dev_set.load_dev_set(tmp_path / "absent.csv")
@@ -144,7 +151,7 @@ def test_push_puts_the_file_where_a_job_reads_it(tmp_path, monkeypatch) -> None:
     path.write_text(_CSV, encoding="utf-8")
     stored = _FakeStorage()
     monkeypatch.setattr(build_dev_set, "build_storage", lambda _settings: stored)
-    monkeypatch.setattr(build_dev_set, "get_settings", lambda: None)
+    monkeypatch.setattr(build_dev_set, "get_settings", _gcs_settings)
 
     key = build_dev_set.push_dev_set(path)
 
@@ -161,3 +168,17 @@ def test_push_puts_the_file_where_a_job_reads_it(tmp_path, monkeypatch) -> None:
 def test_pushing_a_selection_that_does_not_exist_is_refused(tmp_path) -> None:
     with pytest.raises(SystemExit, match="nothing to push"):
         build_dev_set.push_dev_set(tmp_path / "absent.csv")
+
+
+def test_pushing_to_local_storage_is_refused(tmp_path, monkeypatch) -> None:
+    """The backend defaults to `local`, where a "push" copies the file into
+    data/storage/ and reports success while changing nothing a cloud job can
+    read — a failure that would otherwise surface ~12 minutes into a paid job."""
+    path = tmp_path / "lvis_dev.csv"
+    path.write_text(_CSV, encoding="utf-8")
+    monkeypatch.setattr(
+        build_dev_set, "get_settings", lambda: SimpleNamespace(storage_backend="local")
+    )
+
+    with pytest.raises(SystemExit, match="no cloud job can read it"):
+        build_dev_set.push_dev_set(path)
