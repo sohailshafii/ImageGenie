@@ -44,7 +44,14 @@ from train import data_snapshot, label_hash, load_trainable_samples, subsample
 
 from app.config import get_settings
 from app.db import session_scope
-from app.models import Artifact, ArtifactStage, ArtifactStatus, Evaluation, Model
+from app.models import (
+    Artifact,
+    ArtifactStage,
+    ArtifactStatus,
+    Evaluation,
+    Model,
+    TrainingStatus,
+)
 from app.storage import Storage, build_storage
 
 # The partitions `stratified_split` produces, by name.
@@ -60,10 +67,19 @@ DEV_SETS = (*PARTITIONS, LVIS)
 def record_evaluation(
     run_id: int, dev_set: str, report: dict, label_hash: str | None
 ) -> int:
-    """Store one dev-set report and return its id."""
+    """Store one finished dev-set report and return its id.
+
+    `status` is passed explicitly rather than left to the column default, which is
+    `running`: this writes a row that is already done. A scoring job that wants to
+    announce itself before it starts is a different call (see the button path).
+    """
     with session_scope() as session:
         evaluation = Evaluation(
-            run_id=run_id, dev_set=dev_set, report=report, label_hash=label_hash
+            run_id=run_id,
+            dev_set=dev_set,
+            status=TrainingStatus.completed,
+            report=report,
+            label_hash=label_hash,
         )
         session.add(evaluation)
         session.flush()  # assigns the id before the scope commits

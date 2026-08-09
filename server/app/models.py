@@ -260,6 +260,11 @@ class Evaluation(Base):
     Distinct from ``training_run.metrics``, which is the run's own end-of-training
     report on ``val``. That one is written by the trainer as part of the run; these
     are written afterwards, by ml/evaluate.py, against data the run never saw.
+
+    The row is written **when scoring starts**, not when it finishes, so an
+    evaluation in flight is visible rather than being nothing at all until minutes
+    later — and one that dies says so instead of never arriving. That is the same
+    bargain ``training_run`` makes, and the reason ``report`` is nullable.
     """
 
     __tablename__ = "evaluation"
@@ -269,9 +274,20 @@ class Evaluation(Base):
     # Which dev set was scored: "test" today, e.g. "lvis_gold" later. A string
     # rather than an enum so adding a dev set stays a code-only change.
     dev_set: Mapped[str] = mapped_column()
+    # Deliberately the *same* enum as TrainingRun, not a parallel copy: the
+    # lifecycle is identical (started, finished, died), the dashboard renders both
+    # with one badge, and a second Postgres enum type carrying the same three
+    # values would be duplication the database then has to be migrated to keep in
+    # step. If the two lifecycles ever diverge, that is the moment to split them.
+    status: Mapped[TrainingStatus] = mapped_column(default=TrainingStatus.running)
     # Same shape as training_run.metrics (ml/metrics.py) so the two are directly
-    # comparable and the frontend renders both with one component.
-    report: Mapped[dict] = mapped_column(JSONB)
+    # comparable and the frontend renders both with one component. Null while the
+    # evaluation is still running, and on one that failed.
+    report: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    # Why it failed, for a `failed` row. The alternative to storing it is reading
+    # Vertex's log stream, which means leaving the app to find out why something
+    # in the app did not work.
+    error: Mapped[str | None] = mapped_column(default=None)
     # The label_hash of the trainable set *at scoring time*. The split is
     # recomputed from the live DB rather than stored, so a label added since the
     # run shifts the partition and quietly changes what "test" means. Recording
