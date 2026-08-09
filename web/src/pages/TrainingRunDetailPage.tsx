@@ -5,8 +5,15 @@ import {
   getTrainingRun,
   getTrainingRunEvaluations,
   getTrainingRunMetrics,
+  launchEvaluation,
 } from '../api/training';
-import type { Evaluation, TrainingMetricPoint, TrainingRunDetail } from '../api/types';
+import { ApiError } from '../api/errors';
+import {
+  EVALUATION_DEV_SETS,
+  type Evaluation,
+  type TrainingMetricPoint,
+  type TrainingRunDetail,
+} from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { CostCurve } from '../components/CostCurve';
@@ -76,10 +83,23 @@ export function TrainingRunDetailPage() {
   // viewer an action that can only fail.
   const canDownloadWeights = user?.role === 'admin';
 
+  // Scoring spends GPU time, so it is admin-only like starting a run. The server
+  // enforces it either way; hiding the control avoids offering an action that can
+  // only 403.
+  const canEvaluate = user?.role === 'admin';
+
   const [run, setRun] = useState<TrainingRunDetail | null>(null);
   const [metrics, setMetrics] = useState<TrainingMetricPoint[] | null>(null);
   const [evaluations, setEvaluations] = useState<Evaluation[] | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
+  const [devSet, setDevSet] = useState<string>(EVALUATION_DEV_SETS[0].name);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evaluateError, setEvaluateError] = useState<string | null>(null);
+  const [requested, setRequested] = useState(false);
+  // Bumped to re-fetch the list. Nothing arrives for minutes — the row is written
+  // when the container starts — so this is a manual refresh rather than a poll
+  // that would spend a request a second discovering nothing has changed.
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -130,7 +150,23 @@ export function TrainingRunDetailPage() {
     return () => {
       active = false;
     };
-  }, [runId]);
+  }, [runId, reloadToken]);
+
+  async function onEvaluate() {
+    setEvaluating(true);
+    setEvaluateError(null);
+    try {
+      await launchEvaluation(runId, devSet);
+      setRequested(true);
+      setReloadToken((token) => token + 1);
+    } catch (caught) {
+      setEvaluateError(
+        caught instanceof ApiError ? caught.message : 'Could not start the evaluation.',
+      );
+    } finally {
+      setEvaluating(false);
+    }
+  }
 
   // The set the run *trained* on, to compare against what each evaluation was
   // *scored* on. The split is recomputed rather than stored, so these differing
@@ -205,15 +241,79 @@ export function TrainingRunDetailPage() {
               data it never saw. Same shape, different standing — presenting them
               together would invite reading the optimistic number as the honest
               one. */}
-          {evaluations !== null && evaluations.length > 0 && (
+          {(canEvaluate || (evaluations !== null && evaluations.length > 0)) && (
             <section className="run-section">
               <h2>Held-out evaluation</h2>
-              {evaluations.map((evaluation) => (
+
+              {/* Scoring is a Vertex job, not something a request can do: the API
+                  image carries no torch. So this asks, and the report arrives
+                  minutes later — which is why the row shows up as `running`
+                  rather than the page pretending to wait. */}
+              {canEvaluate && (
+                <div className="evaluate-controls">
+                  <label htmlFor="evaluate-dev-set">Score against</label>
+                  <select
+                    id="evaluate-dev-set"
+                    value={devSet}
+                    onChange={(event) => setDevSet(event.target.value)}
+                  >
+                    {EVALUATION_DEV_SETS.map((option) => (
+                      <option key={option.name} value={option.name}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={onEvaluate}
+                    disabled={evaluating || !run.weightsUri}
+                  >
+                    {evaluating ? 'Starting…' : 'Evaluate'}
+                  </button>
+                  <span className="field-hint">
+                    {EVALUATION_DEV_SETS.find((option) => option.name === devSet)?.hint}
+                  </span>
+                  {!run.weightsUri && (
+                    <span className="field-hint">
+                      This run saved no weights, so there is nothing to score.
+                    </span>
+                  )}
+                  {evaluateError !== null && <p className="form-error">{evaluateError}</p>}
+                  {requested && (
+                    <p className="form-note">
+                      Vertex accepted the job. It waits for a spot GPU and pulls the training
+                      image first, so the evaluation appears here in roughly 12 minutes —{' '}
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => setReloadToken((token) => token + 1)}
+                      >
+                        refresh
+                      </button>
+                      .
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {evaluations !== null && evaluations.length === 0 && (
+                <p className="page-lead">
+                  Not scored yet. Training reports on <code>val</code>, a split it consulted
+                  every epoch; this is where a number from data the run never saw appears.
+                </p>
+              )}
+
+              {evaluations?.map((evaluation) => (
                 <div key={evaluation.id} className="evaluation-block">
                   <h3>
                     {evaluation.devSet}
+                    <span className={`status-badge is-${evaluation.status}`}>
+                      {evaluation.status}
+                    </span>
                     <span className="form-note">
-                      scored {new Date(evaluation.createdAt).toLocaleString()}
+                      {evaluation.status === 'completed' ? 'scored' : 'started'}{' '}
+                      {new Date(evaluation.createdAt).toLocaleString()}
                     </span>
                   </h3>
                   {runLabelHash !== null &&
@@ -224,12 +324,23 @@ export function TrainingRunDetailPage() {
                         not the one the run held out. Treat the numbers as indicative.
                       </p>
                     )}
+                  {evaluation.status === 'running' && (
+                    <p className="page-lead">
+                      Scoring — a forward pass over every model in the dev set, reading each
+                      one's renders from the bucket. Refresh in a few minutes.
+                    </p>
+                  )}
+                  {evaluation.status === 'failed' && (
+                    // The reason, not a shrug: the alternative is reading Vertex's
+                    // log stream to find out why something in the app didn't work.
+                    <p className="form-error">{evaluation.error ?? 'The scoring job failed.'}</p>
+                  )}
                   {isEvaluationReport(evaluation.report) ? (
                     <MetricsReport report={evaluation.report} />
                   ) : (
                     // An unfamiliar shape still renders rather than vanishing —
                     // a report is worth showing raw if it cannot be shown well.
-                    <KeyValues record={evaluation.report} />
+                    evaluation.report !== null && <KeyValues record={evaluation.report} />
                   )}
                 </div>
               ))}

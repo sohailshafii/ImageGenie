@@ -50,7 +50,9 @@ interface TrainingMetricResponse {
 interface EvaluationResponse {
   id: number;
   dev_set: string;
-  report: Record<string, unknown>;
+  status: TrainingStatus;
+  report: Record<string, unknown> | null;
+  error: string | null;
   label_hash: string | null;
   created_at: string;
 }
@@ -113,10 +115,32 @@ export async function getTrainingRunEvaluations(id: number): Promise<Evaluation[
   return rows.map((row) => ({
     id: row.id,
     devSet: row.dev_set,
+    status: row.status,
     report: row.report,
+    error: row.error,
     labelHash: row.label_hash,
     createdAt: row.created_at,
   }));
+}
+
+/**
+ * POST /training-runs/{id}/evaluations — **admin-only**: score a finished run.
+ *
+ * Resolves once Vertex has *accepted* the job (202), not once a report exists.
+ * The `evaluation` row is written by the job itself when the container starts,
+ * minutes later, and appears as `running` from that point — so the caller should
+ * tell the user to come back rather than wait on a number.
+ */
+export async function launchEvaluation(
+  id: number,
+  devSet: string,
+): Promise<TrainingLaunch> {
+  const body = await request<TrainingLaunchResponse>(
+    'POST',
+    `/training-runs/${id}/evaluations`,
+    { dev_set: devSet },
+  );
+  return { jobName: body.job_name, image: body.image, args: body.args };
 }
 
 /**

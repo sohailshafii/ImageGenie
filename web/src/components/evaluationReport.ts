@@ -20,10 +20,17 @@ export type EvaluationReport = {
   confusion: { classes: string[]; matrix: number[][] };
 };
 
-/** True when the blob is a B4 report this component knows how to draw. */
+/**
+ * True when the blob is a B4 report this component knows how to draw.
+ *
+ * Accepts null so callers need no separate check: an evaluation has no report
+ * while it is running or after it has failed, and "nothing to draw" is the same
+ * answer as "not a shape I recognise" at every call site.
+ */
 export function isEvaluationReport(
-  blob: Record<string, unknown>,
+  blob: Record<string, unknown> | null,
 ): blob is EvaluationReport {
+  if (blob === null) return false;
   const confusion = blob.confusion as { classes?: unknown; matrix?: unknown } | undefined;
   return (
     typeof blob.split === 'string' &&

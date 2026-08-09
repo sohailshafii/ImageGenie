@@ -121,10 +121,28 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
     Deliberately a *separate* section rather than more rows in it: that one is the run's own report
     on `val`, a split it consulted every epoch, and these are scored afterwards on data it never
     saw. Same shape, different standing — merging them would invite reading the optimistic number as
-    the honest one. The whole section is hidden until a run has been scored, so an unevaluated run
-    gains nothing to scroll past. When a report's `label_hash` differs from the run's, the block
-    carries a warning: the split is recomputed rather than stored, so the labels moving in between
-    means the scored split is not the one held out.
+    the honest one. For a viewer the section is hidden until a run has been scored, so an unevaluated
+    run gains nothing to scroll past; for an admin it always shows, because it holds the button. When
+    a report's `label_hash` differs from the run's, the block carries a warning: the split is
+    recomputed rather than stored, so the labels moving in between means the scored split is not the
+    one held out.
+  - an **Evaluate** control in that section, admin-only — a dev-set picker and a button that asks
+    the API to score this run (`POST /training-runs/{id}/evaluations`). It replaces having to run
+    `make evaluate RUN=n` from a checkout.
+    - **The picker explains the choice, not just the options.** `test` is the sealed split, `val`
+      was consulted every epoch and reads optimistically, `train` is a sanity check, `lvis` is the
+      independently-labeled second dev set. The hint changes with the selection, because which dev
+      set a number came from is most of what the number means.
+    - **Disabled with a reason when the run saved no weights** — a failed or still-training run has
+      nothing to load. The API answers 409 regardless; the button just doesn't offer it.
+    - **Nothing appears immediately, and the page says so.** Scoring is a Vertex job: it waits for a
+      spot GPU and pulls the training image, so the row shows up in ~12 minutes. The confirmation
+      names that number and offers a refresh link rather than polling — a poll would spend a request
+      a second learning nothing for ten minutes.
+    - **An evaluation is visible in every state**: `running` while the job scores, with a note
+      saying what it is doing; `failed` with the reason it stopped, which beats reading Vertex's log
+      stream to find out why something in the app didn't work; `completed` with the report. That is
+      what `evaluation.status` exists for ([server.md](../server/server.md#database)).
   - a **Download weights** button in the header, shown only to admins and only once the run has a
     `weights_uri` (see [Downloads](#downloads)).
   - timestamps (started / finished).

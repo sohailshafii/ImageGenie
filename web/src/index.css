@@ -1345,6 +1345,36 @@ select:focus {
   margin-bottom: 0.5rem;
 }
 
+/* Asking for a run to be scored. A row on wide screens and a stack on narrow
+   ones, with the hints and any error on their own line either way — the hint
+   changes with the dev set, so it has to be readable, not squeezed. */
+.evaluate-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.evaluate-controls select {
+  width: auto;
+  min-width: 8rem;
+}
+
+/* .btn-primary is full-width by design — it is normally the last control in a
+   stacked form. Here it sits inline next to a select, so it takes only the room
+   its label needs. */
+.evaluate-controls .btn-primary {
+  width: auto;
+}
+
+.evaluate-controls .field-hint,
+.evaluate-controls .form-error,
+.evaluate-controls .form-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 /* Hyperparameter tuning, folded away: the common run changes none of it, so it
    reads as an aside rather than six more boxes to fill in. Indented against a
    rule so an open section is visibly subordinate to the three fields above. */

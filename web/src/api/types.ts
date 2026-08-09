@@ -147,7 +147,11 @@ export interface DeadLetter {
 }
 
 // ── Training dashboard (FR-6) ────────────────────────────────────────────────
-/** Lifecycle of a training run (mirrors the server's TrainingStatus). */
+/**
+ * Lifecycle of a training run (mirrors the server's TrainingStatus). Evaluations
+ * share it — same three states, same badge — which is why the server stores both
+ * in one Postgres enum rather than two identical ones.
+ */
 export type TrainingStatus = 'running' | 'completed' | 'failed';
 
 /** A training run as it appears in the dashboard list. */
@@ -201,8 +205,16 @@ export interface TrainingMetricPoint {
 export interface Evaluation {
   id: number;
   devSet: string; // "test" today; a second, independently-annotated set later
-  // A JSON object, always; narrowed to a drawable report with isEvaluationReport.
-  report: Record<string, unknown>;
+  /**
+   * `running` from the moment the scoring job starts until it finishes. The row
+   * exists before the report does, so an evaluation in flight is visible rather
+   * than being nothing at all for the minutes it takes — and one that dies says
+   * so instead of never arriving.
+   */
+  status: TrainingStatus;
+  // A JSON object once scored; null while running, and on one that failed.
+  report: Record<string, unknown> | null;
+  error: string | null; // why a failed evaluation stopped
   /**
    * The labeled set as it stood when this was scored — *not* when the run
    * trained. The split is recomputed rather than stored, so a label added since
@@ -212,6 +224,25 @@ export interface Evaluation {
   labelHash: string | null;
   createdAt: string;
 }
+
+/**
+ * The dev sets a finished run can be scored against, with what each one is worth.
+ *
+ * A copy of the server's `EVALUATION_DEV_SETS`, like the roster and
+ * TRAINING_DEFAULTS above and for the same reason. Bounded the same way too: the
+ * API validates `dev_set` and answers 422 on anything it does not know, so a
+ * stale entry here is a visible error, never a job launched against a dev set
+ * that isn't there.
+ */
+export const EVALUATION_DEV_SETS = [
+  { name: 'test', hint: 'the sealed split — the one number nothing steered against' },
+  { name: 'val', hint: 'consulted every epoch while training, so it reads optimistically' },
+  { name: 'train', hint: 'what the run learned; useful only as a sanity check' },
+  {
+    name: 'lvis',
+    hint: 'the second dev set: objects labeled outside this project (needs make devset-push)',
+  },
+] as const;
 
 /** Whether this deployment can launch a run, and what it would launch. */
 export interface TrainingLaunchConfig {
