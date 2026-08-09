@@ -3,8 +3,9 @@
 Milestone-by-milestone progress. **v1 = milestones 1–8, and all eight are done.** The design rationale
 behind each item lives in the domain docs — [ml/ml.md](ml/ml.md),
 [server/server.md](server/server.md), [web/web.md](web/web.md) — and the scope itself in
-[CLAUDE.md](CLAUDE.md); this file is the score, plus the [post-v1 backlog](#post-v1-backlog) at the
-end, which is the single place remaining work is tracked.
+[CLAUDE.md](CLAUDE.md); this file is the score, plus [what has shipped since v1](#shipped-since-v1)
+and the [post-v1 backlog](#post-v1-backlog) at the end, which is the single place remaining work is
+tracked.
 
 ## ✅ Milestone 1 — metadata exploration
 
@@ -135,6 +136,57 @@ label error, and only a human separates them.
       calibration problem are both confirmed on data the model cannot have gamed. **The shape-only
       renders are now the leading explanation for the ~0.45 plateau**
       ([ml.md](ml/ml.md#what-it-says-run-15-evaluation-5)).
+
+## Shipped since v1
+
+Work that landed after milestone 8 closed. Kept separate from the checklists above so those stay a
+record of what v1 was, rather than being quietly rewritten as the project moves on. Newest first.
+
+### Scoring a run from its own page (2026-08-09)
+
+`make evaluate RUN=n` needed a checkout, credentials and a laptop willing to spend ~15 minutes on
+CPU. The run's detail page now has an **Evaluate** button instead, admin-only, with a dev-set picker
+covering all four (`test`, `val`, `train`, `lvis`).
+
+- [x] `POST /training-runs/{id}/evaluations` submits a **Vertex job**, because the API image ships
+      without torch or the ml package and could not score a run given any amount of time. The
+      training image already contains `evaluate.py` — `ml/Dockerfile` copies every ml module — so the
+      job is the same image with `containerSpec.command` overridden. No second image, no second set
+      of IAM bindings.
+- [x] **An evaluation is now visible in every state.** `evaluation` gained `status` and `error`, and
+      `report` became nullable, so the row is written when scoring *starts* rather than when it
+      succeeds: a job in flight reads `running` instead of showing nothing for minutes, and one that
+      dies says why instead of never arriving. Migration `4cbd7fc5f228`; the status reuses the
+      existing `trainingstatus` enum rather than adding a second one with identical values.
+- [x] **The LVIS dev set is readable from a cloud job.** Its selection lives in a gitignored CSV, so a
+      job with no checkout could not score it. `make devset-push` copies it to
+      `processed/devsets/lvis.csv` and `load_dev_set` reads local-first, bucket-second. The copy is
+      still not a `label` row, so the property that makes the dev set structurally untrainable is
+      unchanged. ⚠️ Pushing is deliberately *not* re-selecting — see
+      [ml.md](ml/ml.md#the-second-dev-set).
+- [x] Refusals that used to cost ~15 minutes on a billed GPU happen at the request: an unknown run
+      (404) and a run with no saved weights (409).
+
+**Deploy note:** the training image is pinned by commit and now carries the evaluation status
+handling, so this needs `make train-image` + a `TF_VAR_train_image` bump, not just an API roll. A
+stale image would write evaluation rows that never leave `running`.
+
+### The batch size no longer OOMs the GPU (2026-08-09)
+
+The launch form's `batch_size` asked the GPU for **12× what it said** — a model's 12 rendered views
+are folded into the batch by `ml/model.py`'s forward — and nothing bounded it. Three `training_run`
+rows (18, 19, 20) died of `torch.OutOfMemoryError` ~45s in at batch 64, which is 768 images; they
+were one Vertex job retrying itself three times, not three launches.
+
+- [x] Bounded server-side at `MAX_IMAGES_PER_FORWARD = 512` images per pass (**42 models**), set
+      below the measured failure rather than at it — 384 images trained fine, 768 died 148 MiB past
+      the T4's 14.58 GiB, and how much room the allocator has left after fragmentation is not
+      something a form can know.
+- [x] The refusal names the hidden figure rather than the ceiling alone, because the number the admin
+      never sees is the one that explains the limit.
+- [x] The form states the arithmetic live ("asks the GPU for 384 images per pass"), carries a `max`,
+      and blocks the submit with the reason. Both figures come from `GET /training-launch`, so the
+      page holds no copy to drift from.
 
 ## Post-v1 backlog
 

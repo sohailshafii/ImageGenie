@@ -66,14 +66,17 @@ Per-milestone checklists, and the **[post-v1 backlog](STATUS.md#post-v1-backlog)
 remaining work is tracked — are in **[STATUS.md](STATUS.md)**. The bias analysis behind those numbers
 is in [ml/ml.md](ml/ml.md#bias-analysis).
 
-> **Scoring a run is a deliberate, manual step — for *both* dev sets.** Training reports on `val`,
-> which it consults every epoch and therefore cannot score honestly. Every other number comes from
-> running `make evaluate RUN=n` (the held-out `test` split) or `make evaluate RUN=n DEVSET=lvis` (the
-> independently annotated LVIS set) by hand. **The training dashboard only ever displays evaluations
-> that already exist; it never computes one**, so a run whose detail page shows no dev-set report has
-> not been scored rather than scored badly. That is by design — the ml scripts write these rows
-> directly through a DB session and the API only reads them, so there are no training write endpoints
-> and nothing runs torch inside the web service.
+> **Scoring a run is a deliberate step — for *both* dev sets.** Training reports on `val`, which it
+> consults every epoch and therefore cannot score honestly. Every other number comes from scoring a
+> finished run on purpose: `make evaluate RUN=n` (the held-out `test` split) or
+> `make evaluate RUN=n DEVSET=lvis` (the independently annotated LVIS set), or the **Evaluate** button
+> on the run's own page, which does the same thing without a checkout. **A run whose detail page shows
+> no dev-set report has not been scored, rather than scored badly.**
+>
+> The button *asks* for the work; it does not do it. Nothing runs torch inside the web service — the
+> API image ships without it — so an evaluation is a Vertex AI job running the same `ml/evaluate.py`
+> from the training image, and the row it writes appears on the page minutes later, `running` first
+> and then scored.
 
 ## Layout
 
