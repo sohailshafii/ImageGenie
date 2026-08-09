@@ -54,21 +54,53 @@ def test_records_the_report_with_the_current_label_hash(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         evaluate,
-        "record_evaluation",
-        lambda run_id, dev_set, report, label_hash: recorded.update(
-            run_id=run_id, dev_set=dev_set, report=report, label_hash=label_hash
-        )
-        or 1,
+        "start_evaluation",
+        lambda run_id, dev_set: recorded.update(run_id=run_id, dev_set=dev_set) or 7,
+    )
+    monkeypatch.setattr(
+        evaluate,
+        "finish_evaluation",
+        lambda evaluation_id, report, label_hash: recorded.update(
+            evaluation_id=evaluation_id, report=report, label_hash=label_hash
+        ),
     )
 
     evaluate.evaluate_run(4)
 
     assert recorded["run_id"] == 4
     assert recorded["dev_set"] == "test"
+    # The report lands on the row that was claimed before scoring started, not on
+    # a fresh one — otherwise the "scoring…" row would be orphaned.
+    assert recorded["evaluation_id"] == 7
     assert recorded["report"] is _REPORT
     # The hash is computed now, not copied from the run — that is the whole point
     # of storing it: it describes the data this report was actually scored on.
     assert recorded["label_hash"].startswith("sha256:")
+
+
+def test_a_failure_marks_the_evaluation_failed_and_still_raises(monkeypatch) -> None:
+    """The case the status column exists for. A job that dies must leave a row
+    saying so — and must still fail loudly for the CLI and for Vertex."""
+    marked: dict = {}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), {})
+    monkeypatch.setattr(evaluate, "start_evaluation", lambda run_id, dev_set: 7)
+    monkeypatch.setattr(
+        evaluate,
+        "fail_evaluation",
+        lambda evaluation_id, reason: marked.update(
+            evaluation_id=evaluation_id, reason=reason
+        ),
+    )
+    # An empty trainable set makes the split empty, which the module refuses with
+    # SystemExit — the ordinary way this fails, and not an Exception subclass.
+    monkeypatch.setattr(evaluate, "load_trainable_samples", list)
+
+    with pytest.raises(SystemExit):
+        evaluate.evaluate_run(4)
+
+    assert marked["evaluation_id"] == 7
+    assert "nothing to score" in marked["reason"]
 
 
 def test_warns_when_the_labels_moved_since_the_run(monkeypatch, capsys) -> None:
@@ -146,7 +178,9 @@ def _stub_run(monkeypatch, config, snapshot) -> None:
     monkeypatch.setattr(
         evaluate, "load_run_model", lambda run_id, storage: (None, config, snapshot)
     )
-    monkeypatch.setattr(evaluate, "record_evaluation", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(evaluate, "start_evaluation", lambda run_id, dev_set: 1)
+    monkeypatch.setattr(evaluate, "finish_evaluation", lambda *args, **kwargs: None)
+    monkeypatch.setattr(evaluate, "fail_evaluation", lambda *args, **kwargs: None)
 
 
 def test_replays_the_recorded_partition_instead_of_recomputing(monkeypatch) -> None:
@@ -316,11 +350,15 @@ def test_lvis_fingerprints_the_pairs_it_actually_scored(monkeypatch) -> None:
     _stub_lvis(monkeypatch, dev_set, rendered=["a", "b"], trainable=[])
     monkeypatch.setattr(
         evaluate,
-        "record_evaluation",
-        lambda run_id, dev_set_name, report, label_hash: recorded.update(
-            dev_set=dev_set_name, label_hash=label_hash
-        )
-        or 1,
+        "start_evaluation",
+        lambda run_id, dev_set_name: recorded.update(dev_set=dev_set_name) or 1,
+    )
+    monkeypatch.setattr(
+        evaluate,
+        "finish_evaluation",
+        lambda evaluation_id, report, label_hash: recorded.update(
+            label_hash=label_hash
+        ),
     )
 
     evaluate.evaluate_run(4, "lvis")
