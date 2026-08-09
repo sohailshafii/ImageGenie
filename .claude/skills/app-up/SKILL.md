@@ -56,6 +56,22 @@ the change has a role-dependent surface. Seed **blobs** through
 `build_storage(get_settings())` so keys match `artifact_keys`; storage is
 `LocalStorage` under `data/storage/`, relative to the **cwd of the API process**.
 
+A model the training pages count as *trainable* needs three rows, and the field
+names are worth copying rather than guessing — each wrong one costs a run:
+
+```python
+Model(uid=uid, title=..., raw_key=f"raw/{uid}.glb",
+      download_status=DownloadStatus.downloaded)   # NOT .done — see models.py
+session.flush()                                    # no relationship(); order the FK inserts
+Label(model_uid=uid, class_name="chair", source=LabelSource.weak, confidence=0.8)
+Artifact(model_uid=uid, stage=ArtifactStage.rendered,
+         status=ArtifactStatus.done, key=f"processed/renders/{uid}/")  # `key`, NOT blob_key
+```
+
+`DownloadStatus` is `pending|downloaded|failed` while `ArtifactStatus` is
+`pending|done|failed` — the two enums do **not** share a vocabulary, and
+`Artifact`'s column is `key` (a key *or* a key prefix, for the render stage).
+
 Gotchas that have bitten:
 - A raw-SQL model insert needs an explicit `download_status` — its default is
   ORM-side, not a DB default. Prefer the ORM.
