@@ -628,6 +628,17 @@ image, which already contains it — rather than a second implementation, so a r
 thing however it was asked for. The row it writes is `running` from the moment scoring starts and
 `failed` with a reason if it dies, which is what makes an unattended job legible.
 
+⚠️ **That legibility starts only once the module imports**, and the first job submitted from the
+button never got that far. `evaluate.py` imports `build_dev_set` for `load_dev_set`, which imported
+`eval_weak_labels` → `objaverse` at module scope — a package `ml/requirements-train.txt` names among
+the ones it deliberately leaves out. The job died on `ModuleNotFoundError` ~30s in, *before*
+`start_evaluation` could claim its row, so the failure the row-claiming exists to surface left
+nothing at all behind: no row on the page, no reason, only the job's stderr. **An entrypoint's
+module-scope imports are part of the image contract**, and `ml/tests/test_train_image_imports.py`
+now walks the graph statically for both `train.py` and `evaluate.py` — statically, because importing
+them in a test only ever proves the dev environment can, which is what let this through.
+A module needed by one CLI path and not another goes inside the function that uses it.
+
 `ml/infer.py` rebuilds the model and `ml/evaluate.py` scores it, storing one `evaluation` row per
 (run, dev set) — see [server.md](../server/server.md#database). Separate from training on purpose:
 the trainer reports on `val`, which it consults every epoch and therefore cannot score honestly,
