@@ -115,3 +115,43 @@ def test_out_of_roster_labels_are_skipped_not_fatal(monkeypatch, capsys) -> None
 
     assert samples == [("a", "chair"), ("c", "weapon")]
     assert "sofa" in capsys.readouterr().out
+
+
+def test_subsample_membership_survives_the_corpus_changing() -> None:
+    """The property the old index-based draw lacked (ml.md#dataset-splits).
+
+    `random.Random(seed).sample(sorted(samples), limit)` selects by position, so
+    inserting one model shifts every later one and a different subset comes out.
+    Measured in prod: two models gained labels and 41 of run 17's 45 held-out
+    models left the reproduced subset.
+    """
+    corpus = [(f"uid{index:05d}", "chair") for index in range(2000)]
+    before = set(train.subsample(corpus, 200, 0))
+
+    # Insertions that sort into the middle, which is where real uids land — and
+    # what makes this a shift rather than an append.
+    grown = corpus + [("uid00100x", "lamp"), ("uid01000x", "plant")]
+    after = set(train.subsample(grown, 200, 0))
+
+    # At most one member can be displaced per insertion, at the boundary.
+    assert len(before & after) >= 198
+
+
+def test_subsample_does_not_track_the_split_it_feeds() -> None:
+    """The two hashes must be independent, or a limited run trains on its own test
+    set (or on none of it). Both salt the same uid, so only the salt separates
+    them."""
+    corpus = [(f"uid{index:05d}", "chair") for index in range(4000)]
+    subset = train.subsample(corpus, 400, 0)
+
+    held_out = stratified_split(subset, 0).test
+    # A 10% test slice of 400: wildly off means the subset is correlated with the
+    # bucket, which is the failure this guards.
+    assert 20 <= len(held_out) <= 60
+
+
+def test_subsample_is_reproducible() -> None:
+    corpus = [(f"uid{index:05d}", "chair") for index in range(500)]
+
+    assert train.subsample(corpus, 50, 0) == train.subsample(corpus, 50, 0)
+    assert train.subsample(corpus, 50, 0) != train.subsample(corpus, 50, 1)

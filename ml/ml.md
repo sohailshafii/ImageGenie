@@ -427,6 +427,19 @@ Resolves the dev-set-percentage TODO.
   sufficient for 10–20 classes (ModelNet40's test set is only ~2.5k).
 - Splits are versioned so a `training_run` can reference exactly which data it used (NFR-4
   reproducibility).
+- **`--limit` picks its subset by hashing the uid too**, for the reason the split does
+  ([below](#why-the-split-is-hashed-not-shuffled)) — and it was fixed a milestone later, which cost a
+  real evaluation. `subsample` drew `random.Random(seed).sample(sorted(samples), limit)`: selection
+  by *index*, so inserting one model shifts every later position and a different subset comes out.
+  Two models gained labels between run 17 training and being scored (11,783 → 11,785 trainable) and
+  **41 of its 45 held-out models left the reproduced subset**; the job scored the surviving 4,
+  reported 0.0% accuracy, and the dashboard rendered it as a result. `subsample_rank` now salts its
+  hash differently from `bucket_of` — **the salts must differ**, or taking the lowest-ranked uids
+  would take exactly the models the split assigns to `test`.
+- **Scoring a recorded partition does not consult the subset at all.** `resolve_scored_samples`
+  looks its recorded uids up in the full trainable set, because those uids already *are* the answer
+  to what the run held out — reproducing the subset first could only subtract from them. That is
+  what makes an existing limited run scoreable again without re-deriving anything.
 
 ## Evaluation
 
