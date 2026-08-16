@@ -196,10 +196,18 @@ def resolve_scored_samples(
     run_id: int,
     dev_set: str,
     snapshot: dict,
+    trainable: list[tuple[str, str]],
     samples: list[tuple[str, str]],
     split: DatasetSplit,
 ) -> list[tuple[str, str]]:
     """The models to score: the run's *recorded* partition where one exists.
+
+    `trainable` is the full labeled ∩ rendered set and `samples` is the run's
+    reproduced subset — identical unless the run passed `--limit`. Replay looks
+    labels up in `trainable`, because the recorded uids already *are* the answer
+    to "which models did this run hold out"; asking the subset as well can only
+    subtract from it, and used to. `samples` and `split` serve the fallback,
+    which has no recorded uids and must recompute a partition.
 
     A run records the uids it held out (`data_snapshot["held_out"]`), because a
     recomputed partition is only the run's own while the labeled set is
@@ -216,7 +224,7 @@ def resolve_scored_samples(
     and for `train`, which is never recorded, warning when the labels have moved.
     """
     recorded = (snapshot.get("held_out") or {}).get(dev_set)
-    uid_to_class = dict(samples)
+    uid_to_class = dict(trainable)
 
     if recorded is None:
         # Runs 2 through 4 predate `held_out` AND predate hash-bucketed splitting
@@ -244,6 +252,11 @@ def resolve_scored_samples(
     # renders gone. Skipping is right — the alternative is failing an evaluation
     # over a model that no longer exists — but the count is reported, because a
     # shrinking dev set changes what the numbers mean.
+    #
+    # Looked up in `trainable`, never in the run's reproduced subset. When this
+    # asked the subset, an unstable `subsample` could drop models that were
+    # perfectly present and the message blamed the database for it: run 17 lost
+    # 41 of 45 this way, every one of them still live, labeled and rendered.
     scored = [(uid, uid_to_class[uid]) for uid in recorded if uid in uid_to_class]
     missing = len(recorded) - len(scored)
     if missing:
@@ -337,12 +350,17 @@ def _score_run(
             config.backbone,
         )
 
-    samples = load_trainable_samples()
+    trainable = load_trainable_samples()
     # Reproduce the run's subsample before splitting. A `--limit` run held out a
     # split of its *subset*, so splitting the full trainable set would put models
     # it trained on straight into its own test set — measured on run 4: 141 of
     # 1,173 recomputed "test" models were ones the run had trained on, and the
     # score would have been inflated by exactly the amount that matters.
+    #
+    # Only the *fallback* needs this now. Replay reads the recorded uids against
+    # the full trainable set, which is what makes scoring a limited run immune to
+    # the subset shifting underneath it.
+    samples = trainable
     limit = snapshot.get("limit")
     if limit is not None:
         samples = subsample(samples, limit, config.seed)
@@ -350,7 +368,9 @@ def _score_run(
     # reproducible under the seed that produced it, and a run may have set its own.
     split = stratified_split(samples, config.seed)
     current_hash = data_snapshot(samples, split)["label_hash"]
-    scored = resolve_scored_samples(run_id, dev_set, snapshot, samples, split)
+    scored = resolve_scored_samples(
+        run_id, dev_set, snapshot, trainable, samples, split
+    )
     if not scored:
         raise SystemExit(f"the {dev_set} split is empty — nothing to score")
 

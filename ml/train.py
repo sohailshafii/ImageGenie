@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
-import random
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -545,21 +544,49 @@ def _parse_args() -> argparse.Namespace:
     return build_parser().parse_args()
 
 
+def subsample_rank(uid: str, seed: int) -> bytes:
+    """A stable sort key for one model, used to pick a `--limit` run's subset.
+
+    **The salt must differ from `splits.bucket_of`'s**, and that is not a style
+    choice: were both to hash `f"{seed}:{uid}"`, taking the lowest-ranked uids
+    here would take precisely the models the split assigns to `test`, and a
+    limited run would train on nothing it was later scored against — or on
+    exactly it. Two independent hashes of the same uid keep membership of the
+    subset and membership of the split unrelated.
+    """
+    return hashlib.sha256(f"{seed}:subsample:{uid}".encode()).digest()
+
+
 def subsample(samples: list[tuple[str, str]], limit: int, seed: int) -> list[tuple[str, str]]:
-    """A seeded random subset of `limit` samples.
+    """The `limit` samples that rank lowest by their own hash.
 
     Public because evaluation has to reproduce it: a limited run held out a split
     of its *subset*, so scoring it against a split of the full trainable set
     would put models the run trained on into its own test set (ml/evaluate.py).
 
-    Proportional, not per-class balanced: it preserves the real class
-    distribution (which is skewed ~7.7:1), so a small run rehearses the actual
-    problem rather than an easier balanced version of it. Sorted first so the
-    result depends on the sample *set* and the seed, never on query order.
+    **Membership is a pure function of the uid and the seed**, the same property
+    `splits.stratified_split` has and for the same reason (ml.md#why-the-split-is
+    -hashed-not-shuffled). The previous implementation drew
+    `random.Random(seed).sample(sorted(samples), limit)`, which selects by
+    *index*: inserting one model shifts every later position, so a different
+    subset comes out. Deterministic, but not stable — and the difference is not
+    academic. Two models gained labels between run 17 training and being scored
+    (11,783 -> 11,785 trainable), which moved 41 of its 45 held-out models out of
+    the reproduced subset. The evaluation scored the surviving 4, reported 0.0%
+    accuracy, and rendered on the dashboard as a result.
+
+    Adding a model can now displace at most one other, at the boundary.
+
+    Proportional, not per-class balanced: the hash is independent of class, so
+    this preserves the real class distribution (skewed ~7.7:1) in expectation and
+    a small run rehearses the actual problem rather than an easier balanced
+    version of it. The result is sorted so output order never depends on hash
+    order.
     """
     if limit >= len(samples):
         return samples
-    return random.Random(seed).sample(sorted(samples), limit)
+    ranked = sorted(samples, key=lambda sample: subsample_rank(sample[0], seed))
+    return sorted(ranked[:limit])
 
 
 def main() -> None:

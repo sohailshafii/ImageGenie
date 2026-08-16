@@ -193,7 +193,7 @@ def test_replays_the_recorded_partition_instead_of_recomputing(monkeypatch) -> N
     snapshot = {"held_out": {"test": ["m3", "m7"]}, "label_hash": "sha256:stale"}
 
     scored = evaluate.resolve_scored_samples(
-        4, "test", snapshot, samples, stratified_split(samples, 0)
+        4, "test", snapshot, samples, samples, stratified_split(samples, 0)
     )
 
     assert scored == [("m3", "chair"), ("m7", "chair")]
@@ -206,7 +206,7 @@ def test_replay_uses_current_labels_not_the_ones_trained_on(monkeypatch) -> None
     snapshot = {"held_out": {"test": ["m1"]}}
 
     scored = evaluate.resolve_scored_samples(
-        4, "test", snapshot, samples, stratified_split(samples, 0)
+        4, "test", snapshot, samples, samples, stratified_split(samples, 0)
     )
 
     assert scored == [("m1", "table")]
@@ -219,7 +219,7 @@ def test_recorded_models_that_left_the_set_are_skipped_and_reported(
     snapshot = {"held_out": {"test": ["m1", "deleted", "m2"]}}
 
     scored = evaluate.resolve_scored_samples(
-        4, "test", snapshot, samples, stratified_split(samples, 0)
+        4, "test", snapshot, samples, samples, stratified_split(samples, 0)
     )
 
     assert scored == [("m1", "chair"), ("m2", "lamp")]
@@ -232,7 +232,7 @@ def test_a_run_without_a_recorded_split_falls_back_and_warns(capsys) -> None:
     split = stratified_split(samples, 0)
     snapshot = {"label_hash": "sha256:stale"}
 
-    scored = evaluate.resolve_scored_samples(4, "test", snapshot, samples, split)
+    scored = evaluate.resolve_scored_samples(4, "test", snapshot, samples, samples, split)
 
     assert scored == split.test
     assert "WARNING" in capsys.readouterr().out
@@ -243,7 +243,7 @@ def test_train_always_recomputes_since_it_is_never_recorded() -> None:
     split = stratified_split(samples, 0)
     snapshot = {"held_out": {"val": ["m1"], "test": ["m2"]}}
 
-    scored = evaluate.resolve_scored_samples(4, "train", snapshot, samples, split)
+    scored = evaluate.resolve_scored_samples(4, "train", snapshot, samples, samples, split)
 
     assert scored == split.train
 
@@ -253,7 +253,10 @@ def test_a_limited_run_is_scored_against_its_own_subset(monkeypatch) -> None:
     141 of 1,173 recomputed "test" models into a set the run had trained on."""
     samples = [(f"m{index}", "chair") for index in range(100)]
     samples += [(f"w{index}", "weapon") for index in range(100)]
-    snapshot = {"limit": 20}
+    # 40 rather than 20 so the recomputed test bucket is non-empty: hashed
+    # partitions are proportional in expectation, not exact, so a 20-model subset
+    # can legitimately hash to no test models at all.
+    snapshot = {"limit": 40}
     config = SimpleNamespace(seed=0, backbone="resnet18")
     scored: dict = {}
 
@@ -270,12 +273,45 @@ def test_a_limited_run_is_scored_against_its_own_subset(monkeypatch) -> None:
 
     evaluate.evaluate_run(4)
 
-    subset = evaluate.subsample(samples, 20, 0)
+    subset = evaluate.subsample(samples, 40, 0)
     expected = stratified_split(subset, 0).test
     assert scored["samples"] == expected
     # And nothing the run trained on leaks into what is scored.
     trained_on = {uid for uid, _ in stratified_split(subset, 0).train}
     assert not [uid for uid, _ in scored["samples"] if uid in trained_on]
+
+
+def test_a_limited_runs_replay_survives_the_corpus_growing(monkeypatch) -> None:
+    """Regression, found on Vertex: run 17 scored 4 of its 45 held-out models.
+
+    Two models gained labels between training and scoring. That is enough to
+    change which models a `--limit` run's subset contains, and the replay used to
+    look its recorded uids up *in that subset* — so 41 perfectly live, labeled,
+    rendered models were dropped and reported as "no longer trainable", leaving a
+    0.0% accuracy that rendered on the dashboard as a result.
+    """
+    trained_on = [(f"m{index}", "chair") for index in range(60)]
+    trained_on += [(f"w{index}", "weapon") for index in range(60)]
+    held_out = [uid for uid, _ in trained_on[:8]]
+    snapshot = {"limit": 20, "held_out": {"test": held_out}}
+    # The corpus grows by two, exactly as prod did (11,783 -> 11,785).
+    grown = trained_on + [("new1", "lamp"), ("new2", "plant")]
+    scored: dict = {}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: grown)
+    monkeypatch.setattr(
+        evaluate,
+        "score",
+        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+            samples=samples
+        )
+        or _REPORT,
+    )
+
+    evaluate.evaluate_run(4)
+
+    assert [uid for uid, _ in scored["samples"]] == held_out
 
 
 # --- The second dev set (FR-7) ----------------------------------------------
