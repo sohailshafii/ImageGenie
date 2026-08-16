@@ -41,7 +41,6 @@ import io
 from collections import Counter
 from pathlib import Path
 
-from eval_weak_labels import build_uid_to_gold_class
 from io_utils import write_csv
 from sqlalchemy import select
 from taxonomy import ROSTER
@@ -248,6 +247,17 @@ def report(
 
 
 def main() -> None:
+    # Imported here, not at module scope, and the reason is a deployed one.
+    # `evaluate.py` imports this module for `load_dev_set` alone, and it runs
+    # inside the *training* image, whose requirements deliberately exclude
+    # objaverse (ml/requirements-train.txt says so in as many words). At module
+    # scope this line reaches `eval_weak_labels` -> `objaverse` and every
+    # evaluation job dies on `ModuleNotFoundError` before it can even claim its
+    # row — which is exactly what happened to the first one submitted from the
+    # UI. Selecting a dev set is a local operation with the full dev
+    # requirements available; scoring one is not.
+    from eval_weak_labels import build_uid_to_gold_class
+
     parser = argparse.ArgumentParser(description="Build the second dev set (FR-7).")
     parser.add_argument("--count", type=int, default=1000,
                         help="how many objects to select (default: 1,000)")
