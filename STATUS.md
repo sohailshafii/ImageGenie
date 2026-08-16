@@ -238,6 +238,32 @@ learn, both in [ml.md](ml/ml.md#evaluation): compare macro recall rather than ac
 dev set changes, and score both runs on the **intersection** of their held-out sets whenever labels
 moved in between.
 
+### Debt the evaluate-button proof turned up — *after* item 1
+
+Not blocking the rendering A/B, and deliberately queued behind it: none of these change what the
+model can learn, and item 1 is the one measurement that might. All three were found by running the
+button against prod on 2026-08-16 rather than by review, which is the same lesson as items 6 and 7.
+
+13. **Two `lvis` dev-set models carry a `label` row**, so the contamination guard drops them at
+    scoring time and the second dev set is 982 rather than 984. The guard working is not the same as
+    the problem being absent: a label also makes them *trainable*, and that is what moved the
+    trainable set 11,783 → 11,785 and exposed the `subsample` defect below. `ml/build_dev_set.py`
+    already warns at selection time that `make backfill-labels` overlaps the selection on ~75 uids,
+    which is the likeliest route in. Find how these two got labeled, remove the labels, and make the
+    backfill exclude the dev-set selection outright rather than warning about it.
+14. **An evaluation over a handful of models still renders as a result.** `ml/evaluate.py` refuses an
+    *empty* split precisely because zero samples would "render on the dashboard as a real-looking
+    result" — but four samples did exactly that: 0.0% accuracy, a full per-class table, a confusion
+    matrix, and nothing anywhere saying the number rested on 4 of 45 models. The floor needs to be a
+    proportion, not zero: refuse, or mark the report loudly, when `sample_count` falls far below the
+    partition the run recorded. The underlying cause is fixed; the blind spot that let it reach the
+    page is not.
+15. **Evaluations 1–3 were produced under schemes that no longer exist.** Runs 2–4 recorded no
+    `held_out`, so scoring them recomputes a partition — and that recomputation has now changed twice
+    (hash-bucketed splits in PR #49, hash-ordered subsampling here). The warning says so at run time,
+    but the stored rows do not. Either re-score them or annotate the rows; do not quote them beside
+    numbers from runs 14+.
+
 ### Operational
 
 4. ~~**Deploy `pool_pre_ping`**~~ (`server/app/db.py`) — **DONE 2026-07-31**, revision
