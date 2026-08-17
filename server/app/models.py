@@ -175,6 +175,38 @@ class Label(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class DevSetMember(Base):
+    """A model reserved to a dev set, and therefore not labelable
+    (ml.md#the-second-dev-set, server.md#dev-set-protection).
+
+    The second dev set's whole value is that its objects were annotated outside
+    this project and never trained on, and a model becomes trainable the moment
+    it is labeled. That was held only by convention — the gold labels live in a
+    CSV, so nothing *put* a label on these models — until two were hand-labeled
+    through the labeling UI, which cannot tell them from any other model in the
+    catalog. This table is what makes the reservation something the server knows.
+
+    **No foreign key to `model`, deliberately.** Membership is a property of a
+    uid, decided when the set is selected — which is *before* those objects are
+    ingested and therefore before any `model` row exists. Requiring the row first
+    would leave exactly the window this table closes: ingested, visible in the
+    catalog, not yet protected.
+
+    Keyed by (uid, dev set) so a future second set can reserve its own objects
+    without disturbing this one.
+    """
+
+    __tablename__ = "dev_set_member"
+
+    model_uid: Mapped[str] = mapped_column(primary_key=True, index=True)
+    dev_set: Mapped[str] = mapped_column(primary_key=True)  # "lvis" (ml/evaluate.py)
+    # tz-aware, matching `evaluation` rather than the older naive columns: a
+    # reservation is compared against `datetime.now(UTC)` if it is compared at all.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class TrainingStatus(str, enum.Enum):
     """Lifecycle of a training run."""
 

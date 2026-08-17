@@ -497,9 +497,20 @@ make devset-push                 # copy the CSV to the bucket, for cloud scoring
   itself ingested.
 - **The gold labels stay in the CSV and out of the `label` table.** A model is trainable exactly when
   it is labeled **and** rendered, so leaving these unlabeled makes them structurally impossible to
-  train on: the dev set cannot leak into a future run through an absent-minded backfill. The one
-  remaining route is `make backfill-labels`, since **75 of the 1,000 also appear in
-  `weak_labels.csv`** — `build_dev_set.py` counts and warns about exactly that overlap.
+  train on: the dev set cannot leak into a future run through an absent-minded backfill. `make
+  backfill-labels` is one route in, since **75 of the 1,000 also appear in `weak_labels.csv`** —
+  `build_dev_set.py` counts and warns about exactly that overlap.
+- ⚠️ **The route that actually fired was the labeling UI, and it was not on anyone's list.** These
+  objects had to be ingested to be rendered, so they sit in the catalog looking like any other model,
+  and an admin can label any model they can see. Two were hand-labeled on 2026-08-01 — found on
+  2026-08-16 when an `lvis` evaluation scored 982 instead of 984. Structural untrainability was only
+  ever a property of *nobody having pushed the button*; membership is now recorded server-side and
+  `PUT /models/{uid}/label` refuses it ([server.md](../server/server.md#dev-set-protection)).
+  - **What the one disagreement showed.** `03febdfb…` is `table` to LVIS and was hand-labeled
+    `figure`; `0002e503…` was `lamp` to both. A single pair settles nothing, but it is worth noting
+    that the disagreement fell on the `figure` boundary — the same one weak labeling scores worst on
+    (0.62 precision, [above](#the-figureanimal-boundary)) and the same one the milestone-8 review
+    kept returning to. The two labels were removed once recorded here, restoring the set to 984.
 - **Ingesting is a data run, not a code problem**: a couple of dollars and mostly waiting.
 
 **Where the selection is read from.** The local CSV first, the processed bucket second
