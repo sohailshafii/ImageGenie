@@ -42,13 +42,14 @@ from collections import Counter
 from pathlib import Path
 
 from io_utils import write_csv
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from taxonomy import ROSTER
 
 from app.artifact_keys import dev_set_key
 from app.config import get_settings
 from app.db import session_scope
-from app.models import Model
+from app.models import DevSetMember, Model
 from app.storage import build_storage
 
 # Where the selection lands, and where the evaluator reads it back from. One
@@ -90,6 +91,54 @@ def push_dev_set(path: Path = DEV_SET_PATH, name: str = DEV_SET_NAME) -> str:
     storage.put_bytes(key, path.read_bytes())
     print(f"pushed {path} to {key}")
     return key
+
+
+def mark_dev_set(path: Path = DEV_SET_PATH, name: str = DEV_SET_NAME) -> int:
+    """Reserve the selection's uids in `dev_set_member`; return how many are new.
+
+    What stops a dev-set model being labeled, and therefore what stops it
+    becoming trainable. Until this existed the guarantee was only that no
+    *automated* path wrote these labels — a human with the labeling UI open could
+    and did, because a dev-set model is indistinguishable from any other model in
+    the catalog once it has been ingested (ml.md#the-second-dev-set).
+
+    Run at selection time, before the objects are ingested, so no window exists
+    in which they are visible and unprotected. `dev_set_member` has no foreign
+    key to `model` precisely so that ordering is possible.
+
+    Idempotent (NFR-2): re-marking an unchanged selection inserts nothing and
+    says so. It never *removes* a reservation, because a uid dropping out of a
+    rebuilt CSV does not mean the model was never scored against — that is a
+    deliberate decision requiring a look at the evaluations, not a side effect of
+    re-running a selection.
+    """
+    dev_set = load_dev_set(path, name)
+    if not dev_set:
+        raise SystemExit(f"{path} has no rows to mark")
+
+    with session_scope() as session:
+        before = session.scalar(
+            select(func.count()).select_from(DevSetMember).where(
+                DevSetMember.dev_set == name
+            )
+        )
+        session.execute(
+            pg_insert(DevSetMember)
+            .values([{"model_uid": uid, "dev_set": name} for uid, _ in dev_set])
+            .on_conflict_do_nothing(index_elements=["model_uid", "dev_set"])
+        )
+        after = session.scalar(
+            select(func.count()).select_from(DevSetMember).where(
+                DevSetMember.dev_set == name
+            )
+        )
+
+    added = after - before
+    print(
+        f"reserved {len(dev_set)} uids for the {name!r} dev set "
+        f"({added} new, {after} total)"
+    )
+    return added
 
 
 def load_dev_set(
@@ -277,10 +326,17 @@ def main() -> None:
                          help="also copy the new selection to the processed bucket")
     pushing.add_argument("--push-only", action="store_true",
                          help="copy the existing CSV to the bucket and select nothing")
+    pushing.add_argument("--mark-only", action="store_true",
+                         help="reserve the existing CSV's uids in dev_set_member and "
+                              "select nothing (a new selection marks itself)")
     args = parser.parse_args()
 
     if args.push_only:
         push_dev_set(args.out)
+        return
+
+    if args.mark_only:
+        mark_dev_set(args.out)
         return
 
     uid_to_gold_class = build_uid_to_gold_class()
@@ -303,6 +359,11 @@ def main() -> None:
         [(uid, class_name, "lvis-gold") for uid, class_name in selected],
     )
     print(f"\nwrote {args.out}")
+    # Marked here rather than left to a separate step, and *before* the seed that
+    # ingests these objects. The reservation is what makes them unlabelable, and
+    # until they are ingested there is nothing to label — so doing it now is the
+    # one ordering with no unprotected window in it.
+    mark_dev_set(args.out)
     if args.push:
         push_dev_set(args.out)
 

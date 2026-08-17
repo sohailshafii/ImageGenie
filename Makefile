@@ -41,7 +41,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 PYRUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help devset compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -104,6 +104,13 @@ devset-push: ## copy the existing dev-set CSV to the processed bucket, so cloud 
 	# not reachable from the job this exists to serve (build_dev_set refuses it).
 	IMAGEGENIE_STORAGE_BACKEND=gcs PYTHONPATH=server $(BIN)/python \
 	    ml/build_dev_set.py --push-only
+
+devset-mark: ## reserve the existing dev-set CSV's uids so the labeling UI refuses them
+	# `make devset` marks its own selection, so this is for a dev set chosen before
+	# dev_set_member existed — i.e. the current one. Point it at the SAME database
+	# the app serves (Cloud SQL through the proxy): a reservation in a local DB
+	# protects nothing. No cert shim and no bucket; this only writes rows.
+	PYTHONPATH=server $(BIN)/python ml/build_dev_set.py --mark-only
 
 train: ## run a baseline training run (M6); writes training_run + metrics to the DB
 	# PYTHONPATH=server so ml/train.py can import the DB layer (app.db, app.models);
