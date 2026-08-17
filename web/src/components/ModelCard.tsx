@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
+import {
+  CLASS_NAMES,
+  DEV_SET_EXPLANATION,
+  type ClassName,
+  type ModelSummary,
+} from '../api/types';
 import { ConfirmButton } from './ConfirmButton';
 
 // A single model in the browse grid: a rendered-preview placeholder, its label +
@@ -50,6 +55,9 @@ export function ModelCard({
   tabIndex?: number;
 }) {
   const isManual = model.source === 'manual';
+  // Reserved to a dev set: the server refuses a label write on it (409), so the
+  // controls are replaced by a badge rather than offered and then rejected.
+  const isReserved = model.devSet !== null;
   // No label yet — the model predates weak labeling, or the backfill hasn't run.
   const isUnlabeled = model.className === null;
   // Falls back to the class-emoji tile when the render isn't there.
@@ -96,7 +104,9 @@ export function ModelCard({
         </Link>
 
         <div className="model-label-row">
-          {canEdit ? (
+          {isReserved ? (
+            <span className="model-class">{model.className ?? 'unlabeled'}</span>
+          ) : canEdit ? (
             <select
               className="model-class-select"
               value={model.className ?? ''}
@@ -119,7 +129,7 @@ export function ModelCard({
             <span className="model-class">{model.className ?? 'unlabeled'}</span>
           )}
 
-          {canEdit && !isManual && !isUnlabeled && (
+          {canEdit && !isReserved && !isManual && !isUnlabeled && (
             <button
               type="button"
               className="btn-secondary btn-confirm"
@@ -137,6 +147,11 @@ export function ModelCard({
           </span>
           {model.confidence !== null && (
             <span className="model-confidence">{Math.round(model.confidence * 100)}%</span>
+          )}
+          {model.devSet && (
+            <span className="dev-set-badge" title={DEV_SET_EXPLANATION}>
+              {model.devSet} dev set
+            </span>
           )}
         </div>
       </div>

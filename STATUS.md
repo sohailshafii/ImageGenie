@@ -244,13 +244,15 @@ Not blocking the rendering A/B, and deliberately queued behind it: none of these
 model can learn, and item 1 is the one measurement that might. All three were found by running the
 button against prod on 2026-08-16 rather than by review, which is the same lesson as items 6 and 7.
 
-13. **Two `lvis` dev-set models carry a `label` row**, so the contamination guard drops them at
-    scoring time and the second dev set is 982 rather than 984. The guard working is not the same as
-    the problem being absent: a label also makes them *trainable*, and that is what moved the
-    trainable set 11,783 → 11,785 and exposed the `subsample` defect below. `ml/build_dev_set.py`
-    already warns at selection time that `make backfill-labels` overlaps the selection on ~75 uids,
-    which is the likeliest route in. Find how these two got labeled, remove the labels, and make the
-    backfill exclude the dev-set selection outright rather than warning about it.
+13. ~~**Two `lvis` dev-set models carry a `label` row**~~ — **DONE 2026-08-16.** The hypothesis here
+    was wrong: both were `manual` labels written through the **labeling UI**, not by
+    `make backfill-labels`. The UI cannot tell a dev-set model from any other model in the catalog,
+    because these had to be ingested to be rendered — so "these are never labeled" was a property of
+    nobody having pressed the button. Fixed by recording membership in `dev_set_member` and having
+    `PUT /models/{uid}/label` refuse it (409), with the reservation surfaced as a badge in both
+    views. The two labels were deleted after recording the gold-vs-manual disagreement they showed
+    in [ml.md](ml/ml.md#the-second-dev-set); the dev set is back to 984 and the trainable set to
+    11,783.
 14. **An evaluation over a handful of models still renders as a result.** `ml/evaluate.py` refuses an
     *empty* split precisely because zero samples would "render on the dashboard as a real-looking
     result" — but four samples did exactly that: 0.0% accuracy, a full per-class table, a confusion

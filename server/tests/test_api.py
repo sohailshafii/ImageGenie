@@ -3,7 +3,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select, text
 
 from app import api, db
-from app.models import DownloadStatus, Label, LabelSource, Model, User, UserRole
+from app.models import (
+    DevSetMember,
+    DownloadStatus,
+    Label,
+    LabelSource,
+    Model,
+    User,
+    UserRole,
+)
 from app.security import CSRF_COOKIE, CSRF_HEADER, hash_password
 
 ADMIN_EMAIL = "admin@imagegenie.dev"
@@ -20,7 +28,14 @@ def anon_client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClien
     monkeypatch.setattr(db, "get_engine", lambda: pg_engine)
     with pg_engine.begin() as connection:
         connection.execute(
-            text("TRUNCATE session, label, artifact, model, app_user RESTART IDENTITY CASCADE")
+            # dev_set_member is listed explicitly: it has no FK to model (so a
+            # reservation can be recorded before the object is ingested), which
+            # means CASCADE will not clear it and reservations would leak between
+            # tests.
+            text(
+                "TRUNCATE session, label, artifact, model, app_user, dev_set_member "
+                "RESTART IDENTITY CASCADE"
+            )
         )
     with db.session_scope() as session:
         session.add(Model(uid="m1", download_status=DownloadStatus.downloaded))
@@ -204,6 +219,8 @@ def test_put_label_records_manual(client: TestClient) -> None:
         "confidence": None,
         # Emitted without checking the blob exists — see ModelSummaryOut.thumbnail.
         "thumbnail": "/artifacts/processed/renders/m2/view_00.png",
+        # Not reserved to a dev set, so labeling it is allowed at all.
+        "dev_set": None,
     }
     # And it sticks on the next read.
     assert client.get("/models/m2").json()["source"] == "manual"
@@ -256,3 +273,62 @@ def test_viewer_cannot_correct_labels(viewer_client: TestClient) -> None:
     assert response.status_code == 403
     # …and the weak label is untouched.
     assert viewer_client.get("/models/m2").json()["source"] == "weak"
+
+
+def _reserve(uid: str, dev_set: str = "lvis") -> None:
+    with db.session_scope() as session:
+        session.add(DevSetMember(model_uid=uid, dev_set=dev_set))
+
+
+def test_a_dev_set_model_cannot_be_labeled(client: TestClient) -> None:
+    """The hole this closes: two dev-set models were hand-labeled through this
+    endpoint, which made them trainable and shrank the set they are scored
+    against. Nothing noticed for fifteen days."""
+    _reserve("m2")
+
+    response = client.put("/models/m2/label", json={"class_name": "weapon"})
+
+    # 409, not 403: the admin may label models, this model may not be labeled.
+    assert response.status_code == 409
+    assert "lvis" in response.json()["detail"]
+    # And the existing weak label is untouched — a refusal writes nothing.
+    assert client.get("/models/m2").json()["source"] == "weak"
+
+
+def test_the_refusal_names_the_dev_set_that_reserved_it(client: TestClient) -> None:
+    _reserve("m2", dev_set="holdout-2027")
+
+    detail = client.put("/models/m2/label", json={"class_name": "weapon"}).json()["detail"]
+
+    assert "holdout-2027" in detail
+
+
+def test_reserving_one_model_does_not_lock_the_rest(client: TestClient) -> None:
+    """The guard has to be per-model, or a dev set would freeze the whole catalog."""
+    _reserve("m2")
+
+    assert client.put("/models/m1/label", json={"class_name": "weapon"}).status_code == 200
+
+
+def test_the_summary_reports_the_reservation(client: TestClient) -> None:
+    """So the UI can say why labeling is unavailable before an admin types a
+    correction and gets a 409 back."""
+    _reserve("m2")
+
+    assert client.get("/models/m2").json()["dev_set"] == "lvis"
+    assert client.get("/models/m1").json()["dev_set"] is None
+    by_uid = {item["uid"]: item for item in client.get("/models").json()["items"]}
+    assert by_uid["m2"]["dev_set"] == "lvis"
+    assert by_uid["m1"]["dev_set"] is None
+
+
+def test_a_model_in_two_dev_sets_appears_once(client: TestClient) -> None:
+    """`dev_set_member` is keyed by (uid, dev set), so an unguarded join would
+    duplicate the row in every listing."""
+    _reserve("m2", dev_set="lvis")
+    _reserve("m2", dev_set="holdout-2027")
+
+    body = client.get("/models").json()
+
+    assert body["total"] == 2
+    assert [item["uid"] for item in body["items"]] == ["m1", "m2"]

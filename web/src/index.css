@@ -578,6 +578,27 @@ select:focus {
   color: var(--text-muted);
 }
 
+/* A model reserved to a dev set, which is why it offers no label control.
+   Deliberately not styled as a warning: nothing is wrong, the model is doing its
+   job. `cursor: help` advertises the title attribute carrying the reason. */
+.dev-set-badge {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  cursor: help;
+}
+
+/* On the detail page the badge sits beside the class name rather than in a meta
+   row, so it needs the gap the flex row would have given it. */
+.model-class .dev-set-badge {
+  margin-left: 0.5rem;
+}
+
 .pager {
   display: flex;
   align-items: center;

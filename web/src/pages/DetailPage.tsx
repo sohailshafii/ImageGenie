@@ -8,7 +8,12 @@ import {
   getModelArtifacts,
   setLabel,
 } from '../api/catalog';
-import { CLASS_NAMES, type ClassName, type ModelSummary } from '../api/types';
+import {
+  CLASS_NAMES,
+  DEV_SET_EXPLANATION,
+  type ClassName,
+  type ModelSummary,
+} from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
 import { ConfirmButton } from '../components/ConfirmButton';
@@ -104,7 +109,18 @@ export function DetailPage() {
 
             <div className="detail-field">
               <span className="detail-label">Label</span>
-              {canEdit ? (
+              {model.devSet ? (
+                /* Reserved to a dev set: the server refuses the write (409), so
+                   offering the control would only produce an error. Says why,
+                   because "you can label everything except this" is otherwise
+                   indistinguishable from a bug. */
+                <span className="model-class">
+                  {model.className ?? 'unlabeled'}
+                  <span className="dev-set-badge" title={DEV_SET_EXPLANATION}>
+                    {model.devSet} dev set
+                  </span>
+                </span>
+              ) : canEdit ? (
                 <div className="model-label-row">
                   <select
                     className="model-class-select"
