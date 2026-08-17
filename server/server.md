@@ -749,6 +749,34 @@ separate, deliberate step, not wired to this button — a soft delete makes a mo
 `_require_live_model` is the single existence check the write and artifact routes share, so a route
 can't act on a deleted model by checking only for existence.
 
+### Dev-set protection
+
+`dev_set_member` (uid, dev set) records that a model is reserved to a dev set, and
+`PUT /models/{uid}/label` refuses to write a label for one. A label is what makes a model
+*trainable* ([ml.md](../ml/ml.md#the-second-dev-set)), so labeling a dev-set model quietly destroys
+the property the whole set exists for — that nothing was ever trained on it.
+
+- **409, not 403.** The admin has every right to label models; this particular model is in a state
+  that forbids it. "Forbidden" would read as a permissions problem and send someone to check roles.
+  The message names the set, because "which set" is the first thing anyone asks.
+- **No foreign key to `model`.** Membership belongs to a uid and is decided when the set is selected
+  — before those objects are ingested, so before any `model` row exists. An FK would force
+  ingest-first and leave open exactly the window this closes: ingested, in the catalog, unprotected.
+  `make devset` therefore marks its selection at selection time; `make devset-mark` covers a set
+  chosen before the table existed.
+- **`ModelSummaryOut.dev_set`** carries the reservation to the UI, which replaces the label control
+  with a badge ([web.md](../web/web.md#dev-set-protection)). The refusal is the boundary; the field
+  is the courtesy of saying so first.
+- **The join is `DISTINCT ON (model_uid)`.** The table is keyed by (uid, dev set), so a model in two
+  sets would otherwise duplicate its row in every listing — the same idiom `_latest_labels` uses, and
+  `_summary_select` now carries both joins so the list and detail queries cannot drift.
+
+Why it exists at all: two dev-set models were hand-labeled through the labeling UI on 2026-08-01,
+which cannot distinguish them from any other model in the catalog. It surfaced fifteen days later
+when an `lvis` evaluation scored 982 instead of 984, and the labels had also perturbed the trainable
+set enough to expose an unrelated defect in `subsample`. Until then, "these are never labeled" was a
+property of nobody having pressed the button.
+
 ### Rebuilding the tables from storage
 
 Object storage is the durable record; `model` and `artifact` are an index over it. Every key carries

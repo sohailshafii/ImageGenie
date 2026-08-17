@@ -28,6 +28,7 @@ interface ModelSummaryResponse {
   source: string | null;
   confidence: number | null;
   thumbnail: string | null;
+  dev_set: string | null;
 }
 
 interface ModelArtifactsResponse {
@@ -52,6 +53,7 @@ function toModelSummary(model: ModelSummaryResponse): ModelSummary {
     source: (model.source as LabelSource | null) ?? null,
     confidence: model.confidence,
     thumbnail: model.thumbnail,
+    devSet: model.dev_set ?? null,
   };
 }
 

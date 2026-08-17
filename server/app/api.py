@@ -57,6 +57,7 @@ from .models import (
     Artifact,
     ArtifactStage,
     ArtifactStatus,
+    DevSetMember,
     DownloadStatus,
     EmailVerification,
     Evaluation,
@@ -128,6 +129,10 @@ class ModelSummaryOut(BaseModel):
     # storage just to draw thumbnails. Signing is local, so this is free; the
     # client falls back to a placeholder if the image 404s.
     thumbnail: str | None
+    # Which dev set has reserved this model, if any. Present so the UI can say why
+    # labeling is unavailable *before* an admin types a correction and gets a 409
+    # back — the refusal is the boundary, this is the courtesy.
+    dev_set: str | None = None
 
 
 class ModelPageOut(BaseModel):
@@ -825,7 +830,15 @@ def _thumbnail_url(storage, uid: str, url_prefix: str = "") -> str:
 
 
 def _summary(
-    storage, uid, title, tags, class_name, source, confidence, url_prefix: str = ""
+    storage,
+    uid,
+    title,
+    tags,
+    class_name,
+    source,
+    confidence,
+    dev_set=None,
+    url_prefix: str = "",
 ) -> ModelSummaryOut:
     return ModelSummaryOut(
         uid=uid,
@@ -837,11 +850,49 @@ def _summary(
         source=source.value if source is not None else None,
         confidence=confidence,
         thumbnail=_thumbnail_url(storage, uid, url_prefix),
+        dev_set=dev_set,
     )
 
 
 # Selected by both the list and detail queries, so the two can't drift apart.
 _SUMMARY_COLUMNS = (Model.uid, Model.title, Model.tags)
+
+
+def _dev_set_reservations():
+    """Subquery of one reservation per model.
+
+    DISTINCT ON because `dev_set_member` is keyed by (uid, dev set): a model
+    reserved to two dev sets would otherwise appear twice in every listing that
+    joins it. Which one wins does not matter to a caller — the question being
+    asked is "is this labelable", not "which sets is it in".
+    """
+    return (
+        select(DevSetMember.model_uid, DevSetMember.dev_set)
+        .distinct(DevSetMember.model_uid)
+        .order_by(DevSetMember.model_uid, DevSetMember.dev_set)
+        .subquery()
+    )
+
+
+def _summary_select(latest):
+    """The columns and joins every summary query needs.
+
+    A summary now spans three tables — the model, its current label, and any
+    dev-set reservation — so the shared piece is the whole select rather than the
+    column tuple. `latest` is passed in because callers filter on it.
+    """
+    reserved = _dev_set_reservations()
+    return (
+        select(
+            *_SUMMARY_COLUMNS,
+            latest.c.class_name,
+            latest.c.source,
+            latest.c.confidence,
+            reserved.c.dev_set,
+        )
+        .outerjoin(latest, Model.uid == latest.c.model_uid)
+        .outerjoin(reserved, Model.uid == reserved.c.model_uid)
+    )
 
 
 @app.get("/dead-letters", response_model=list[DeadLetterOut])
@@ -1213,10 +1264,8 @@ def list_models(
     sort: ModelSort = ModelSort.uid,
 ) -> ModelPageOut:
     latest = _latest_labels()
-    query = (
-        select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
-        .outerjoin(latest, Model.uid == latest.c.model_uid)
-        .where(Model.deleted_at.is_(None))  # soft-deleted models are hidden here
+    query = _summary_select(latest).where(
+        Model.deleted_at.is_(None)  # soft-deleted models are hidden here
     )
     if class_name is not None:
         query = query.where(latest.c.class_name == class_name)
@@ -1260,11 +1309,7 @@ def list_deleted_models(
     something a labeler should page through.
     """
     latest = _latest_labels()
-    query = (
-        select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
-        .outerjoin(latest, Model.uid == latest.c.model_uid)
-        .where(Model.deleted_at.is_not(None))
-    )
+    query = _summary_select(latest).where(Model.deleted_at.is_not(None))
     order = (Model.deleted_at.desc(), Model.uid)
     return _paginate_summaries(query, order, page, page_size, _url_prefix(request))
 
@@ -1280,6 +1325,32 @@ def _require_live_model(session: Session, uid: str) -> Model:
     if model is None or model.deleted_at is not None:
         raise HTTPException(status_code=404, detail="unknown model")
     return model
+
+
+def _refuse_dev_set_member(session: Session, uid: str) -> None:
+    """Refuse to label a model reserved to a dev set (ml.md#the-second-dev-set).
+
+    A label is what makes a model trainable, so labeling one of these silently
+    destroys the property the second dev set exists for: that nothing was ever
+    trained on it. Two were labeled this way before the reservation existed, and
+    nothing noticed for fifteen days — the scoring-time guard reports the damage,
+    it does not prevent it.
+
+    **409, not 403.** The admin has every right to label models; this particular
+    model is in a state that forbids it, and saying "forbidden" would read as a
+    permissions problem and send someone looking at roles.
+    """
+    reserved_to = session.scalar(
+        select(DevSetMember.dev_set).where(DevSetMember.model_uid == uid)
+    )
+    if reserved_to is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"this model is reserved to the {reserved_to!r} dev set — labeling it "
+                "would make it trainable and invalidate the set it is scored against"
+            ),
+        )
 
 
 @app.get(
@@ -1393,9 +1464,9 @@ def _load_summary(uid: str, url_prefix: str = "") -> ModelSummaryOut:
     latest = _latest_labels()
     with session_scope() as session:
         row = session.execute(
-            select(*_SUMMARY_COLUMNS, latest.c.class_name, latest.c.source, latest.c.confidence)
-            .outerjoin(latest, Model.uid == latest.c.model_uid)
-            .where(Model.uid == uid, Model.deleted_at.is_(None))
+            _summary_select(latest).where(
+                Model.uid == uid, Model.deleted_at.is_(None)
+            )
         ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="unknown model")
@@ -1750,6 +1821,7 @@ def set_label(
         raise _too_many_requests(label_limiter.retry_after(write_key))
     with session_scope() as session:
         _require_live_model(session, uid)
+        _refuse_dev_set_member(session, uid)
         session.add(
             Label(
                 model_uid=uid,

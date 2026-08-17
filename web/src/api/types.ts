@@ -101,7 +101,23 @@ export interface ModelSummary {
    * treat a load error as "no preview", not as a bug.
    */
   thumbnail: string | null;
+  /**
+   * The dev set this model is reserved to, or null. A reserved model must stay
+   * unlabeled — a label is what makes a model trainable, and training on the set
+   * you are scored against is exactly what the second dev set exists to avoid.
+   * The server refuses the write (409); this field is what lets the UI say so
+   * before anyone types a correction.
+   */
+  devSet: string | null;
 }
+
+/**
+ * Why a reserved model offers no label control. One string so the browse grid
+ * and the detail page say the same thing (web.md#dev-set-protection).
+ */
+export const DEV_SET_EXPLANATION =
+  'Reserved to a dev set. Labeling it would make it trainable, and a model the ' +
+  'classifier trained on cannot honestly score it.';
 
 /**
  * What the classifier makes of one model (server.md#predicting-a-class).

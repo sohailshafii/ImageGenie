@@ -64,6 +64,24 @@ advances, and `c` hands focus to the class dropdown. Design notes:
 Both views write label corrections through the same API endpoint (see
 [server.md](../server/server.md#database) — corrections create/update `label` rows with `source = manual`).
 
+### Dev-set protection
+
+Some models in the catalog are **reserved to a dev set** and must never be labeled. A label is what
+makes a model trainable ([ml.md](../ml/ml.md#the-second-dev-set)), so labeling one destroys the
+property the second dev set exists for — that nothing was ever trained on it.
+
+Both views replace the label control with a **badge naming the set** for these models, and the
+`title` explains why in a sentence. The server refuses the write regardless
+([server.md](../server/server.md#dev-set-protection)); the UI change exists so an admin learns this
+*before* typing a correction rather than from a 409.
+
+**It is styled as information, not a warning.** Nothing is wrong with a reserved model — it is doing
+its job. The one affordance is `cursor: help`, advertising the tooltip that carries the reason.
+
+This is not a hypothetical guard: two dev-set models were hand-labeled through the detail view on
+2026-08-01 and nobody noticed for fifteen days, until an evaluation scored 982 models instead of 984.
+Nothing in the UI marked them, because until then nothing in the database did either.
+
 ## Training Dashboard
 
 Resolves the dashboard TODO. Built in **B3**: a list and a per-run detail page over the
