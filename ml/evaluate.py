@@ -33,6 +33,7 @@ Either way the report records the `label_hash` it was scored under.
 from __future__ import annotations
 
 import argparse
+from typing import NamedTuple
 
 from build_dev_set import load_dev_set
 from infer import evaluate_samples as score
@@ -142,7 +143,29 @@ def load_rendered_uids(uids: list[str]) -> set[str]:
         return set(session.scalars(stmt).all())
 
 
-def resolve_lvis_dev_set() -> list[tuple[str, str]]:
+class ScoredSelection(NamedTuple):
+    """The models an evaluation will score, and how many it *meant* to score.
+
+    `expected_count` is what makes a shortfall visible. Every path here drops
+    models that left the set — deleted, unlabeled, unrendered, or never ingested
+    — which is right, because the alternative is failing an evaluation over a
+    model that no longer exists. But the report it produces carries only the
+    count it managed, and a number over 4 of 45 models renders exactly like a
+    number over 45. Carrying the denominator out of the resolver is what lets the
+    report say what fraction it rests on.
+
+    `None` where there is nothing honest to compare against: a run recording
+    neither its held-out uids nor its split sizes has no expected count, and
+    inventing one would be a claim the data cannot support. `basis` names where
+    the denominator came from, because the three sources are not equally strong.
+    """
+
+    samples: list[tuple[str, str]]
+    expected_count: int | None
+    basis: str | None
+
+
+def resolve_lvis_dev_set() -> ScoredSelection:
     """The second dev set: gold-labeled objects, filtered to what is scorable and clean.
 
     Two filters, and the second is the point of the whole exercise. Models that
@@ -189,7 +212,10 @@ def resolve_lvis_dev_set() -> list[tuple[str, str]]:
         )
     if not clean:
         raise SystemExit("every scorable dev-set model is trainable — nothing independent left")
-    return clean
+    # The denominator is the selection itself: `build_dev_set.py` chose these
+    # 1,000 objects and balanced them across the roster, so anything missing is a
+    # model that never arrived rather than one that was never wanted.
+    return ScoredSelection(clean, len(dev_set), "selected_dev_set")
 
 
 def resolve_scored_samples(
@@ -199,7 +225,7 @@ def resolve_scored_samples(
     trainable: list[tuple[str, str]],
     samples: list[tuple[str, str]],
     split: DatasetSplit,
-) -> list[tuple[str, str]]:
+) -> ScoredSelection:
     """The models to score: the run's *recorded* partition where one exists.
 
     `trainable` is the full labeled ∩ rendered set and `samples` is the run's
@@ -246,7 +272,17 @@ def resolve_scored_samples(
             f"recomputed under the current hash-bucket scheme rather than the one it "
             f"actually held out — {drift}. Treat the number as indicative."
         )
-        return getattr(split, dev_set)
+        # A weaker denominator than the recorded uids, and deliberately still
+        # used: the run recorded how many models its split held, so a partition
+        # recomputed today can at least be compared against that size. It says
+        # nothing about *which* models, and it can be exceeded — the corpus grows
+        # — so this basis is named rather than blended with the one above.
+        recorded_size = (snapshot.get("splits") or {}).get(dev_set)
+        return ScoredSelection(
+            getattr(split, dev_set),
+            recorded_size,
+            None if recorded_size is None else "recorded_split_size",
+        )
 
     # A recorded uid can leave the trainable set: soft-deleted, label removed, or
     # renders gone. Skipping is right — the alternative is failing an evaluation
@@ -264,7 +300,36 @@ def resolve_scored_samples(
             f"note: {missing} of {len(recorded)} recorded {dev_set} models are no "
             "longer trainable (deleted, unlabeled, or unrendered) and were skipped"
         )
-    return scored
+    return ScoredSelection(scored, len(recorded), "held_out")
+
+
+def with_coverage(report: dict, selection: ScoredSelection) -> dict:
+    """Stamp a report with how much of its dev set it actually covered.
+
+    Stamped here rather than inside `metrics.evaluation_report`, which also builds
+    `training_run.metrics` for the trainer. There the split was computed seconds
+    earlier from the data in hand, so "expected" means nothing, and a coverage key
+    on that blob would be a claim the trainer is in no position to make.
+
+    Counted from `report["sample_count"]` rather than from `len(selection.samples)`:
+    the resolver's list is what scoring was *asked* for, and a model can still drop
+    out below that, inside the dataset. The stored number is the one the metrics
+    were actually computed over.
+
+    Absent entirely when the expected count is unknown, so a report making no claim
+    about its coverage stays distinguishable from one claiming to be complete. A
+    new dict, never a mutation — the report also belongs to the caller.
+    """
+    if selection.expected_count is None:
+        return report
+    return {
+        **report,
+        "coverage": {
+            "expected": selection.expected_count,
+            "scored": report["sample_count"],
+            "basis": selection.basis,
+        },
+    }
 
 
 def score_and_record(
@@ -272,7 +337,7 @@ def score_and_record(
     evaluation_id: int,
     run_id: int,
     dev_set: str,
-    scored: list[tuple[str, str]],
+    selection: ScoredSelection,
     storage: Storage,
     num_workers: int,
     backbone: str,
@@ -289,8 +354,11 @@ def score_and_record(
     path passes the trainable set's hash instead, because there the question is
     whether the corpus moved under the split.
     """
+    scored = selection.samples
     print(f"scoring run {run_id} on {len(scored)} {dev_set} models ({backbone})")
-    report = score(model, scored, storage, dev_set, num_workers=num_workers)
+    report = with_coverage(
+        score(model, scored, storage, dev_set, num_workers=num_workers), selection
+    )
 
     # Report before storing. Scoring is the expensive part — minutes of GPU or CPU
     # over thousands of blob reads — and storing is one UPDATE that can fail on a
@@ -344,9 +412,9 @@ def _score_run(
         # No split to replay and none to recompute: these objects were never in
         # the corpus the run partitioned, which is exactly what makes them a
         # second dev set rather than another view of the first.
-        scored = resolve_lvis_dev_set()
+        selection = resolve_lvis_dev_set()
         return score_and_record(
-            model, evaluation_id, run_id, dev_set, scored, storage, num_workers,
+            model, evaluation_id, run_id, dev_set, selection, storage, num_workers,
             config.backbone,
         )
 
@@ -368,14 +436,14 @@ def _score_run(
     # reproducible under the seed that produced it, and a run may have set its own.
     split = stratified_split(samples, config.seed)
     current_hash = data_snapshot(samples, split)["label_hash"]
-    scored = resolve_scored_samples(
+    selection = resolve_scored_samples(
         run_id, dev_set, snapshot, trainable, samples, split
     )
-    if not scored:
+    if not selection.samples:
         raise SystemExit(f"the {dev_set} split is empty — nothing to score")
 
     return score_and_record(
-        model, evaluation_id, run_id, dev_set, scored, storage, num_workers,
+        model, evaluation_id, run_id, dev_set, selection, storage, num_workers,
         config.backbone, current_hash,
     )
 

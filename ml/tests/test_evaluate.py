@@ -192,11 +192,11 @@ def test_replays_the_recorded_partition_instead_of_recomputing(monkeypatch) -> N
     samples = trained_on + [("new1", "chair"), ("new2", "lamp")]
     snapshot = {"held_out": {"test": ["m3", "m7"]}, "label_hash": "sha256:stale"}
 
-    scored = evaluate.resolve_scored_samples(
+    selection = evaluate.resolve_scored_samples(
         4, "test", snapshot, samples, samples, stratified_split(samples, 0)
     )
 
-    assert scored == [("m3", "chair"), ("m7", "chair")]
+    assert selection.samples == [("m3", "chair"), ("m7", "chair")]
 
 
 def test_replay_uses_current_labels_not_the_ones_trained_on(monkeypatch) -> None:
@@ -205,11 +205,11 @@ def test_replay_uses_current_labels_not_the_ones_trained_on(monkeypatch) -> None
     samples = [("m1", "table")]  # was `chair` when the run trained
     snapshot = {"held_out": {"test": ["m1"]}}
 
-    scored = evaluate.resolve_scored_samples(
+    selection = evaluate.resolve_scored_samples(
         4, "test", snapshot, samples, samples, stratified_split(samples, 0)
     )
 
-    assert scored == [("m1", "table")]
+    assert selection.samples == [("m1", "table")]
 
 
 def test_recorded_models_that_left_the_set_are_skipped_and_reported(
@@ -218,12 +218,15 @@ def test_recorded_models_that_left_the_set_are_skipped_and_reported(
     samples = [("m1", "chair"), ("m2", "lamp")]
     snapshot = {"held_out": {"test": ["m1", "deleted", "m2"]}}
 
-    scored = evaluate.resolve_scored_samples(
+    selection = evaluate.resolve_scored_samples(
         4, "test", snapshot, samples, samples, stratified_split(samples, 0)
     )
 
-    assert scored == [("m1", "chair"), ("m2", "lamp")]
+    assert selection.samples == [("m1", "chair"), ("m2", "lamp")]
     assert "1 of 3" in capsys.readouterr().out
+    # The denominator is the recorded set, not what survived it — that gap is the
+    # whole point of carrying it out of here.
+    assert (selection.expected_count, selection.basis) == (3, "held_out")
 
 
 def test_a_run_without_a_recorded_split_falls_back_and_warns(capsys) -> None:
@@ -232,9 +235,9 @@ def test_a_run_without_a_recorded_split_falls_back_and_warns(capsys) -> None:
     split = stratified_split(samples, 0)
     snapshot = {"label_hash": "sha256:stale"}
 
-    scored = evaluate.resolve_scored_samples(4, "test", snapshot, samples, samples, split)
+    selection = evaluate.resolve_scored_samples(4, "test", snapshot, samples, samples, split)
 
-    assert scored == split.test
+    assert selection.samples == split.test
     assert "WARNING" in capsys.readouterr().out
 
 
@@ -243,9 +246,9 @@ def test_train_always_recomputes_since_it_is_never_recorded() -> None:
     split = stratified_split(samples, 0)
     snapshot = {"held_out": {"val": ["m1"], "test": ["m2"]}}
 
-    scored = evaluate.resolve_scored_samples(4, "train", snapshot, samples, samples, split)
+    selection = evaluate.resolve_scored_samples(4, "train", snapshot, samples, samples, split)
 
-    assert scored == split.train
+    assert selection.samples == split.train
 
 
 def test_a_limited_run_is_scored_against_its_own_subset(monkeypatch) -> None:
@@ -312,6 +315,106 @@ def test_a_limited_runs_replay_survives_the_corpus_growing(monkeypatch) -> None:
     evaluate.evaluate_run(4)
 
     assert [uid for uid, _ in scored["samples"]] == held_out
+
+
+# --- How much of the dev set was actually scored ------------------------------
+# The blind spot behind backlog item 14. Scoring skips models that left the set,
+# which is right, but the report used to carry only the count it managed: an
+# evaluation over 4 of run 17's 45 held-out models rendered a full per-class table
+# and confusion matrix with nothing anywhere saying the number rested on 4 models.
+# These pin the denominator to the report, per path.
+
+
+def _capture_report(monkeypatch, report: dict) -> dict:
+    """Score returning `report`, and hand back what `finish_evaluation` stored."""
+    recorded: dict = {}
+    monkeypatch.setattr(evaluate, "score", lambda *args, **kwargs: report)
+    monkeypatch.setattr(
+        evaluate,
+        "finish_evaluation",
+        lambda evaluation_id, report, label_hash: recorded.update(report=report),
+    )
+    return recorded
+
+
+def test_records_what_fraction_of_the_recorded_split_it_scored(monkeypatch) -> None:
+    """The run-17 shape: the recorded uids are the denominator, so a replay that
+    loses most of them says so instead of reporting a bare count."""
+    samples = [("m1", "chair"), ("m2", "lamp")]
+    snapshot = {"held_out": {"test": ["m1", "gone", "m2"]}}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    recorded = _capture_report(monkeypatch, dict(_REPORT))
+
+    evaluate.evaluate_run(4)
+
+    assert recorded["report"]["coverage"] == {
+        "expected": 3,
+        "scored": 2,
+        "basis": "held_out",
+    }
+
+
+def test_a_recomputed_partition_is_measured_against_the_recorded_split_size(
+    monkeypatch,
+) -> None:
+    """Runs 2-4 recorded no uids but did record how big each split was. A weaker
+    denominator — it says nothing about *which* models — so it is named apart."""
+    samples = [(f"m{index}", "chair") for index in range(10)]
+    snapshot = {"label_hash": None, "splits": {"train": 8, "val": 1, "test": 4}}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    recorded = _capture_report(monkeypatch, dict(_REPORT))
+
+    evaluate.evaluate_run(4)
+
+    coverage = recorded["report"]["coverage"]
+    assert coverage["expected"] == 4
+    assert coverage["basis"] == "recorded_split_size"
+
+
+def test_no_coverage_claim_when_there_is_nothing_to_compare_against(monkeypatch) -> None:
+    """Absent, not zero and not 1.0. A run recording neither its held-out uids nor
+    its split sizes has no expected count, and inventing one would be a claim the
+    data cannot support — "no claim" has to stay distinct from "complete"."""
+    samples = [(f"m{index}", "chair") for index in range(10)]
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), {"label_hash": None})
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    recorded = _capture_report(monkeypatch, dict(_REPORT))
+
+    evaluate.evaluate_run(4)
+
+    assert "coverage" not in recorded["report"]
+
+
+def test_coverage_counts_the_models_the_metrics_were_computed_over(monkeypatch) -> None:
+    """`sample_count`, not the length of the resolved list. The resolver's list is
+    what scoring was asked for; a model can still drop out below that."""
+    samples = [("m1", "chair"), ("m2", "lamp")]
+    snapshot = {"held_out": {"test": ["m1", "m2"]}}
+    report = {**_REPORT, "sample_count": 1}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    recorded = _capture_report(monkeypatch, report)
+
+    evaluate.evaluate_run(4)
+
+    assert recorded["report"]["coverage"]["scored"] == 1
+
+
+def test_stamping_coverage_leaves_the_scored_report_alone(monkeypatch) -> None:
+    """A new dict, never a mutation: the report belongs to whoever produced it."""
+    report = dict(_REPORT)
+    selection = evaluate.ScoredSelection([("m1", "chair")], 45, "held_out")
+
+    stamped = evaluate.with_coverage(report, selection)
+
+    assert "coverage" not in report
+    assert stamped["coverage"]["expected"] == 45
 
 
 # --- The second dev set (FR-7) ----------------------------------------------
@@ -401,3 +504,21 @@ def test_lvis_fingerprints_the_pairs_it_actually_scored(monkeypatch) -> None:
 
     assert recorded["dev_set"] == "lvis"
     assert recorded["label_hash"] == evaluate.label_hash(dev_set)
+
+
+def test_lvis_coverage_is_measured_against_the_whole_selected_dev_set(monkeypatch) -> None:
+    """The denominator is the selection, not what survived ingestion: these 1,000
+    objects were chosen and balanced deliberately, so a model missing from the
+    scoring is one that never arrived rather than one that was never wanted."""
+    dev_set = [("a", "chair"), ("b", "lamp"), ("c", "car")]
+
+    _stub_lvis(monkeypatch, dev_set, rendered=["a", "c"], trainable=[])
+    recorded = _capture_report(monkeypatch, dict(_REPORT))
+
+    evaluate.evaluate_run(4, "lvis")
+
+    assert recorded["report"]["coverage"] == {
+        "expected": 3,
+        "scored": 2,
+        "basis": "selected_dev_set",
+    }

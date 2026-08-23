@@ -703,7 +703,8 @@ distinct command is what stops "evaluate the model" becoming another training-ti
     sets, or freezing an evaluation set that the correction pass never touches (see
     [the second dev set](#follow-up-a-real-second-dev-set)).
   - **A recorded model that has left the trainable set** (soft-deleted, unlabeled, unrendered) is
-    skipped rather than fatal, and the count is printed — a shrinking dev set changes what the
+    skipped rather than fatal, and the shortfall is both printed and recorded on the report
+    ([below](#how-much-of-the-dev-set-a-report-covers)) — a shrinking dev set changes what the
     numbers mean.
   - **Runs predating the field** (2 through 4), and `train`, which is never recorded, fall back to
     recomputation, warning when the labels have moved since. Either way the report records the
@@ -714,6 +715,7 @@ distinct command is what stops "evaluate the model" becoming another training-ti
     `subsample` is seeded and public for exactly this reason.
 - **An empty split is refused**, rather than reporting metrics over zero samples — which would
   render on the dashboard as a real-looking result.
+- **Every report records how much of its dev set it covered**, for the reason directly below.
 - **The score is printed before it is stored.** Scoring is minutes of compute over thousands of blob
   reads; storing is one INSERT. Found the hard way: a 15-minute run over the 1,173-model `test` split
   finished and then lost its report to `server closed the connection unexpectedly`, because the
@@ -721,6 +723,43 @@ distinct command is what stops "evaluate the model" becoming another training-ti
   (server.md#database), and this ordering means a failed write costs the row, not the measurement.
 - **`classify_model` returns the whole roster ranked**, not just the top class: a single label hides
   a near-tie between `figure` and `animal`, where the model is lucky rather than right.
+
+#### How much of the dev set a report covers
+
+Refusing an *empty* split was half a guard. Skipping models that have left the set is what keeps an
+evaluation possible at all, but the report it produces carries only the count it managed — and a
+number over 4 models renders exactly like a number over 45. That is not hypothetical: the first
+Vertex evaluation of run 17 scored **4 of its 45** recorded models, reported 0.0% accuracy, and drew
+a full per-class table and confusion matrix with nothing on the row, in the API, or on the page
+saying what it rested on. The *cause* was an unstable `subsample` and is fixed
+([above](#why-the-split-is-hashed-not-shuffled)); the blind spot that let the number reach the page
+is what this closes.
+
+Each resolver now returns the models to score **and how many it meant to score**, and
+`evaluate.py` stamps the report with `coverage` = `{expected, scored, basis}`. `basis` names where
+the denominator came from, because the three are not equally strong:
+
+| basis | denominator | strength |
+|---|---|---|
+| `held_out` | the uids the run recorded | exact — it names *which* models, so a shortfall is a real loss |
+| `recorded_split_size` | `data_snapshot.splits[dev_set]` | runs 2–4 only, which recorded a count and not a set; can legitimately be *exceeded* when the corpus has grown since |
+| `selected_dev_set` | the objects `build_dev_set.py` chose | `lvis`; anything missing never finished ingesting, rather than never having been wanted |
+
+Two decisions worth stating, because both are the difference between a useful number and a
+misleading one:
+
+- **The key is absent — never `1.0`, never `0` — when there is no expected count.** A run recording
+  neither its held-out uids nor its split sizes has nothing honest to compare against, and inventing
+  a denominator would be a claim the data cannot support. "Makes no claim" has to stay
+  distinguishable from "claims to be complete".
+- **`scored` is counted from `sample_count`, not from the length of the resolved list.** The
+  resolver's list is what scoring was *asked* for; a model can still drop out below that, inside the
+  dataset. The stored number is the one the metrics were actually computed over.
+
+Stamped in `evaluate.py` and deliberately **not** in `metrics.evaluation_report`, which also builds
+`training_run.metrics` for the trainer — there the split was computed seconds earlier from the data
+in hand, so "expected" means nothing and a coverage key would be a claim the trainer is in no
+position to make.
 
 ### The Review Queue (milestone 8)
 
