@@ -134,6 +134,25 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
     never predicted), not zero. A run still training or one that failed has no blob and keeps the
     placeholder; an **unrecognised** blob falls back to the generic key/value dump, so runs
     predating B4 — and whatever shape M7's two-dev-set report takes — still render.
+  - **How much of the dev set the report covers**, wherever that number is read. A report over 4 of
+    45 models drew this whole block — per-class table, confusion matrix and all — with nothing
+    saying what it rested on ([ml.md](../ml/ml.md#how-much-of-the-dev-set-a-report-covers)). Now the
+    split line reads `test (4 of 45 models)`, and below 90% coverage a `form-error` paragraph names
+    the arithmetic and says the numbers describe that subset rather than the split they name.
+    - **Only a shortfall gets a denominator.** Coverage can legitimately exceed 1.0 — a recomputed
+      partition is measured against the size the run recorded, and the corpus has grown since — and
+      "1,200 of 1,173 models" reads as a bug rather than as the ordinary thing it is.
+    - **Coverage never gates rendering.** `isEvaluationReport` is unchanged and `readCoverage`
+      narrows defensively, because every evaluation stored before this shipped has no such key and
+      must still draw exactly as it did. Absent is not zero.
+    - **A separate note when the report is simply small** (`sample_count` under 30). Perfect
+      coverage of a 45-model dev set spreads it across 12 classes, leaving most with one or two
+      examples, and that reads as a real result too. Muted rather than red: nothing went wrong,
+      the numbers are just thin.
+    - ⚠️ **The 90% threshold is a mirror of `MARK_SCORED_FRACTION` in `ml/evaluate.py`** and nothing
+      pins the copy — no frontend tests exist, and nothing here can import Python. It is one number
+      whose drift would be cosmetic. The alternative, freezing the verdict into the stored report at
+      scoring time, would mean a stored row could never be re-read under a changed threshold.
   - **Held-out evaluation** (M7) — a section per dev-set report from
     `GET /training-runs/{id}/evaluations`, each drawn with the same component as the block above.
     Deliberately a *separate* section rather than more rows in it: that one is the run's own report
