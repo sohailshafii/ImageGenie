@@ -714,8 +714,10 @@ distinct command is what stops "evaluate the model" becoming another training-ti
     set — measured on run 4, 141 of 1,173 recomputed `test` models were ones the run had trained on.
     `subsample` is seeded and public for exactly this reason.
 - **An empty split is refused**, rather than reporting metrics over zero samples — which would
-  render on the dashboard as a real-looking result.
-- **Every report records how much of its dev set it covered**, for the reason directly below.
+  render on the dashboard as a real-looking result. **So is one that has lost most of its dev set**:
+  zero was only the extreme case of that same failure, and the floor is now a proportion.
+- **Every report records how much of its dev set it covered.** Both of these are
+  [below](#how-much-of-the-dev-set-a-report-covers).
 - **The score is printed before it is stored.** Scoring is minutes of compute over thousands of blob
   reads; storing is one INSERT. Found the hard way: a 15-minute run over the 1,173-model `test` split
   finished and then lost its report to `server closed the connection unexpectedly`, because the
@@ -760,6 +762,37 @@ Stamped in `evaluate.py` and deliberately **not** in `metrics.evaluation_report`
 `training_run.metrics` for the trainer — there the split was computed seconds earlier from the data
 in hand, so "expected" means nothing and a coverage key would be a claim the trainer is in no
 position to make.
+
+##### The floor
+
+Recording the fraction describes the problem; the floor is what acts on it. Three tiers, because the
+failure modes differ:
+
+| coverage | behaviour |
+|---|---|
+| below `MIN_SCORED_FRACTION` (50%) | **refused.** `SystemExit` before scoring, so the evaluation lands as a `failed` row carrying the arithmetic — "only 4 of the 45 test models this run expects (8.9%) are still scorable" |
+| below `MARK_SCORED_FRACTION` (90%) | **scored and marked.** A partial number is worth having as long as it says what it is: a `WARNING` in the job log, and the shortfall on the report where the number is read |
+| at or above 90% | silent. 982 of 984 is two models that never finished ingesting, and warning about that would train everyone to ignore the warning |
+
+**The thresholds are judgement, not arithmetic**, and the evidence for them is this: the largest
+legitimate shortfall observed is `lvis`'s 984 → 982 (0.2%), while the run-17 incident was 8.9%. A 10%
+shortfall already moves the metric further than the effects these evaluations exist to measure — run
+14's entire label-correction delta was ~2 points — so marking starts there, and half a dev set is
+where a number stops describing the split it names.
+
+- **Refused on `len(samples)` before scoring; recorded from `sample_count` after.** The two answer
+  different questions — "is this worth scoring" and "what was this scored over" — and refusing on the
+  stored figure would mean paying for the GPU minutes first.
+- **`--min-coverage` lowers the floor for a human with a checkout**, who may know perfectly well that
+  a set is thin. It removes the refusal, never the record: the report is still marked. The
+  [Evaluate button](../web/web.md#training-dashboard) cannot pass it — `EVALUATE_COMMAND` builds
+  fixed args — and that asymmetry is deliberate. An unattended job has nobody to judge whether a
+  thin number is worth having.
+- **The refusal needed no new machinery.** `evaluate_run` already catches `SystemExit` as well as
+  `Exception` and routes it to `fail_evaluation`, so any refusal below the row claim surfaces on the
+  run detail page with its message intact.
+- **An unknown expected count cannot refuse**, and coverage above 1.0 is not a shortfall — a
+  recomputed partition is measured against the size the run recorded, and the corpus has only grown.
 
 ### The Review Queue (milestone 8)
 

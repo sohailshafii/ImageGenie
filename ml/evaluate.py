@@ -65,6 +65,25 @@ LVIS = "lvis"
 DEV_SETS = (*PARTITIONS, LVIS)
 
 
+# How much of a dev set an evaluation must actually cover.
+#
+# Below `MIN_SCORED_FRACTION` it is refused outright: a report over 4 of 45
+# models carries a full per-class table and confusion matrix and reads exactly
+# like a report over 45, so publishing it is worse than publishing nothing.
+# Between the two it is scored and marked, because a partial number is still
+# worth having as long as it says what it is.
+#
+# The numbers are judgement, not arithmetic, and this is the evidence behind
+# them: the largest legitimate shortfall observed is 984 -> 982 on `lvis` (0.2%,
+# two models that never finished ingesting), while the run-17 incident was 8.9%.
+# A 10% shortfall already moves the metric more than the effects these
+# evaluations exist to measure — run 14's whole label-correction delta was ~2
+# points — so marking starts there, and half a dev set is where a number stops
+# describing the split it claims to.
+MIN_SCORED_FRACTION = 0.5
+MARK_SCORED_FRACTION = 0.9
+
+
 # A failure message is for a human reading a page, not a log aggregator. Long
 # enough for a torch or GCS error to arrive intact, short enough that a runaway
 # message cannot turn one bad evaluation into a large row.
@@ -332,6 +351,53 @@ def with_coverage(report: dict, selection: ScoredSelection) -> dict:
     }
 
 
+def enforce_coverage_floor(
+    selection: ScoredSelection,
+    run_id: int,
+    dev_set: str,
+    min_fraction: float = MIN_SCORED_FRACTION,
+) -> None:
+    """Refuse, or warn about, an evaluation that lost too much of its dev set.
+
+    Called *before* scoring, and therefore counted on `len(selection.samples)`
+    rather than on the report's `sample_count`: refusing on the stored figure
+    would mean paying for the GPU minutes first, which is the wrong end of the
+    problem. The report still stamps the post-scoring number, so the two answer
+    different questions — this one asks "is this worth scoring", that one records
+    "what was this scored over".
+
+    Nothing to enforce when the expected count is unknown; a refusal has to rest
+    on a denominator the run actually recorded. Coverage above 1.0 is silent too:
+    a recomputed partition is measured against the size the run recorded, and the
+    corpus has only grown since, so exceeding it is ordinary rather than wrong.
+    """
+    if not selection.expected_count:
+        return
+    fraction = len(selection.samples) / selection.expected_count
+    shortfall = (
+        f"{len(selection.samples)} of the {selection.expected_count} "
+        f"{dev_set} models this run expects ({fraction:.1%})"
+    )
+
+    # Refusal is tested before marking, not after, so that `min_fraction` still
+    # decides when it has been raised above the marking threshold rather than
+    # lowered below it — an override that silently stops applying past a certain
+    # value is worse than no override.
+    if fraction < min_fraction:
+        raise SystemExit(
+            f"refusing to score run {run_id}: only {shortfall} are still scorable, "
+            f"below the {min_fraction:.0%} floor. A report this thin renders as a "
+            "real result — check whether the missing models were deleted, "
+            "unlabeled or unrendered, or pass --min-coverage to score anyway."
+        )
+    if fraction < MARK_SCORED_FRACTION:
+        print(
+            f"WARNING: scoring only {shortfall}. The report will record the "
+            "shortfall, but the numbers describe that subset and not the split "
+            "they name."
+        )
+
+
 def score_and_record(
     model: MultiViewCNN,
     evaluation_id: int,
@@ -378,7 +444,10 @@ def score_and_record(
 
 
 def evaluate_run(
-    run_id: int, dev_set: str = "test", num_workers: int = 0
+    run_id: int,
+    dev_set: str = "test",
+    num_workers: int = 0,
+    min_coverage: float = MIN_SCORED_FRACTION,
 ) -> dict:
     """Load a run, score it on `dev_set`, store the report, and return it.
 
@@ -390,7 +459,7 @@ def evaluate_run(
     """
     evaluation_id = start_evaluation(run_id, dev_set)
     try:
-        return _score_run(evaluation_id, run_id, dev_set, num_workers)
+        return _score_run(evaluation_id, run_id, dev_set, num_workers, min_coverage)
     except (Exception, SystemExit) as error:
         # SystemExit as well as Exception: this module refuses several conditions
         # that way (an empty split, an unrendered dev set), and from the caller's
@@ -402,7 +471,11 @@ def evaluate_run(
 
 
 def _score_run(
-    evaluation_id: int, run_id: int, dev_set: str, num_workers: int
+    evaluation_id: int,
+    run_id: int,
+    dev_set: str,
+    num_workers: int,
+    min_coverage: float = MIN_SCORED_FRACTION,
 ) -> dict:
     """The work itself. Split out so `evaluate_run`'s try block reads as one line."""
     storage = build_storage(get_settings())
@@ -413,6 +486,7 @@ def _score_run(
         # the corpus the run partitioned, which is exactly what makes them a
         # second dev set rather than another view of the first.
         selection = resolve_lvis_dev_set()
+        enforce_coverage_floor(selection, run_id, dev_set, min_coverage)
         return score_and_record(
             model, evaluation_id, run_id, dev_set, selection, storage, num_workers,
             config.backbone,
@@ -441,6 +515,7 @@ def _score_run(
     )
     if not selection.samples:
         raise SystemExit(f"the {dev_set} split is empty — nothing to score")
+    enforce_coverage_floor(selection, run_id, dev_set, min_coverage)
 
     return score_and_record(
         model, evaluation_id, run_id, dev_set, selection, storage, num_workers,
@@ -459,12 +534,19 @@ def build_parser() -> argparse.ArgumentParser:
              "(default: the held-out test split)",
     )
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument(
+        "--min-coverage",
+        type=float,
+        default=MIN_SCORED_FRACTION,
+        help="refuse below this fraction of the dev set the run expects; 0 scores "
+             f"anything (default: {MIN_SCORED_FRACTION:.0%})",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    evaluate_run(args.run, args.dev_set, args.num_workers)
+    evaluate_run(args.run, args.dev_set, args.num_workers, args.min_coverage)
 
 
 if __name__ == "__main__":
