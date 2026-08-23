@@ -506,11 +506,15 @@ make devset-push                 # copy the CSV to the bucket, for cloud scoring
   2026-08-16 when an `lvis` evaluation scored 982 instead of 984. Structural untrainability was only
   ever a property of *nobody having pushed the button*; membership is now recorded server-side and
   `PUT /models/{uid}/label` refuses it ([server.md](../server/server.md#dev-set-protection)).
-  - **What the one disagreement showed.** `03febdfb…` is `table` to LVIS and was hand-labeled
-    `figure`; `0002e503…` was `lamp` to both. A single pair settles nothing, but it is worth noting
-    that the disagreement fell on the `figure` boundary — the same one weak labeling scores worst on
-    (0.62 precision, [above](#the-figureanimal-boundary)) and the same one the milestone-8 review
-    kept returning to. The two labels were removed once recorded here, restoring the set to 984.
+  - **What the one disagreement showed: not much, and it is worth being precise about why.**
+    `03febdfb…` is `table` to LVIS and was hand-labeled `figure`; `0002e503…` was `lamp` to both.
+    Two objects settle nothing either way. Nor is the disagreement an instance of
+    [the figure/animal boundary](#the-figureanimal-boundary) — that is a *specific* confusion between
+    two classes, and this is `figure` vs `table`, which shares only the word. Looking at the mesh
+    afterwards, it reads as a moka pot or a grinder, so **plausibly neither label is right** and the
+    honest reading is that both annotators reached for the nearest roster class. That is a fact about
+    a 12-class roster meeting an open world, not about either annotator. The two labels were removed
+    once recorded here, restoring the set to 984.
 - **Ingesting is a data run, not a code problem**: a couple of dollars and mostly waiting.
 
 **Where the selection is read from.** The local CSV first, the processed bucket second
