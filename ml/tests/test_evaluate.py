@@ -362,7 +362,17 @@ def test_a_recomputed_partition_is_measured_against_the_recorded_split_size(
     """Runs 2-4 recorded no uids but did record how big each split was. A weaker
     denominator — it says nothing about *which* models — so it is named apart."""
     samples = [(f"m{index}", "chair") for index in range(10)]
-    snapshot = {"label_hash": None, "splits": {"train": 8, "val": 1, "test": 4}}
+    # Sized from the partition this recomputes, so the assertion is about where
+    # the denominator came from rather than about a hashed bucket's exact size.
+    recomputed = stratified_split(samples, 0)
+    snapshot = {
+        "label_hash": None,
+        "splits": {
+            "train": len(recomputed.train),
+            "val": len(recomputed.val),
+            "test": len(recomputed.test),
+        },
+    }
 
     _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
     monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
@@ -371,7 +381,7 @@ def test_a_recomputed_partition_is_measured_against_the_recorded_split_size(
     evaluate.evaluate_run(4)
 
     coverage = recorded["report"]["coverage"]
-    assert coverage["expected"] == 4
+    assert coverage["expected"] == len(recomputed.test)
     assert coverage["basis"] == "recorded_split_size"
 
 
@@ -415,6 +425,143 @@ def test_stamping_coverage_leaves_the_scored_report_alone(monkeypatch) -> None:
 
     assert "coverage" not in report
     assert stamped["coverage"]["expected"] == 45
+
+
+# --- Refusing an evaluation that lost most of its dev set ---------------------
+# Coverage on its own only describes; these decide. Refuse below 50%, mark below
+# 90%, and stay quiet above — the thresholds and the evidence behind them are in
+# `evaluate.MIN_SCORED_FRACTION`.
+
+
+def _floor_run(monkeypatch, samples, snapshot) -> dict:
+    """A run whose scoring is stubbed, so only the floor decides the outcome."""
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    return _capture_report(monkeypatch, dict(_REPORT))
+
+
+def test_an_evaluation_that_lost_most_of_its_dev_set_is_refused(monkeypatch) -> None:
+    """The run-17 shape, at the scale it happened: 4 of 45 recorded models."""
+    samples = [(f"m{index}", "chair") for index in range(4)]
+    snapshot = {"held_out": {"test": [f"m{index}" for index in range(45)]}}
+    marked: dict = {}
+
+    _floor_run(monkeypatch, samples, snapshot)
+    monkeypatch.setattr(
+        evaluate,
+        "fail_evaluation",
+        lambda evaluation_id, reason: marked.update(reason=reason),
+    )
+
+    with pytest.raises(SystemExit, match="refusing to score"):
+        evaluate.evaluate_run(4)
+
+    # The refusal reaches the row, with the arithmetic intact — a job that dies
+    # unattended is only legible if the page can say what stopped it.
+    assert "4 of the 45 test models" in marked["reason"]
+    assert "8.9%" in marked["reason"]
+
+
+def test_refusing_costs_nothing_to_score(monkeypatch) -> None:
+    """Refused before `score()`, not after. Counting on the stored `sample_count`
+    would mean paying for the GPU minutes first."""
+    samples = [("m0", "chair")]
+    snapshot = {"held_out": {"test": [f"m{index}" for index in range(45)]}}
+    scored: dict = {}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), snapshot)
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    monkeypatch.setattr(
+        evaluate, "score", lambda *args, **kwargs: scored.update(ran=True) or _REPORT
+    )
+
+    with pytest.raises(SystemExit):
+        evaluate.evaluate_run(4)
+
+    assert scored == {}
+
+
+def test_a_small_shortfall_is_scored_and_marked(monkeypatch, capsys) -> None:
+    """Between the floor and the marking threshold a partial number is still
+    worth having — as long as it says what it is."""
+    samples = [(f"m{index}", "chair") for index in range(8)]
+    snapshot = {"held_out": {"test": [f"m{index}" for index in range(10)]}}
+
+    recorded = _floor_run(monkeypatch, samples, snapshot)
+    evaluate.evaluate_run(4)
+
+    assert "WARNING" in capsys.readouterr().out
+    assert recorded["report"]["coverage"]["expected"] == 10
+
+
+def test_a_dev_set_that_barely_moved_is_scored_quietly(monkeypatch, capsys) -> None:
+    """The `lvis` case: 982 of 984 is two models that never finished ingesting,
+    and warning about it would train everyone to ignore the warning."""
+    dev_set = [(f"m{index}", "chair") for index in range(100)]
+
+    _stub_lvis(monkeypatch, dev_set, rendered=[f"m{index}" for index in range(98)],
+               trainable=[])
+    evaluate.evaluate_run(4, "lvis")
+
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_min_coverage_lowers_the_floor_but_not_the_mark(monkeypatch, capsys) -> None:
+    """The escape hatch: a human with a checkout can score a set they know is
+    thin. It removes the refusal, never the record of what was scored."""
+    samples = [(f"m{index}", "chair") for index in range(4)]
+    snapshot = {"held_out": {"test": [f"m{index}" for index in range(45)]}}
+
+    recorded = _floor_run(monkeypatch, samples, snapshot)
+    evaluate.evaluate_run(4, min_coverage=0)
+
+    assert "WARNING" in capsys.readouterr().out
+    assert recorded["report"]["coverage"] == {
+        "expected": 45,
+        "scored": 2,
+        "basis": "held_out",
+    }
+
+
+def test_min_coverage_still_applies_when_raised_above_the_mark(monkeypatch) -> None:
+    """An override that silently stopped applying past 90% would be worse than no
+    override — so the refusal is tested before the marking threshold."""
+    samples = [(f"m{index}", "chair") for index in range(19)]
+    snapshot = {"held_out": {"test": [f"m{index}" for index in range(20)]}}
+
+    _floor_run(monkeypatch, samples, snapshot)
+
+    with pytest.raises(SystemExit, match="refusing to score"):
+        evaluate.evaluate_run(4, min_coverage=0.99)
+
+
+def test_an_unknown_expected_count_cannot_refuse(monkeypatch) -> None:
+    """A refusal has to rest on a denominator the run actually recorded. Runs
+    recording neither their held-out uids nor their split sizes still evaluate."""
+    samples = [(f"m{index}", "chair") for index in range(10)]
+
+    recorded = _floor_run(monkeypatch, samples, {"label_hash": None})
+    evaluate.evaluate_run(4)
+
+    assert "coverage" not in recorded["report"]
+
+
+def test_coverage_above_one_is_not_a_shortfall(monkeypatch, capsys) -> None:
+    """Runs 2-4 are measured against the size their split recorded, and the corpus
+    has only grown since — exceeding it is ordinary, not wrong."""
+    samples = [(f"m{index}", "chair") for index in range(60)]
+    snapshot = {"label_hash": None, "splits": {"train": 8, "val": 1, "test": 1}}
+
+    _floor_run(monkeypatch, samples, snapshot)
+    evaluate.evaluate_run(4)
+
+    assert "WARNING: scoring only" not in capsys.readouterr().out
+
+
+def test_the_parser_carries_the_floor_and_can_be_told_to_drop_it() -> None:
+    parser = evaluate.build_parser()
+    assert parser.parse_args(["--run", "4"]).min_coverage == evaluate.MIN_SCORED_FRACTION
+    assert parser.parse_args(["--run", "4", "--min-coverage", "0"]).min_coverage == 0
 
 
 # --- The second dev set (FR-7) ----------------------------------------------
