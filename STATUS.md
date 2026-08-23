@@ -253,13 +253,28 @@ button against prod on 2026-08-16 rather than by review, which is the same lesso
     views. The two labels were deleted after recording the gold-vs-manual disagreement they showed
     in [ml.md](ml/ml.md#the-second-dev-set); the dev set is back to 984 and the trainable set to
     11,783.
-14. **An evaluation over a handful of models still renders as a result.** `ml/evaluate.py` refuses an
-    *empty* split precisely because zero samples would "render on the dashboard as a real-looking
-    result" — but four samples did exactly that: 0.0% accuracy, a full per-class table, a confusion
-    matrix, and nothing anywhere saying the number rested on 4 of 45 models. The floor needs to be a
-    proportion, not zero: refuse, or mark the report loudly, when `sample_count` falls far below the
-    partition the run recorded. The underlying cause is fixed; the blind spot that let it reach the
-    page is not.
+14. ~~**An evaluation over a handful of models still renders as a result.**~~ — **DONE 2026-08-23.**
+    Zero samples was only the extreme case of the same failure, so the floor is now a proportion.
+    Each resolver reports how many models it *meant* to score alongside the ones it can, the report
+    carries `coverage` = `{expected, scored, basis}`, and the split line on the page reads
+    `test (4 of 45 models)` with the arithmetic spelled out below 90%. Under 50% the evaluation is
+    refused outright, before scoring — `--min-coverage` lowers that for a human with a checkout, and
+    deliberately not for the Evaluate button, which has nobody to judge whether a thin number is
+    worth having. Design and the evidence behind the thresholds:
+    [ml.md](ml/ml.md#how-much-of-the-dev-set-a-report-covers).
+    - **`basis` exists because the three denominators are not equally strong**, and blending them
+      would have been the quiet mistake here: the uids a run recorded name *which* models, a
+      recorded split size is only a count and can legitimately be exceeded once the corpus grows,
+      and `lvis` is measured against the objects that were selected for it.
+    - **The key is absent, never `1.0`, when a run recorded no expected count.** A denominator
+      invented to fill the gap would be a claim the data cannot support, and "makes no claim" has to
+      stay distinguishable from "claims to be complete".
+    - **A second, quieter note covers what coverage cannot see:** 45 of 45 is complete and still
+      spreads 45 models across 12 classes. A report under 30 models says so.
+    - **`evaluation 7` is left as it stands.** Its 45 samples are correct — it was scored after the
+      `subsample` fix — so there is nothing to re-score away; it simply predates `coverage`, and an
+      absent key already means "makes no claim". The first evaluation run after this deploys is what
+      proves the key survives JSONB → API → page on real infrastructure.
 15. **Evaluations 1–3 were produced under schemes that no longer exist.** Runs 2–4 recorded no
     `held_out`, so scoring them recomputes a partition — and that recomputation has now changed twice
     (hash-bucketed splits in PR #49, hash-ordered subsampling here). The warning says so at run time,
