@@ -275,27 +275,44 @@ button against prod on 2026-08-16 rather than by review, which is the same lesso
       `subsample` fix — so there is nothing to re-score away; it simply predates `coverage`, and an
       absent key already means "makes no claim". The first evaluation run after this deploys is what
       proves the key survives JSONB → API → page on real infrastructure.
-15. **Evaluations 1–3 were produced under schemes that no longer exist.** Runs 2–4 recorded no
-    `held_out`, so scoring them recomputes a partition — and that recomputation has now changed twice
-    (hash-bucketed splits in PR #49, hash-ordered subsampling here). The warning says so at run time,
-    but the stored rows do not. Either re-score them or annotate the rows; do not quote them beside
-    numbers from runs 14+.
+15. ~~**Evaluations 1–3 were produced under schemes that no longer exist.**~~ — **DONE 2026-08-23.**
+    The inventory in this item was wrong, and checking it was most of the work: it is **one row, not
+    three**. Evaluations 2 and 3 belong to run 14, which *does* record `held_out` and is therefore
+    replayed; runs 2 and 3 were never evaluated at all. Only **evaluation 1** (run 4, `test`) rests
+    on a recomputed partition.
+    - **Re-scoring was never available**, so the item's first branch was empty. A recompute today
+      runs under a scheme run 4 never ran under, and because run 4 was a `--limit` run the fresh
+      partition draws its `test` from models it trained on. Scoring again replaces one unusable
+      number with another.
+    - **The row is annotated where it is read, not where it is stored.** Whether a partition was
+      replayed is a fact about the *run* — `data_snapshot.held_out` — which the detail page already
+      fetches, so the warning is derived at render time and covers every past and future report
+      alike. A one-off `UPDATE` would have marked this row and nothing else.
+    - **It also corrected an inverted warning.** The page keyed on `label_hash` drift and read it as
+      "these are not the models the run held out" — false for every replayed report and for every
+      `lvis` one (whose hash can never match by construction), and silent on evaluation 1, the only
+      report where it was true. It was firing on five of the eight stored rows, all wrongly. Design:
+      [web.md](web/web.md#training-dashboard), [ml.md](ml/ml.md#evaluation).
 
 ### Operational
 
 4. ~~**Deploy `pool_pre_ping`**~~ (`server/app/db.py`) — **DONE 2026-07-31**, revision
    `imagegenie-api-00011-m75`. Shipped alongside the collapsed `held_out` list on the run detail
    page; the database was already at Alembic head, so the deploy carried no migration.
-5. **Prove the evaluate button end-to-end on Vertex.** Everything about it is verified locally or
-   against a stubbed submit; **no evaluation has actually run as a cloud job**. Cheapest proof is
-   scoring **run 17 on `test`** — a 500-object experiment, so ~50 held-out models and a couple of
-   minutes once a GPU appears — followed by **run 21 on `lvis`**, which is the only path that
-   exercises reading the pushed selection out of the bucket. Watch for: the row appearing as
-   `running` rather than nothing, a `failed` row carrying a readable reason if it dies, and the
-   report landing on the row that was claimed rather than a second one. Each is a spot T4: ~12
-   minutes of provisioning, a few cents. This matters more than its size suggests — an image/code
-   mismatch in a job nobody is watching fails *silently*, which is the lesson chunk G already taught
-   once.
+5. ~~**Prove the evaluate button end-to-end on Vertex.**~~ — **DONE 2026-08-16.** Both proofs ran:
+   `evaluation 7` (run 17 / `test` / 45 models) and `evaluation 8` (run 21 / `lvis` / 982 models,
+   the path that reads the pushed selection out of the bucket). Both were observed as `running`
+   first, and each report landed on the row already claimed rather than a second one.
+   - **Running it found two bugs review had not.** `evaluate.py` could not import in the training
+     image at all — `build_dev_set` reaches `objaverse`, which `requirements-train.txt` excludes —
+     and it died *before* claiming a row, which is precisely the failure the up-front row exists to
+     make visible. With that fixed, the job scored 4 of run 17's 45 held-out models, reported 0.0%,
+     and drew a full per-class table over it: `subsample` selected by index, so two models gaining
+     labels shifted the subset out from under the recorded uids. Both fixed in `e80a817`, and the
+     second is what backlog item 14 above grew out of.
+   - ⚠️ **One leg is still unobserved on Vertex: a `failed` row carrying a readable reason.** The
+     import bug died before claiming a row, so nothing has yet exercised a cloud job failing
+     *after* the claim. It is covered by tests only.
 
 6. **Batch the seed the way the replay is batched.** Publishing 1,000 uids at once overruns the
    download worker (maxScale 10 × one model per instance): Pub/Sub push gets 429s from Cloud Run,

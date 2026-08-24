@@ -706,9 +706,19 @@ distinct command is what stops "evaluate the model" becoming another training-ti
     skipped rather than fatal, and the shortfall is both printed and recorded on the report
     ([below](#how-much-of-the-dev-set-a-report-covers)) — a shrinking dev set changes what the
     numbers mean.
-  - **Runs predating the field** (2 through 4), and `train`, which is never recorded, fall back to
-    recomputation, warning when the labels have moved since. Either way the report records the
-    `label_hash` it was scored under.
+  - **Runs predating the field** (1 through 4), and `train`, which is never recorded, fall back to
+    recomputation, warning as they do. Either way the report records the `label_hash` it was scored
+    under.
+  - ⚠️ **A fallback number cannot be repaired by scoring it again**, which is why the run detail
+    page marks such a report rather than offering to re-run it. The recomputation happens under
+    whichever split scheme exists now, and the scheme has been replaced twice — hash-bucketed splits
+    and then hash-ordered subsampling — so today's recompute is not the partition the run held out
+    either. For a `--limit` run it is worse than merely different: a fresh partition draws its
+    `test` from models the run trained on, which inflates the number rather than perturbing it.
+    **`evaluation 1` is the only stored row in this position** (run 4, `test`, 193 models). It was
+    right when it was produced — its `label_hash` matches run 4's snapshot, so recomputing under the
+    same labels, seed and code reproduced exactly what the run held out — and it is unreproducible
+    now, which is a different claim and the one the row has to carry.
   - **A `--limit` run's subsample is reproduced before splitting.** Such a run held out a split of
     its *subset*, so splitting the full trainable set puts models it trained on into its own test
     set — measured on run 4, 141 of 1,173 recomputed `test` models were ones the run had trained on.
