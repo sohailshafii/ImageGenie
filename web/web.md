@@ -159,10 +159,26 @@ read-only training API ([server.md](../server/server.md#endpoints-and-access-con
     on `val`, a split it consulted every epoch, and these are scored afterwards on data it never
     saw. Same shape, different standing — merging them would invite reading the optimistic number as
     the honest one. For a viewer the section is hidden until a run has been scored, so an unevaluated
-    run gains nothing to scroll past; for an admin it always shows, because it holds the button. When
-    a report's `label_hash` differs from the run's, the block carries a warning: the split is
-    recomputed rather than stored, so the labels moving in between means the scored split is not the
-    one held out.
+    run gains nothing to scroll past; for an admin it always shows, because it holds the button.
+    - **What the block warns about is whether the run recorded its split, not whether the labels
+      moved.** The two are different facts, and the page used to read the first off the second: a
+      `label_hash` differing from the run's was drawn as "the scored split is not the one held out".
+      That inference died the moment runs began recording `held_out`
+      ([ml.md](ml/ml.md#evaluation)) — a replayed report scores the run's own uids however far the
+      labels have travelled since. It also fired on every `lvis` report, whose hash covers the
+      scored pairs and so can never match the run's, while staying silent on the one report that
+      really was recomputed. So the red warning now keys on `data_snapshot.held_out` being absent
+      for that partition, which is the only thing that establishes it, and drifting labels are a
+      muted note saying what is actually true: same models, some carrying a label the run never
+      trained against.
+    - **A recomputed partition is called out as historical rather than fixable.** The split scheme
+      has been replaced twice, so re-scoring such a run does not recover what it held out — it draws
+      a different set again ([ml.md](ml/ml.md#dataset-splits)). The warning says so, because "treat
+      as indicative" invites exactly the re-score that cannot help.
+    - ⚠️ **`partition` on `EVALUATION_DEV_SETS` mirrors `ml/evaluate.py`'s split between `PARTITIONS`
+      and `LVIS`**, and is unpinned in the same way as the 90% threshold above. It decides only
+      whether these warnings may be shown at all; a stale entry would mute or misapply one, not
+      launch anything wrong.
   - an **Evaluate** control in that section, admin-only — a dev-set picker and a button that asks
     the API to score this run (`POST /training-runs/{id}/evaluations`). It replaces having to run
     `make evaluate RUN=n` from a checkout.

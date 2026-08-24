@@ -233,9 +233,11 @@ export interface Evaluation {
   error: string | null; // why a failed evaluation stopped
   /**
    * The labeled set as it stood when this was scored — *not* when the run
-   * trained. The split is recomputed rather than stored, so a label added since
-   * the run shifts it; a hash differing from the run's own means this number
-   * describes a different held-out set than the one intended.
+   * trained. A hash differing from the run's own means the labels moved in
+   * between; on a replayed partition that is the M8 loop working, not a fault,
+   * because the uids are the run's own however much their labels changed. What
+   * it never establishes is *which* models were scored — only
+   * `data_snapshot.held_out` says that.
    */
   labelHash: string | null;
   createdAt: string;
@@ -249,13 +251,33 @@ export interface Evaluation {
  * API validates `dev_set` and answers 422 on anything it does not know, so a
  * stale entry here is a visible error, never a job launched against a dev set
  * that isn't there.
+ *
+ * `partition` mirrors ml/evaluate.py's split between `PARTITIONS` and `LVIS`,
+ * and it is here because it changes what a page may say about a report: a
+ * partition is carved out of our own corpus, so a run either recorded which
+ * models it held out or the partition gets recomputed at scoring time, while
+ * `lvis` is a separate corpus that no run ever partitioned and therefore has
+ * nothing to record.
  */
 export const EVALUATION_DEV_SETS = [
-  { name: 'test', hint: 'the sealed split — the one number nothing steered against' },
-  { name: 'val', hint: 'consulted every epoch while training, so it reads optimistically' },
-  { name: 'train', hint: 'what the run learned; useful only as a sanity check' },
+  {
+    name: 'test',
+    partition: true,
+    hint: 'the sealed split — the one number nothing steered against',
+  },
+  {
+    name: 'val',
+    partition: true,
+    hint: 'consulted every epoch while training, so it reads optimistically',
+  },
+  {
+    name: 'train',
+    partition: true,
+    hint: 'what the run learned; useful only as a sanity check',
+  },
   {
     name: 'lvis',
+    partition: false,
     hint: 'the second dev set: objects labeled outside this project (needs make devset-push)',
   },
 ] as const;

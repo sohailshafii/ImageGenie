@@ -49,6 +49,33 @@ function summarizeValue(value: unknown): string {
   return `${String(value).length.toLocaleString()} characters`;
 }
 
+/**
+ * Whether the run wrote down which models it held out for `devSet`.
+ *
+ * The one fact that decides whether an evaluation's partition is the run's own.
+ * A run that recorded its uids is replayed from them, so the models scored are
+ * exactly the ones it held out however far the labels have moved since. A run
+ * that recorded nothing has its partition *recomputed* at scoring time, under
+ * whichever split scheme exists now — and the scheme has been replaced twice
+ * (ml.md#dataset-splits), so a recomputed partition is not the one the run ran
+ * under and cannot be made into it by scoring again.
+ *
+ * Asked of the snapshot rather than of the report because only the run knows:
+ * the report records what was scored, never whether those models were replayed
+ * or drawn afresh.
+ */
+function recordedHeldOut(dataSnapshot: Record<string, unknown>, devSet: string): boolean {
+  const heldOut = dataSnapshot.held_out;
+  if (heldOut === null || typeof heldOut !== 'object') return false;
+  const recorded = (heldOut as Record<string, unknown>)[devSet];
+  return Array.isArray(recorded) && recorded.length > 0;
+}
+
+/** Whether `devSet` is a slice of our own corpus, and so something a run partitions. */
+function isPartition(devSet: string): boolean {
+  return EVALUATION_DEV_SETS.some((option) => option.name === devSet && option.partition);
+}
+
 function KeyValues({ record }: { record: Record<string, unknown> }) {
   return (
     <dl className="kv-list">
@@ -169,8 +196,8 @@ export function TrainingRunDetailPage() {
   }
 
   // The set the run *trained* on, to compare against what each evaluation was
-  // *scored* on. The split is recomputed rather than stored, so these differing
-  // is what turns a dev-set number into an indicative one.
+  // *scored* on. It says the labels moved in between — not that a different set
+  // of models was scored, which only `held_out` can answer.
   const runLabelHash =
     typeof run?.dataSnapshot?.label_hash === 'string' ? run.dataSnapshot.label_hash : null;
 
@@ -316,12 +343,33 @@ export function TrainingRunDetailPage() {
                       {new Date(evaluation.createdAt).toLocaleString()}
                     </span>
                   </h3>
-                  {runLabelHash !== null &&
+                  {/* Two different facts, and reading one off the other is what this
+                      page used to do: a drifting label hash was taken to mean the
+                      models had changed, which stopped being true the moment a run
+                      began recording the uids it held out. It fired on every
+                      replayed report and on every `lvis` one (whose hash covers the
+                      scored pairs and so can never match), while staying silent on
+                      the one case where the models really are not the run's. */}
+                  {isPartition(evaluation.devSet) &&
+                    !recordedHeldOut(run.dataSnapshot, evaluation.devSet) && (
+                      <p className="form-error">
+                        Run {run.id} recorded no {evaluation.devSet} split, so this partition
+                        was recomputed at scoring time rather than replayed — under a scheme
+                        the run never ran under. These are not the models it held out, and
+                        re-scoring cannot recover them: it would recompute a different set
+                        again. Read the number as a record of what this run once scored, not
+                        as one comparable with later runs.
+                      </p>
+                    )}
+                  {isPartition(evaluation.devSet) &&
+                    recordedHeldOut(run.dataSnapshot, evaluation.devSet) &&
+                    runLabelHash !== null &&
                     evaluation.labelHash !== null &&
                     evaluation.labelHash !== runLabelHash && (
-                      <p className="form-error">
-                        The labeled set changed between training and scoring, so this split is
-                        not the one the run held out. Treat the numbers as indicative.
+                      <p className="form-note">
+                        The labeled set changed between training and scoring. These are still
+                        the models the run held out — they are replayed from its snapshot —
+                        but some carry a different label than it trained against.
                       </p>
                     )}
                   {evaluation.status === 'running' && (
