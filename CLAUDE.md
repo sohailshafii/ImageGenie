@@ -195,6 +195,17 @@ Kept open deliberately. Each lists the criteria to decide on when the time comes
 - **Split before asking.** When a chunk of work does turn out to span concerns, propose the
   specific commit breakdown (which files, which order) rather than offering it as one commit.
 
+## Communication
+
+- **Two paragraphs, maximum.** Explanations, summaries, and write-ups in chat cap at two
+  paragraphs. Bullets count toward that budget — a screen of bullets is not a way around it.
+  Lead with the answer; the supporting detail is what gets cut, not the conclusion.
+- **Stop and ask before continuing.** When there is more to say than fits, say the most important
+  part and *ask whether to go on* rather than delivering the rest unprompted. The same applies to
+  multi-part summaries: offer the next part, don't just print it.
+- This does not apply to commit messages, code comments, or the domain docs — those are written
+  artifacts with their own standards, and brevity there costs the reasoning that makes them useful.
+
 ## Coding Conventions (all languages)
 
 Cross-cutting rules; language-specific standards live in the domain docs.
