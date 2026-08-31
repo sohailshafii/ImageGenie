@@ -45,3 +45,4 @@ source_images/
 *.mov
 *.mp4
 .claude/pr-review.log
+.claude/pr-review.state

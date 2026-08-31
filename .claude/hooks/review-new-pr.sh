@@ -66,45 +66,61 @@ pull_request_repo="$(printf '%s' "$pull_request_url" | sed -nE 's#^https://githu
 current_repo="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)"
 [ -n "$pull_request_repo" ] && [ "$pull_request_repo" = "$current_repo" ] || pass
 
-# The one gate that matters: review only a PR that was opened seconds ago, and
-# is actually open. Without it, any command echoing a PR-shaped URL starts a
-# real review — including this hook's own tests, and `gh pr create`'s
-# "already exists: <url>" failure on stderr, which names a real older PR.
-pr_state_and_age="$(gh pr view "$pull_request_number" --json state,createdAt \
-  --jq '"\(.state) \(.createdAt)"' 2>/dev/null)" || pass
-pull_request_state="${pr_state_and_age%% *}"
-pull_request_created="${pr_state_and_age##* }"
+# Review only a PR that is open and was created seconds ago. Without this, any
+# command echoing a PR-shaped URL starts a real review — including this hook's
+# own tests, and `gh pr create`'s "already exists: <url>" failure, which names a
+# real older PR.
+pr_facts="$(gh pr view "$pull_request_number" \
+  --json state,createdAt,headRefOid --jq '"\(.state) \(.createdAt) \(.headRefOid)"' 2>/dev/null)" || pass
+read -r pull_request_state pull_request_created head_sha <<<"$pr_facts"
 [ "$pull_request_state" = "OPEN" ] || pass
+[ -n "$head_sha" ] || pass
 
-created_epoch="$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$pull_request_created" '+%s' 2>/dev/null)"
-[ -n "$created_epoch" ] || pass
+# `date -j -u -f` is BSD-only: under GNU date (Linux, or macOS with coreutils
+# gnubin ahead on PATH) it errors, and the whole feature would die silently
+# looking exactly like "PR too old". jq parses ISO-8601 the same way everywhere.
+created_epoch="$(jq -rn --arg stamp "$pull_request_created" '$stamp|fromdateiso8601' 2>/dev/null)"
+[ -n "$created_epoch" ] && [ "$created_epoch" != "null" ] || pass
 # Widened only by the tests, so the accept path can be proven and not just the
 # rejections — a script that refused everything would look identical otherwise.
 [ "$(( $(date -u '+%s') - created_epoch ))" -le "${IMAGEGENIE_PR_REVIEW_MAX_AGE:-300}" ] || pass
 
 review_log="$project_dir/.claude/pr-review.log"
+review_state="$project_dir/.claude/pr-review.state"
 
-# Read the repo, read the PR, post comments. `gh api` is here because inline
-# review comments go through the REST API — `gh pr comment` only posts one
-# top-level blob.
+# Age is not the same as "not yet reviewed". A second `gh pr create` inside the
+# window fails with "already exists" but still reaches here via the branch
+# fallback, and would post the whole comment set twice. Keyed by head sha so a
+# genuinely new commit is a different review.
+review_key="$pull_request_repo#$pull_request_number@$head_sha"
+if [ -f "$review_state" ] && grep -qxF "$review_key" "$review_state" 2>/dev/null; then
+  pass
+fi
+
+# Read the repo, read the PR, post comments. Inline review comments go through
+# the REST API — `gh pr comment` only posts one top-level blob — so `gh api` has
+# to be reachable. It is allowed ONLY under this repo's pulls/ path: denying
+# write *methods* was not enough, because POST cannot be denied (it is how a
+# comment is posted) and POST also reaches `repos/O/R/merges` and
+# `pulls/N/reviews -f event=APPROVE`. Scoping the allow removes both.
 review_tools="Read,Grep,Glob"
 review_tools="$review_tools,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr list:*),Bash(gh pr comment:*)"
-review_tools="$review_tools,Bash(gh api:*),Bash(gh repo view:*)"
+review_tools="$review_tools,Bash(gh api repos/$current_repo/pulls/:*),Bash(gh repo view:*)"
 review_tools="$review_tools,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git rev-parse:*)"
 
 # --allowedTools is ADDITIVE to settings.json, and ~/.claude/settings.json grants
 # Write/Edit/NotebookEdit unconditionally — so an allowlist alone does NOT stop
 # this unattended session editing the tree. Only a deny rule does.
 #
-# The gh api denials block merging and ref deletion in their common spellings.
-# Being a command-prefix match this narrows the hole rather than closing it:
-# `gh api <path> --method PUT` puts the flag after the path and still matches.
-# Accepted deliberately — dropping `gh api` would cost inline comments.
+# The method denials still matter for the one path the scoped allow cannot
+# exclude: `.../pulls/N/merge` shares the pulls/ prefix, so PUT is denied here.
+# Residual, accepted: these are command-PREFIX rules, so `gh api <path> --method
+# PUT` puts the flag after the path and matches neither denial.
 review_denials="Write,Edit,NotebookEdit,Agent,Skill"
 review_denials="$review_denials,Bash(gh api --method PUT:*),Bash(gh api -X PUT:*)"
 review_denials="$review_denials,Bash(gh api --method DELETE:*),Bash(gh api -X DELETE:*)"
 review_denials="$review_denials,Bash(gh api --method PATCH:*),Bash(gh api -X PATCH:*)"
-review_denials="$review_denials,Bash(gh pr merge:*),Bash(gh pr close:*),Bash(git push:*)"
+review_denials="$review_denials,Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr review:*),Bash(git push:*)"
 
 # Exercises the wiring without spending a review:
 #   IMAGEGENIE_PR_REVIEW_DRY_RUN=1 .claude/hooks/review-new-pr.sh <<<"$hook_json"
@@ -119,10 +135,35 @@ printf '\n=== %s  %s #%s  %s\n' \
   "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$pull_request_repo" \
   "$pull_request_number" "$pull_request_url" >>"$review_log"
 
+# Claim the review before running it, so a second hook firing in the same window
+# bails above rather than racing this one to a duplicate comment set.
+printf '%s\n' "$review_key" >>"$review_state"
+
+# Review a detached worktree pinned to the PR head, not the author's live
+# checkout: this runs async while that session keeps editing, and a Read-derived
+# line number that shifts under it means the comment POST 422s with "line must
+# be part of the diff" — losing the finding while the hook still exits 0.
+worktree_dir="$(mktemp -d -t imagegenie-review)" || pass
+cleanup() {
+  git -C "$project_dir" worktree remove --force "$worktree_dir" >/dev/null 2>&1
+  rm -rf "$worktree_dir" 2>/dev/null
+}
+trap cleanup EXIT
+
+if ! git -C "$project_dir" worktree add --detach "$worktree_dir" "$head_sha" >>"$review_log" 2>&1; then
+  printf '=== could not create worktree at %s; aborting\n' "$head_sha" >>"$review_log"
+  printf 'PR review of %s #%s could not check out %s — see %s\n' \
+    "$pull_request_repo" "$pull_request_number" "$head_sha" "$review_log" >&2
+  exit 1
+fi
+
 review_status=0
-IMAGEGENIE_PR_REVIEW=1 claude -p "/code-review $pull_request_number --comment" \
-  --allowedTools "$review_tools" \
-  --disallowedTools "$review_denials" >>"$review_log" 2>&1 || review_status=$?
+(
+  cd "$worktree_dir" || exit 1
+  IMAGEGENIE_PR_REVIEW=1 claude -p "/code-review $pull_request_number --comment" \
+    --allowedTools "$review_tools" \
+    --disallowedTools "$review_denials" </dev/null
+) >>"$review_log" 2>&1 || review_status=$?
 
 printf '=== finished with status %s\n' "$review_status" >>"$review_log"
 
