@@ -44,3 +44,4 @@ source_images/
 # permanent: history can't be pruned without a rewrite.
 *.mov
 *.mp4
+.claude/pr-review.log
