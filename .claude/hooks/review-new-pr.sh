@@ -99,24 +99,32 @@ fi
 
 # Read the repo, read the PR, post comments. Inline review comments go through
 # the REST API — `gh pr comment` only posts one top-level blob — so `gh api` has
-# to be reachable. It is allowed ONLY under this repo's pulls/ path: denying
-# write *methods* was not enough, because POST cannot be denied (it is how a
-# comment is posted) and POST also reaches `repos/O/R/merges` and
-# `pulls/N/reviews -f event=APPROVE`. Scoping the allow removes both.
+# to be reachable.
+#
+# It is `Bash(gh api:*)` and NOT a path-scoped prefix. Scoping was tried and
+# silently broke posting outright: prefix rules match at a whitespace boundary,
+# so `Bash(gh api repos/O/R/pulls/:*)` never matches
+# `gh api repos/O/R/pulls/61/comments`. Probed both ways — scoped is DENIED, broad
+# returns the comment count. Command-prefix rules cannot express path scoping.
 review_tools="Read,Grep,Glob"
 review_tools="$review_tools,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr list:*),Bash(gh pr comment:*)"
-review_tools="$review_tools,Bash(gh api repos/$current_repo/pulls/:*),Bash(gh repo view:*)"
+review_tools="$review_tools,Bash(gh api:*),Bash(gh repo view:*)"
 review_tools="$review_tools,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git rev-parse:*)"
 
-# --allowedTools is ADDITIVE to settings.json, and ~/.claude/settings.json grants
-# Write/Edit/NotebookEdit unconditionally — so an allowlist alone does NOT stop
-# this unattended session editing the tree. Only a deny rule does.
+# --allowedTools is ADDITIVE to settings.json, so an allowlist alone does NOT
+# bound this unattended session. Only a deny rule does.
 #
-# The method denials still matter for the one path the scoped allow cannot
-# exclude: `.../pulls/N/merge` shares the pulls/ prefix, so PUT is denied here.
+# The list is short on purpose. A tool that no settings file grants is already
+# unreachable here — probed: WebFetch, absent from --allowedTools, answers
+# DENIED. So this only has to cover what the settings actively ALLOW:
+# ~/.claude/settings.json grants Write/Edit/NotebookEdit, and
+# .claude/settings.local.json grants Skill(update-config), which edits
+# settings.json itself. Re-check this list if either allow-list grows.
+#
 # Residual, accepted: these are command-PREFIX rules, so `gh api <path> --method
-# PUT` puts the flag after the path and matches neither denial.
-review_denials="Write,Edit,NotebookEdit,Agent,Skill"
+# PUT` with the flag after the path evades the method denials below. Dropping
+# `gh api` would cost inline comments, which is how the review posts at all.
+review_denials="Write,Edit,NotebookEdit,Skill"
 review_denials="$review_denials,Bash(gh api --method PUT:*),Bash(gh api -X PUT:*)"
 review_denials="$review_denials,Bash(gh api --method DELETE:*),Bash(gh api -X DELETE:*)"
 review_denials="$review_denials,Bash(gh api --method PATCH:*),Bash(gh api -X PATCH:*)"
@@ -143,12 +151,17 @@ printf '%s\n' "$review_key" >>"$review_state"
 # checkout: this runs async while that session keeps editing, and a Read-derived
 # line number that shifts under it means the comment POST 422s with "line must
 # be part of the diff" — losing the finding while the hook still exits 0.
-worktree_dir="$(mktemp -d -t imagegenie-review)" || pass
+# `mktemp -d -t name` is the BSD spelling; GNU coreutils rejects it ("too few
+# X's"). An explicit XXXXXX template is the one form both accept.
+worktree_dir="$(mktemp -d "${TMPDIR:-/tmp}/imagegenie-review.XXXXXX")" || pass
 cleanup() {
   git -C "$project_dir" worktree remove --force "$worktree_dir" >/dev/null 2>&1
+  git -C "$project_dir" worktree prune >/dev/null 2>&1
   rm -rf "$worktree_dir" 2>/dev/null
 }
-trap cleanup EXIT
+# EXIT alone misses a killed hook, leaking the checkout and a .git/worktrees
+# entry nothing prunes.
+trap cleanup EXIT INT TERM HUP
 
 if ! git -C "$project_dir" worktree add --detach "$worktree_dir" "$head_sha" >>"$review_log" 2>&1; then
   printf '=== could not create worktree at %s; aborting\n' "$head_sha" >>"$review_log"
@@ -170,6 +183,13 @@ printf '=== finished with status %s\n' "$review_status" >>"$review_log"
 # asyncRewake only reports that something failed; without this the waking
 # session cannot tell a rate-limit crash from a clean review.
 if [ "$review_status" -ne 0 ]; then
+  # Release the claim taken above. Holding it after a crash would permanently
+  # burn this head sha — every retry would bail at the already-reviewed gate.
+  if [ -f "$review_state" ]; then
+    grep -vxF "$review_key" "$review_state" >"$review_state.tmp" 2>/dev/null \
+      && mv "$review_state.tmp" "$review_state"
+    rm -f "$review_state.tmp"
+  fi
   printf 'PR review of %s #%s failed (exit %s) — see %s\n' \
     "$pull_request_repo" "$pull_request_number" "$review_status" "$review_log" >&2
 fi
