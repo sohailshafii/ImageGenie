@@ -12,6 +12,15 @@ call (`_render_views`) so the geometry is unit-testable without a GL context.
 **Idempotent (NFR-2):** a redelivered job whose full view set already exists is
 skipped; the artifact write is an upsert keyed on ``(model_uid, stage)``. This is
 the last stage, so nothing is enqueued downstream.
+
+**The textured variant** renders the mesh's *own* material instead of the grey
+override, writing to ``processed/renders_textured/<uid>/`` and recording no
+artifact row (see `convert.py`). **Everything else is identical by construction** —
+the same camera ring, the same 12 views, the same resolution and the same two
+lights, all read from the constants below rather than re-specified per variant. It
+has to be: the A/B measures what colour is worth, and lighting retuned for one arm
+would make the answer mean "colour plus different lighting"
+(ml.md#the-texture-census-step-0).
 """
 
 from __future__ import annotations
@@ -22,7 +31,14 @@ import math
 
 import numpy as np
 
-from ..artifact_keys import NUM_VIEWS, normalized_key, renders_prefix, view_key
+from ..artifact_keys import (
+    DEFAULT_VARIANT,
+    NUM_VIEWS,
+    mesh_file_type,
+    normalized_key,
+    renders_prefix,
+    view_key,
+)
 from ..config import get_settings
 from ..consumer import run_stage
 from ..db import session_scope
@@ -108,17 +124,29 @@ def camera_poses(num_views: int) -> list[np.ndarray]:
     return poses
 
 
-def render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]:
+def render_views(
+    mesh, poses: list[np.ndarray], resolution: int, use_mesh_material: bool = False
+) -> list[bytes]:
     """Render `mesh` from each pose to PNG bytes (offscreen; imports pyrender lazily).
 
     pyrender/OpenGL are imported here, not at module load, so the pure geometry
     above (and its tests) run without a GL context or the OSMesa system libs.
+
+    `use_mesh_material` is the one thing the texture A/B varies: with it the mesh's
+    own material (the atlas `convert` preserved) reaches the renderer, and without
+    it every surface becomes `MATERIAL_BASE_COLOR`. Lighting, camera and resolution
+    are deliberately *not* parameters — holding them fixed across arms is what makes
+    the comparison mean anything.
     """
     import pyrender
     from PIL import Image
 
-    material = pyrender.MetallicRoughnessMaterial(
-        metallicFactor=0.0, roughnessFactor=0.85, baseColorFactor=MATERIAL_BASE_COLOR
+    material = (
+        None
+        if use_mesh_material
+        else pyrender.MetallicRoughnessMaterial(
+            metallicFactor=0.0, roughnessFactor=0.85, baseColorFactor=MATERIAL_BASE_COLOR
+        )
     )
     scene = pyrender.Scene(bg_color=[1.0, 1.0, 1.0, 0.0], ambient_light=[0.3, 0.3, 0.3])
     scene.add(pyrender.Mesh.from_trimesh(mesh, material=material, smooth=False))
@@ -150,34 +178,57 @@ def render_views(mesh, poses: list[np.ndarray], resolution: int) -> list[bytes]:
         renderer.delete()
 
 
-def _all_views_present(storage: Storage, uid: str) -> bool:
-    return all(storage.exists(view_key(uid, index)) for index in range(NUM_VIEWS))
+def _all_views_present(storage: Storage, uid: str, variant: str = DEFAULT_VARIANT) -> bool:
+    return all(storage.exists(view_key(uid, index, variant)) for index in range(NUM_VIEWS))
 
 
 def process(job: dict) -> str:
     """Render one model's view set. Returns ``"rendered"`` or ``"skipped"``."""
     uid = job["uid"]
+    variant = job.get("variant", DEFAULT_VARIANT)
     settings = get_settings()
     storage = build_storage(settings)
-    output_prefix = renders_prefix(uid)
+    output_prefix = renders_prefix(uid, variant)
 
-    with session_scope() as session:
-        already_done = artifact_done(
-            session, uid, STAGE, storage, view_key(uid, NUM_VIEWS - 1)
-        )
+    if variant == DEFAULT_VARIANT:
+        with session_scope() as session:
+            already_done = artifact_done(
+                session, uid, STAGE, storage, view_key(uid, NUM_VIEWS - 1)
+            )
+    else:
+        # A variant owns no artifact row, so the view set itself is the record. The
+        # completeness check below is the same one either way.
+        already_done = True
     # Guard the last-view marker against a partially-written set from a prior crash.
-    if already_done and _all_views_present(storage, uid):
-        logger.info("skip already-rendered", extra={"uid": uid, "stage": STAGE.value})
+    if already_done and _all_views_present(storage, uid, variant):
+        logger.info(
+            "skip already-rendered",
+            extra={"uid": uid, "stage": STAGE.value, "variant": variant},
+        )
         return "skipped"
 
-    mesh = load_mesh(storage.get_bytes(normalized_key(uid)), file_type="ply")
-    images = render_views(mesh, camera_poses(NUM_VIEWS), RESOLUTION)
+    mesh = load_mesh(
+        storage.get_bytes(normalized_key(uid, variant)), file_type=mesh_file_type(variant)
+    )
+    images = render_views(
+        mesh,
+        camera_poses(NUM_VIEWS),
+        RESOLUTION,
+        use_mesh_material=variant != DEFAULT_VARIANT,
+    )
     for view_index, png_bytes in enumerate(images):
-        storage.put_bytes(view_key(uid, view_index), png_bytes)
-    with session_scope() as session:
-        record_artifact(session, uid, STAGE, output_prefix, content_hash=None)
+        storage.put_bytes(view_key(uid, view_index, variant), png_bytes)
+    if variant == DEFAULT_VARIANT:
+        with session_scope() as session:
+            record_artifact(session, uid, STAGE, output_prefix, content_hash=None)
     logger.info(
-        "rendered", extra={"uid": uid, "stage": STAGE.value, "views": len(images)}
+        "rendered",
+        extra={
+            "uid": uid,
+            "stage": STAGE.value,
+            "variant": variant,
+            "views": len(images),
+        },
     )
     return "rendered"
 
