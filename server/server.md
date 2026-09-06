@@ -286,6 +286,25 @@ VM was rejected: cheaper per-hour but requires manual teardown, reintroducing th
   - `render.py` — render 12 views (224²) around the object with **trimesh + pyrender** offscreen
     (OSMesa in the container), writing `processed/renders/<uid>/view_NN.png` (terminal stage).
 
+- **Variant jobs.** A job payload may carry a `variant` alongside its `uid`
+  (`{"uid": ..., "variant": "textured"}`), and each stage passes it to the next, so an experiment's
+  arm stays on its own artifact keys end to end (see
+  [Object storage](#object-storage)). `publish_next` omits the field entirely for the default
+  variant, so an ordinary job's payload is byte-identical to what it was before variants existed and
+  messages in flight across a deploy stay valid. Two stages behave differently under a variant:
+  - `convert.py` exports **GLB** rather than PLY, because PLY cannot hold a texture image. Before
+    exporting it checks the **packed texture atlas** — `concatenate` merges a multi-geometry model's
+    materials into one image that *grows* with the source textures — and raises if it exceeds
+    `MAX_TEXTURE_DIMENSION` (16384, the usual `GL_MAX_TEXTURE_SIZE`). That failure dead-letters
+    visibly; the alternative is a render that silently produces an untextured image, which would
+    put a control-arm model into the treatment arm with nothing about the number looking wrong.
+  - `normalize.py` reads and writes GLB. The transform is unchanged — centering and unit-scaling
+    move vertices, not materials.
+
+  **Neither writes an `artifact` row under a variant**, so their idempotency comes from blob
+  existence rather than the `(model_uid, stage)` gate. The table is unique on that pair, so a
+  variant row would overwrite the default arm's.
+
   The preprocessing stages share `workers/mesh.py` (load/concatenate/export) and `workers/artifacts.py`
   (the `(model_uid, stage)` idempotency gate + upsert). Every stage does an `artifact` upsert, so every
   stage's run-twice idempotency test runs against a real Postgres (testcontainers), per the
