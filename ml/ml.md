@@ -1029,13 +1029,43 @@ textured geometry through convert and normalize, then **re-rendering all 11,783 
 dollars and a couple of hours of parallel Cloud Run, plus a schema question about what the converted
 artifact is.
 
-**Colour actually dies a stage earlier than that paragraph says.** `workers/mesh.py:load_mesh`
-concatenates any multi-geometry `Scene` into one `Trimesh` at *load* time, which discards
-per-geometry materials and UVs before convert ever picks an export format. So there are three sites,
-not two, and the first one means a `Scene`-preserving loader is a prerequisite for the other fixes
-mattering at all. Step 0 of the experiment is not any of them — it is
-[the texture census](#the-texture-census-step-0), which asks how many models carry colour worth
-preserving.
+**Where colour actually dies — measured 2026-09-05, and it is not where this section first
+guessed.** `workers/mesh.py:load_mesh` concatenates a multi-geometry `Scene` into one `Trimesh`, and
+the obvious assumption is that materials die there. They do not. `trimesh.util.concatenate` **packs
+the geometries' materials into a single texture atlas** and rewrites the UVs to index it, at full
+resolution: a 9-texture model whose sources are 1024x1024 comes out with a 16384x2048 atlas, not a
+downsampled one. Flat per-material colours survive the same way, as tiny solid-colour tiles (eight of
+them become a 128x8 strip), and a lone `baseColorFactor` survives as itself.
+
+So there are **two** sites, both after the merge:
+
+1. **The PLY export.** PLY has no way to store an image, so `export_ply` drops it. The `s`/`t`
+   texture coordinates do survive — which is worse than losing them, because a mesh reloaded from
+   PLY looks textured (`TextureVisuals`, `uv` present) while its `baseColorTexture` is `None`.
+2. **`render.py`'s grey override**, which would discard the material even if the mesh still had one.
+
+**The consequence is that the textured arm is a much smaller change than a `Scene`-preserving
+loader.** Keeping `load_mesh` as it is and exporting GLB instead of PLY preserves the atlas, the
+`baseColorFactor` and the UVs through a round trip (verified on one model per census tier), so the
+arms differ in exactly two behaviours: the convert stage's export format, and whether render
+overrides the material.
+
+**One channel is genuinely lost, at load.** For a model whose glTF declares `COLOR_0`, trimesh's GLB
+loader surfaced no vertex colour at all — not as `ColorVisuals`, not in `vertex_attributes` — so the
+packing has nothing to pack and the atlas holds only the material colours. That bounds what the
+`vertex_colour` tier could ever contribute, and it costs this experiment nothing, because the
+qualifying rule is texture-tier only.
+
+**The atlas has a ceiling, and ~8% of the pool sits on it.** Over 50 models sampled from the 6,816
+qualifying uids: median atlas width 2,048, but **4 of 50 pack to 16,384 wide** — which is exactly the
+usual `GL_MAX_TEXTURE_SIZE`, so a model with more or larger textures would produce an atlas the
+renderer cannot upload. The convert stage therefore has to *check* the packed atlas rather than
+assume it fits, and report a model it cannot handle instead of silently rendering it wrong.
+
+**Protocol consequence:** because a model can drop out at conversion, the experiment's final uid list
+is fixed **after** the textured pipeline runs, and both arms train on that list. Selecting the subset
+first and letting the treatment arm quietly lose models would leave the two arms scored on different
+data — the exact failure [metric traps](#evaluation) has bitten this project with twice.
 
 Test it as a controlled A/B rather than a migration: re-render one subset with textures, train on it,
 and compare against the same subset shape-only. Anything less cannot separate "textures help" from
