@@ -300,8 +300,14 @@ VM was rejected: cheaper per-hour but requires manual teardown, reintroducing th
     put a control-arm model into the treatment arm with nothing about the number looking wrong.
   - `normalize.py` reads and writes GLB. The transform is unchanged — centering and unit-scaling
     move vertices, not materials.
+  - `render.py` passes the mesh's **own** material to pyrender instead of overriding every surface
+    with `MATERIAL_BASE_COLOR`. Nothing else moves: the camera ring, the 12 views, the 224² frame
+    and both lights come from the same module constants under either arm, because an A/B whose
+    lighting was retuned for one side would measure "colour plus different lighting". With no
+    artifact row to consult, a variant's completeness check is the view set itself, so a crash
+    midway re-renders rather than being mistaken for done.
 
-  **Neither writes an `artifact` row under a variant**, so their idempotency comes from blob
+  **None of the three writes an `artifact` row under a variant**, so their idempotency comes from blob
   existence rather than the `(model_uid, stage)` gate. The table is unique on that pair, so a
   variant row would overwrite the default arm's.
 
