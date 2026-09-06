@@ -41,7 +41,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 PYRUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help census devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -85,6 +85,19 @@ evalboundary: ## measure the figure/animal boundary — can keywords resolve it?
 	# the ambiguous population a keyword precedence rule could even reach, and
 	# whether any token carries stance signal. SHARDS=24 for the gold figures cited.
 	$(PYRUN) ml/eval_figure_animal.py $(if $(SHARDS),--shards $(SHARDS),)
+
+census: ## census what colour the raw meshes carry (backlog item 1 step 0; LIMIT=N for a pilot)
+	# Step 0 of the texture A/B: how many models carry colour at all, per class, for
+	# the trainable set and the LVIS dev set separately. Reads ~1-2% of each GLB (its
+	# glTF JSON chunk), never the mesh.
+	#
+	# Reads PROD, so it needs both halves pointed there: IMAGEGENIE_DATABASE_URL at
+	# Cloud SQL through the proxy (the uid -> class mapping) and the GCS backend (the
+	# meshes). The backend is forced here for the same reason `devset-push` forces it
+	# — the default is `local`, and a census of an empty data/storage would report a
+	# corpus with no colour rather than failing.
+	IMAGEGENIE_STORAGE_BACKEND=gcs PYTHONPATH=server $(BIN)/python ml/texture_census.py \
+		$(if $(LIMIT),--limit $(LIMIT),) $(if $(WORKERS),--num-workers $(WORKERS),)
 
 devset: ## select the second dev set from un-ingested LVIS gold objects (FR-7; DEVSET_COUNT=N)
 	# Needs BOTH the cert shim (it reads LVIS annotations over the network) and
