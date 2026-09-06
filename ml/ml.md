@@ -1029,6 +1029,14 @@ textured geometry through convert and normalize, then **re-rendering all 11,783 
 dollars and a couple of hours of parallel Cloud Run, plus a schema question about what the converted
 artifact is.
 
+**Colour actually dies a stage earlier than that paragraph says.** `workers/mesh.py:load_mesh`
+concatenates any multi-geometry `Scene` into one `Trimesh` at *load* time, which discards
+per-geometry materials and UVs before convert ever picks an export format. So there are three sites,
+not two, and the first one means a `Scene`-preserving loader is a prerequisite for the other fixes
+mattering at all. Step 0 of the experiment is not any of them — it is
+[the texture census](#the-texture-census-step-0), which asks how many models carry colour worth
+preserving.
+
 Test it as a controlled A/B rather than a migration: re-render one subset with textures, train on it,
 and compare against the same subset shape-only. Anything less cannot separate "textures help" from
 "this subset is easier". Weigh it against the risk it introduces — with textures the model can key on
@@ -1050,6 +1058,91 @@ to be what caps the model at ~0.45. Full numbers and the three per-class finding
 
 **That makes the shape-only renders the leading explanation** rather than one of two co-equal ones,
 and the texture A/B below the experiment worth running next.
+
+## The Texture Census (step 0)
+
+Before any of the pipeline work above is worth doing, one measurement gates it: **how many of our
+models carry colour at all?** Objaverse GLBs are not uniformly textured — plenty ship a single
+default-white material — and if the textured arm of the A/B is mostly identical to the shape-only
+control, the experiment measures nothing while still producing a plausible-looking number. The
+census answers that, and it *sizes* the experiment: the models it finds carrying colour are the pool
+the A/B's subset is drawn from.
+
+    make census                 # the whole corpus (needs prod: Cloud SQL proxy + GCS backend)
+    make census LIMIT=200       # a pilot, chosen by hash so it is the same 200 every time
+
+### It reads ~1-2% of each file
+
+A GLB is a 12-byte header, an 8-byte chunk header, a JSON chunk, and then the binary chunk holding
+geometry and texture pixels. Everything that says whether a model has colour lives in that JSON
+chunk at the **head** of the file: `images`, `textures`, each material's `baseColorTexture` and
+`baseColorFactor`, and each mesh primitive's `TEXCOORD_0` / `COLOR_0` attributes. So the census
+range-reads the head of each object instead of downloading meshes — measured, that is 21.9 KB of a
+1.1 MB object and 1.3 MB of a 28.7 MB one.
+
+That is the difference between sampling a couple of hundred models and censusing the corpus: at
+~10 MB per raw GLB, downloading 13k of them is ~135 GB, while reading their headers is ~1 GB. The
+qualifying uid list is then an exact lookup rather than a projection from a sample, which is what
+the "restrict the subset to models that actually carry textures" decision needs to be defensible.
+
+`Storage.get_range` exists for this ([server.md](../server/server.md#object-storage)); one read of
+64 KB covers almost every JSON chunk, and only the tail of large scenes costs a second request.
+
+### Tiers
+
+A model is assigned the **strongest** channel it carries. The ordering is by how much the CNN could
+plausibly get from it — an image beats per-vertex colour, which beats several flat material colours,
+which beats one flat colour, which beats an all-white model the grey override costs nothing to
+apply to.
+
+| tier | rule |
+|---|---|
+| `texture` | a material with a `baseColorTexture`, **and** primitives carrying `TEXCOORD_0` |
+| `vertex_colour` | no texture image, but primitives carry `COLOR_0` |
+| `multi_colour` | no texture or vertex colour, but ≥2 distinct `baseColorFactor` values |
+| `uniform_colour` | exactly one non-default (non-white) `baseColorFactor` — a solid red car |
+| `none` | a single default-white material: genuinely shape-only |
+| `unreadable` | not a GLB, a truncated header, or an unparseable JSON chunk |
+
+Three judgement calls in that table are worth stating, because each one changes a count:
+
+- **A `baseColorTexture` with no UVs does not earn `texture`.** There is nothing to sample it
+  through, so the model falls to whatever else it carries.
+- **Material count is not colour.** A real 28.7 MB object in the corpus has six materials that
+  differ only in name and roughness, every one of them leaving `baseColorFactor` at the glTF default
+  — it is `none`. The tier tests *distinct base colours*, never how many materials exist.
+- **Alpha is dropped.** A transparent white is still white, and what the render override destroys is
+  hue, not opacity.
+
+**The tier is a reporting label; the counts are the measurement.** Every count lands in the CSV per
+model (`image_count`, `texture_count`, `material_count`, `base_color_texture_count`,
+`distinct_base_color_count`, `has_texcoord`, `has_vertex_colour`), so a revised qualifying rule — or
+a cross-tab like "how many textured models *also* carry vertex colours" — is re-derived from the
+file rather than by re-reading the bucket. An object that cannot be parsed is recorded as
+`unreadable` with the exception text, never as "carries no colour": those two conclusions would size
+the experiment very differently.
+
+### What it censuses, and what it reports
+
+Two populations, reported separately because the gate reads them separately:
+
+- **`trainable`** — live, labeled, rendered models: the same filter `ml/train.py` trains on. Not
+  "everything in the bucket", because the A/B needs both arms and the control arm reads the
+  *existing* shape-only renders, so an unlabeled or unrendered model cannot be in either.
+- **`lvis`** — the [second dev set](#the-second-dev-set), carrying its **gold** classes from
+  `data/devset/lvis_dev.csv` rather than labels (those uids deliberately have none). Its coverage
+  matters on its own: the headline number for the A/B is scored on this set.
+
+Output is `data/census/texture_census.csv` (one row per model) plus a per-class,
+per-population summary in `texture_census_summary.json`, both written through
+[`ml/io_utils.py`](io_utils.py). Non-GLB raws (an admin's STL or OBJ upload) are skipped and counted,
+not reported as `unreadable` — that column means "we could not tell what colour this has", and a
+format this parser does not speak is a pipeline fact, not a colour one.
+
+**The gate.** Thin coverage overall, or thin in `food` / `plant` / `electronics` — the classes where
+colour is expected to carry what shape does not — stops the experiment. A qualifying pool under
+~2,000 models reopens the subset-size decision, since the per-class read is the reason the subset is
+sized at ~3,000 in the first place.
 
 ## Coding Standards (ML)
 
