@@ -127,6 +127,17 @@ def normalized_key(uid: str, variant: str = DEFAULT_VARIANT) -> str:
     return f"processed/normalized{layout.path_suffix}/{uid}{layout.mesh_suffix}"
 
 
+def mesh_file_type(variant: str = DEFAULT_VARIANT) -> str:
+    """The trimesh ``file_type`` for a variant's converted/normalized blobs.
+
+    Separate from `file_type_for_raw_key`, which reads the format off an *observed*
+    key because a raw mesh may be any of several uploaded formats. A processed
+    blob's format is not observed but decided — by the variant — so it is derived
+    from the layout rather than parsed back out of a filename.
+    """
+    return layout_for(variant).mesh_suffix.lstrip(".")
+
+
 def renders_prefix(uid: str, variant: str = DEFAULT_VARIANT) -> str:
     """Prefix under which a model's per-view PNGs live."""
     return f"processed/renders{layout_for(variant).path_suffix}/{uid}/"

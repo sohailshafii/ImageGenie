@@ -18,6 +18,7 @@ from functools import lru_cache
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import pubsub_v1
 
+from .artifact_keys import DEFAULT_VARIANT
 from .config import get_settings
 
 
@@ -73,11 +74,19 @@ def _publisher() -> pubsub_v1.PublisherClient:
     return pubsub_v1.PublisherClient()
 
 
-def publish_next(topic_id: str, uid: str) -> str:
+def publish_next(topic_id: str, uid: str, variant: str = DEFAULT_VARIANT) -> str:
     """Enqueue ``{"uid": uid}`` on `topic_id` — a stage handing off to the next.
 
     Used by each preprocessing stage to hand a model to the following stage
     (download → convert → normalize → render). Re-publishing on a redelivered
     job is safe: the downstream handler is idempotent and skips already-done work.
+
+    `variant` rides along so a stage hands the *same* arm to the next one
+    (app/artifact_keys.py). The default variant writes no `variant` field at all,
+    so an ordinary job's payload is byte-identical to what it was before variants
+    existed — messages already in flight during a deploy stay valid.
     """
-    return publish_json(_publisher(), topic_id, {"uid": uid})
+    payload = {"uid": uid}
+    if variant != DEFAULT_VARIANT:
+        payload["variant"] = variant
+    return publish_json(_publisher(), topic_id, payload)
