@@ -49,6 +49,16 @@ advances, and `c` hands focus to the class dropdown. Design notes:
   centers the mesh and scales its largest extent to 1, the camera framing is fixed and needs no
   per-model fitting. Pipeline PLYs carry no normals, so the viewer computes them; without that the
   mesh renders flat and unreadable.
+- **A textured model previews in colour.** Where the [texture experiment](../ml/ml.md#the-texture-census-step-0)
+  has re-rendered a model with its own materials, the endpoint serves that arm's **GLB** and the
+  viewer switches to `GLTFLoader`, keeping the GLB's materials as authored rather than substituting
+  the neutral grey. A caption under the viewer says so, because only the experiment's subset has a
+  textured arm and an unexplained colour difference between two models reads as a bug. The grey
+  material and the computed normals stay the PLY path's business — the two loaders share the scene,
+  the camera and the lights, and nothing else.
+- **A GLB's textures have to be disposed by hand.** Disposing a material does not free the textures
+  it references, and a packed atlas can be 16384px wide, so the viewer walks the loaded tree on
+  unmount. The PLY path has one shared material and one geometry, which is why it never needed this.
 - The mesh is fetched **separately from the model summary**, so the label panel is usable
   immediately rather than waiting on geometry. A model with no mesh yet shows "No 3D mesh for this
   model yet" — normal for anything the pipeline hasn't normalized, not an error.

@@ -1,15 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
+
+import type { MeshFormat } from '../api/types';
 
 // The single reusable three.js viewer (web.md): an interactive, orbit-controlled
 // 3D view of a model's normalized mesh.
 //
-// The mesh is the pipeline's normalized PLY (server.md#serving-artifacts) — it is
+// The mesh is the pipeline's normalized mesh (server.md#serving-artifacts) — it is
 // already centered on the origin and scaled so its largest extent is 1, so the
 // camera framing below is fixed and needs no per-model fitting. That is the
 // normalize stage paying off in the UI.
+//
+// Two formats, because there are two arms. The default arm's PLY carries geometry
+// only, so it is drawn with the neutral material the offscreen renders use. The
+// texture A/B's arm stores GLB, which carries the model's own materials — those
+// are kept as-authored, since showing them is the entire point of that preview.
 //
 // One download per model opened, not per view: once the geometry is loaded,
 // orbiting is entirely client-side.
@@ -23,7 +31,32 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 // "the pipeline hasn't produced this yet".
 type ViewerStatus = 'loading' | 'ready' | 'unavailable' | 'failed';
 
-export function ModelViewer({ src }: { src?: string | null }) {
+/** Dispose every geometry, material and texture under `root` (GLB scenes are trees). */
+function disposeTree(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    const asMesh = child as THREE.Mesh;
+    if (!asMesh.isMesh) return;
+    asMesh.geometry?.dispose();
+    const materials = Array.isArray(asMesh.material) ? asMesh.material : [asMesh.material];
+    for (const material of materials) {
+      if (!material) continue;
+      // A GLB's materials own their textures, and disposing the material does not
+      // free those — the atlas can be 16384px wide, so leaking one is expensive.
+      for (const value of Object.values(material)) {
+        if ((value as THREE.Texture | null)?.isTexture) (value as THREE.Texture).dispose();
+      }
+      material.dispose();
+    }
+  });
+}
+
+export function ModelViewer({
+  src,
+  format = 'ply',
+}: {
+  src?: string | null;
+  format?: MeshFormat;
+}) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<ViewerStatus>(src ? 'loading' : 'unavailable');
 
@@ -65,10 +98,32 @@ export function ModelViewer({ src }: { src?: string | null }) {
     // Tracked so the cleanup below can dispose whatever actually got created —
     // a load that resolves after unmount must not leave GPU memory behind.
     let geometry: THREE.BufferGeometry | null = null;
-    let mesh: THREE.Mesh | null = null;
+    let object: THREE.Object3D | null = null;
     let disposed = false;
 
-    if (src) {
+    // A URL was offered but the mesh couldn't be fetched/parsed (e.g. a network
+    // error) — distinct from "no mesh exists", handled by !src above.
+    const onLoadError = () => {
+      if (!disposed) setStatus('failed');
+    };
+
+    if (src && format === 'glb') {
+      new GLTFLoader().load(
+        src,
+        (gltf) => {
+          if (disposed) {
+            disposeTree(gltf.scene); // arrived too late to be shown; don't leak it
+            return;
+          }
+          // Keep the GLB's own materials: this arm exists to show them.
+          object = gltf.scene;
+          scene.add(object);
+          setStatus('ready');
+        },
+        undefined,
+        onLoadError,
+      );
+    } else if (src) {
       new PLYLoader().load(
         src,
         (loaded) => {
@@ -80,16 +135,12 @@ export function ModelViewer({ src }: { src?: string | null }) {
           // this — computing them is what makes the shape legible.
           loaded.computeVertexNormals();
           geometry = loaded;
-          mesh = new THREE.Mesh(loaded, material);
-          scene.add(mesh);
+          object = new THREE.Mesh(loaded, material);
+          scene.add(object);
           setStatus('ready');
         },
         undefined,
-        () => {
-          // A URL was offered but the mesh couldn't be fetched/parsed (e.g. a
-          // network error) — distinct from "no mesh exists", handled by !src above.
-          if (!disposed) setStatus('failed');
-        },
+        onLoadError,
       );
     }
 
@@ -115,7 +166,12 @@ export function ModelViewer({ src }: { src?: string | null }) {
       cancelAnimationFrame(frameId);
       window.removeEventListener('resize', onResize);
       controls.dispose();
-      if (mesh) scene.remove(mesh);
+      if (object) {
+        scene.remove(object);
+        // The PLY path's geometry is disposed below and its material is shared,
+        // so only a loaded GLB tree owns anything this has to walk.
+        if (format === 'glb') disposeTree(object);
+      }
       geometry?.dispose();
       material.dispose();
       renderer.dispose();
@@ -123,7 +179,7 @@ export function ModelViewer({ src }: { src?: string | null }) {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [src]);
+  }, [src, format]);
 
   return (
     <div className="model-viewer-wrap">

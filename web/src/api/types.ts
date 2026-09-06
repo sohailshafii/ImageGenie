@@ -120,6 +120,14 @@ export const DEV_SET_EXPLANATION =
   'classifier trained on cannot honestly score it.';
 
 /**
+ * Why one model's preview has colour when most do not. Same shape as
+ * DEV_SET_EXPLANATION: the state is rare, so it has to explain itself.
+ */
+export const TEXTURED_EXPLANATION =
+  'This model was re-rendered with its own materials for the texture experiment, ' +
+  'so the preview shows real colour instead of the pipeline’s neutral grey.';
+
+/**
  * What the classifier makes of one model (server.md#predicting-a-class).
  *
  * `runId` is part of the answer rather than metadata: the prediction comes from
@@ -133,10 +141,24 @@ export interface Prediction {
 }
 
 /** A model's rendered views and mesh, for the detail view. */
+/**
+ * Which arm of the texture A/B an artifact came from. 'textured' means the model
+ * was re-rendered with its own materials, so the preview shows real colour rather
+ * than the pipeline's usual neutral grey; only the experiment's subset has one.
+ */
+export type ArtifactVariant = 'default' | 'textured';
+
+/** The mesh container. PLY cannot carry a texture image; GLB can. */
+export type MeshFormat = 'ply' | 'glb';
+
 export interface ModelArtifacts {
   uid: string;
   views: string[]; // in view order; empty until the render stage runs
-  mesh: string | null; // normalized PLY, or null if not yet normalized
+  mesh: string | null; // normalized mesh, or null if not yet normalized
+  variant: ArtifactVariant;
+  // Which loader the viewer needs. Not inferable from the URL, which is mostly
+  // signature query string.
+  meshFormat: MeshFormat;
 }
 
 export interface ModelPage {

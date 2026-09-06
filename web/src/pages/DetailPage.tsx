@@ -11,7 +11,9 @@ import {
 import {
   CLASS_NAMES,
   DEV_SET_EXPLANATION,
+  TEXTURED_EXPLANATION,
   type ClassName,
+  type ModelArtifacts,
   type ModelSummary,
 } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -31,7 +33,7 @@ export function DetailPage() {
   const canEdit = user?.role === 'admin';
 
   const [model, setModel] = useState<ModelSummary | null>(null);
-  const [meshUrl, setMeshUrl] = useState<string | null>(null);
+  const [artifacts, setArtifacts] = useState<ModelArtifacts | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -58,13 +60,13 @@ export function DetailPage() {
   // become editable. A model with no mesh yet is normal, not an error.
   useEffect(() => {
     let active = true;
-    setMeshUrl(null);
+    setArtifacts(null);
     getModelArtifacts(uid)
-      .then((artifacts) => {
-        if (active) setMeshUrl(artifacts.mesh);
+      .then((result) => {
+        if (active) setArtifacts(result);
       })
       .catch(() => {
-        if (active) setMeshUrl(null);
+        if (active) setArtifacts(null);
       });
     return () => {
       active = false;
@@ -102,7 +104,20 @@ export function DetailPage() {
 
       {status === 'ready' && model && (
         <div className="detail-layout">
-          <ModelViewer src={meshUrl} />
+          <div className="detail-preview">
+            <ModelViewer src={artifacts?.mesh ?? null} format={artifacts?.meshFormat ?? 'ply'} />
+            {artifacts?.variant === 'textured' && (
+              /* Most of the catalog renders as neutral grey, so a coloured
+                 preview would otherwise look like a different pipeline. Says
+                 which arm this model was re-rendered for (ml.md#the-texture-ab). */
+              <p className="preview-note">
+                <span className="dev-set-badge" title={TEXTURED_EXPLANATION}>
+                  textured
+                </span>{' '}
+                showing this model’s own materials
+              </p>
+            )}
+          </div>
 
           <aside className="detail-panel">
             <h1>{model.title}</h1>
