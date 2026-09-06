@@ -561,9 +561,18 @@ shows emoji, so nobody can actually label. Key layout lives in one place, `serve
 imported by both the workers that write and the API that reads: a key format duplicated between
 writer and reader drifts silently, as a missing image rather than an error.
 
-- **`GET /models/{uid}/artifacts`** → `{views: [...], mesh}` for the detail view. It checks each blob
-  exists, so a model part-way through the pipeline yields fewer views (or none) and the UI shows a
-  placeholder rather than broken images.
+- **`GET /models/{uid}/artifacts`** → `{views, mesh, variant, mesh_format}` for the detail view. It
+  checks each blob exists, so a model part-way through the pipeline yields fewer views (or none) and
+  the UI shows a placeholder rather than broken images.
+- **It prefers the textured arm when one exists.** A model the texture experiment re-rendered
+  ([Object storage](#object-storage)) has no `artifact` row for those blobs by design, so the only
+  way to know is to probe storage — one extra `exists` on the first view, which is affordable here
+  and is exactly why the preference is *not* extended to the grid's thumbnails. `variant` tells the
+  page which arm it got, so a coloured preview can say why it differs from every other model.
+  Views and mesh resolve independently: mid-experiment a model can have textured views before its
+  textured mesh is written, and a grey mesh beside textured views beats no mesh at all.
+- **`mesh_format` is returned rather than inferred.** The viewer needs `PLYLoader` or `GLTFLoader`,
+  and a signed URL is mostly signature query string, so reading the extension off it is guesswork.
 - **`ModelSummaryOut.thumbnail`** carries the first view for the grid, and is deliberately emitted
   **without** an existence check — a 24-card page would otherwise cost 24 round-trips to object
   storage just to draw thumbnails. Signing is local and free; the client treats a 404 as "no
