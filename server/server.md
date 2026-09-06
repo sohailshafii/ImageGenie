@@ -139,6 +139,28 @@ the [metadata DB](#database) stores only the object keys, never the blobs themse
   selection a laptop does. It stays a file rather than becoming `label` rows precisely because a
   labeled model is a trainable one ([ml.md](../ml/ml.md#the-second-dev-set)).
 
+**Artifact variants — a parallel namespace.** `artifact_keys` takes an optional `variant`, which
+shifts a stage's output into its own prefix and (for the mesh stages) its own format:
+`processed/converted_textured/<uid>.glb`, `processed/normalized_textured/<uid>.glb`,
+`processed/renders_textured/<uid>/view_NN.png`. It exists for the
+[texture A/B](../ml/ml.md#the-texture-census-step-0), which re-processes models the pipeline has
+already rendered. Every existing caller is unchanged: `DEFAULT_VARIANT` produces the same keys as
+before, byte for byte, because `view_keys(uid)` gives a model exactly one render path and
+re-rendering in place would overwrite the ~12k shape-only renders the experiment is measured
+against.
+
+An unknown variant raises rather than falling back to the default paths — a typo that quietly
+resolved to the control arm's keys would produce exactly the corruption the namespace exists to
+prevent.
+
+**Variant blobs are deliberately not pipeline artifacts.** They live outside the four key families,
+so a prefix listing of `processed/converted/` does not match `processed/converted_textured/` and
+[the reconciler](#rebuilding-the-tables-from-storage) never sees them; `uid_from_key` returns `None`
+for them for the same reason. That is not an oversight but the design: `artifact` is unique on
+`(model_uid, stage)`, so a row rebuilt from a textured blob would overwrite the row the training
+query and the browse view join against. The textured arm's idempotency (NFR-2) comes from blob
+existence instead, which the render stage already checks.
+
 **Ranged reads.** `Storage.get_range(key, start, length)` reads a slice of an object rather than the
 whole blob, on every backend (a `seek`+`read` locally, a ranged GET against GCS). It exists for the
 [texture census](../ml/ml.md#the-texture-census-step-0): a GLB declares its materials in a JSON chunk
