@@ -12,7 +12,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import api, db
-from app.artifact_keys import NUM_VIEWS, normalized_key, view_key
+from app.artifact_keys import (
+    DEFAULT_VARIANT,
+    NUM_VIEWS,
+    TEXTURED_VARIANT,
+    normalized_key,
+    view_key,
+)
 from app.models import DownloadStatus, Model, User, UserRole
 from app.security import CSRF_COOKIE, CSRF_HEADER, hash_password
 
@@ -78,9 +84,11 @@ def client(pg_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return test_client
 
 
-def _fill_renders(storage: FakeStorage, uid: str, count: int) -> None:
+def _fill_renders(
+    storage: FakeStorage, uid: str, count: int, variant: str = DEFAULT_VARIANT
+) -> None:
     for index in range(count):
-        storage.put_bytes(view_key(uid, index), b"png-bytes")
+        storage.put_bytes(view_key(uid, index, variant), b"png-bytes")
 
 
 def test_returns_every_view_and_the_mesh(client: TestClient, storage: FakeStorage) -> None:
@@ -113,7 +121,13 @@ def test_an_unprocessed_model_returns_empty_not_an_error(
     client: TestClient, storage: FakeStorage
 ) -> None:
     body = client.get("/models/fresh/artifacts").json()
-    assert body == {"uid": "fresh", "views": [], "mesh": None}
+    assert body == {
+        "uid": "fresh",
+        "views": [],
+        "mesh": None,
+        "variant": DEFAULT_VARIANT,
+        "mesh_format": "ply",
+    }
 
 
 def test_unknown_model_is_404(client: TestClient, storage: FakeStorage) -> None:
@@ -153,3 +167,59 @@ def test_streaming_a_missing_key_is_404(client: TestClient, storage: FakeStorage
 def test_streaming_rejects_traversal(client: TestClient, storage: FakeStorage) -> None:
     response = client.get("/artifacts/processed/../../etc/passwd")
     assert response.status_code in (400, 404)  # normalized away or refused outright
+
+
+# --- The textured arm -------------------------------------------------------
+#
+# Variant blobs carry no `artifact` row by design, so the endpoint has to probe
+# storage. These pin what it probes for and what it reports back.
+
+
+def test_textured_renders_are_preferred_when_they_exist(
+    client: TestClient, storage: FakeStorage
+) -> None:
+    """The detail page shows what the experiment rendered, and says which arm it is."""
+    _fill_renders(storage, "rendered", NUM_VIEWS)
+    _fill_renders(storage, "rendered", NUM_VIEWS, TEXTURED_VARIANT)
+    storage.put_bytes(normalized_key("rendered"), b"ply-bytes")
+    storage.put_bytes(normalized_key("rendered", TEXTURED_VARIANT), b"glb-bytes")
+
+    body = client.get("/models/rendered/artifacts").json()
+
+    assert body["variant"] == TEXTURED_VARIANT
+    assert body["mesh_format"] == "glb"
+    assert all("renders_textured" in url for url in body["views"])
+    assert "normalized_textured" in body["mesh"]
+
+
+def test_a_model_outside_the_experiment_is_unchanged(
+    client: TestClient, storage: FakeStorage
+) -> None:
+    """Most of the catalog has no textured arm; it must look exactly as before."""
+    _fill_renders(storage, "rendered", NUM_VIEWS)
+    storage.put_bytes(normalized_key("rendered"), b"ply-bytes")
+
+    body = client.get("/models/rendered/artifacts").json()
+
+    assert body["variant"] == DEFAULT_VARIANT
+    assert body["mesh_format"] == "ply"
+    assert all("renders_textured" not in url for url in body["views"])
+
+
+def test_views_and_mesh_resolve_their_arms_independently(
+    client: TestClient, storage: FakeStorage
+) -> None:
+    """Mid-experiment a model can have textured views before its mesh is written.
+
+    Falling back to the grey mesh beside textured views is better than showing no
+    mesh at all, and the reported format has to follow the mesh actually served or
+    the viewer picks the wrong loader.
+    """
+    _fill_renders(storage, "partial", NUM_VIEWS, TEXTURED_VARIANT)
+    storage.put_bytes(normalized_key("partial"), b"ply-bytes")
+
+    body = client.get("/models/partial/artifacts").json()
+
+    assert body["variant"] == TEXTURED_VARIANT
+    assert "normalized/" in body["mesh"]
+    assert body["mesh_format"] == "ply"

@@ -41,9 +41,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .artifact_keys import (
+    DEFAULT_VARIANT,
     MESH_SUFFIX,
     NUM_VIEWS,
     RAW_SUFFIX_TO_FILE_TYPE,
+    TEXTURED_VARIANT,
+    mesh_file_type,
     normalized_key,
     raw_key,
     view_key,
@@ -201,7 +204,14 @@ class ModelSort(str, enum.Enum):
 class ModelArtifactsOut(BaseModel):
     uid: str
     views: list[str]  # rendered view URLs, in view order; empty if not yet rendered
-    mesh: str | None  # normalized PLY, or None if the stage hasn't run
+    mesh: str | None  # normalized mesh, or None if the stage hasn't run
+    # Which arm these came from. "textured" means the experiment
+    # (ml.md#the-texture-census-step-0) has re-rendered this model with its own
+    # materials, so the page can say the preview is not the pipeline's usual grey.
+    variant: str
+    # "ply" or "glb" — the viewer needs different loaders, and the URL can't be
+    # trusted to say (a signed URL is mostly query string).
+    mesh_format: str
 
 
 class TrainingRunSummaryOut(BaseModel):
@@ -1675,8 +1685,34 @@ def get_model_artifacts(request: Request, uid: str) -> ModelArtifactsOut:
     with session_scope() as session:
         _require_live_model(session, uid)
 
-    views = [url for url in (resolve(key) for key in view_keys(uid)) if url is not None]
-    return ModelArtifactsOut(uid=uid, views=views, mesh=resolve(normalized_key(uid)))
+    # Prefer the textured arm when it exists. Its blobs carry no `artifact` row by
+    # design (server.md#object-storage), so the only way to know is to look — one
+    # probe on the first view, which is cheap here and is why this preference is
+    # not extended to the browse grid's 24 cards.
+    variant = (
+        TEXTURED_VARIANT
+        if storage.exists(view_key(uid, 0, TEXTURED_VARIANT))
+        else DEFAULT_VARIANT
+    )
+    views = [
+        url for url in (resolve(key) for key in view_keys(uid, variant)) if url is not None
+    ]
+
+    # The mesh is resolved independently of the views: a model can legitimately
+    # have one arm's renders and the other's mesh mid-experiment, and showing the
+    # grey mesh beside textured views beats showing no mesh at all.
+    mesh_variant = (
+        TEXTURED_VARIANT
+        if storage.exists(normalized_key(uid, TEXTURED_VARIANT))
+        else DEFAULT_VARIANT
+    )
+    return ModelArtifactsOut(
+        uid=uid,
+        views=views,
+        mesh=resolve(normalized_key(uid, mesh_variant)),
+        variant=variant,
+        mesh_format=mesh_file_type(mesh_variant),
+    )
 
 
 @app.get("/artifacts/{key:path}", dependencies=LOGIN_REQUIRED)
