@@ -139,6 +139,13 @@ the [metadata DB](#database) stores only the object keys, never the blobs themse
   selection a laptop does. It stays a file rather than becoming `label` rows precisely because a
   labeled model is a trainable one ([ml.md](../ml/ml.md#the-second-dev-set)).
 
+**Ranged reads.** `Storage.get_range(key, start, length)` reads a slice of an object rather than the
+whole blob, on every backend (a `seek`+`read` locally, a ranged GET against GCS). It exists for the
+[texture census](../ml/ml.md#the-texture-census-step-0): a GLB declares its materials in a JSON chunk
+at the *head* of the file, so reading ~1-2% of each object answers "does this model carry colour?"
+across the corpus for ~1 GB of egress instead of ~135 GB. A short object returns fewer bytes rather
+than raising — a caller reading a head has to handle a truncated read anyway.
+
 **The source mesh's format is carried by its key**, not assumed. Ingestion only ever writes GLB
 (that is what Objaverse serves), but an [admin upload](../web/web.md#data-upload) may be STL or OBJ,
 so `convert` reads `model.raw_key` and derives the trimesh `file_type` from its extension

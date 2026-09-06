@@ -38,6 +38,17 @@ class Storage(Protocol):
         """Read the blob at `key`; raises if it does not exist."""
         ...
 
+    def get_range(self, key: str, start: int, length: int) -> bytes:
+        """Read at most `length` bytes of `key`, starting at byte `start`.
+
+        A short object returns fewer bytes rather than raising — the caller has to
+        handle a truncated read anyway. Exists because a GLB says everything about
+        its materials in a JSON chunk at the *head* of the file, so a census over
+        the corpus reads ~1-2% of the bytes instead of downloading meshes
+        (ml/texture_census.py).
+        """
+        ...
+
     def list_keys(self, prefix: str) -> Iterator[str]:
         """Every key under `prefix`, in no guaranteed order.
 
@@ -100,6 +111,11 @@ class LocalStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._path(key).read_bytes()
+
+    def get_range(self, key: str, start: int, length: int) -> bytes:
+        with self._path(key).open("rb") as blob_file:
+            blob_file.seek(start)
+            return blob_file.read(length)
 
     def list_keys(self, prefix: str) -> Iterator[str]:
         """Walk the filesystem under `prefix`, yielding keys relative to the root.
@@ -221,6 +237,12 @@ class GcsStorage:
     def get_bytes(self, key: str) -> bytes:
         return self._bucket.blob(key).download_as_bytes()
 
+    def get_range(self, key: str, start: int, length: int) -> bytes:
+        """Ranged GET — `end` is inclusive in the GCS API, hence the -1."""
+        return self._bucket.blob(key).download_as_bytes(
+            start=start, end=start + length - 1
+        )
+
     def list_keys(self, prefix: str) -> Iterator[str]:
         """Stream object names under `prefix` (the client paginates internally)."""
         for blob in self._bucket.list_blobs(prefix=prefix):
@@ -300,6 +322,9 @@ class RoutedGcsStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self._backend(key).get_bytes(key)
+
+    def get_range(self, key: str, start: int, length: int) -> bytes:
+        return self._backend(key).get_range(key, start, length)
 
     def list_keys(self, prefix: str) -> Iterator[str]:
         """List from whichever bucket owns `prefix` — routing by the same rule.
