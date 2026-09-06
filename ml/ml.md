@@ -1144,6 +1144,52 @@ colour is expected to carry what shape does not — stops the experiment. A qual
 ~2,000 models reopens the subset-size decision, since the per-class read is the reason the subset is
 sized at ~3,000 in the first place.
 
+### What the census found (2026-09-05)
+
+**The gate passes.** All 12,767 models were censused — the 11,783 trainable plus the 984 ingested
+LVIS dev-set models — and **none were unreadable**, so every number below rests on a parsed
+document rather than an inference from a failure. **6,816 of 11,783 trainable models (57.8%) carry a
+real UV texture**, and 85.8% carry colour of some kind. The dev set is slightly better covered
+(587/984 textured, 59.7%; 88.4% any colour), which matters because the A/B's headline is scored on
+it: the independent number does not have to be abandoned for want of textures.
+
+| class | trainable | `texture` | share | in a 300-capped subset |
+|---|---:|---:|---:|---:|
+| aircraft | 277 | 144 | 52.0% | 144 |
+| animal | 1,678 | 976 | 58.2% | 300 |
+| building | 1,575 | 1,059 | 67.2% | 300 |
+| car | 692 | 366 | 52.9% | 300 |
+| chair | 424 | 268 | 63.2% | 268 |
+| electronics | 1,274 | 625 | 49.1% | 300 |
+| figure | 1,605 | 885 | 55.1% | 300 |
+| food | 799 | 501 | 62.7% | 300 |
+| lamp | 472 | 102 | **21.6%** | 102 |
+| plant | 573 | 398 | 69.5% | 300 |
+| table | 276 | 176 | 63.8% | 176 |
+| weapon | 2,138 | 1,316 | 61.6% | 300 |
+| **all** | **11,783** | **6,816** | **57.8%** | **3,090** |
+
+**The three classes the mechanism predicts colour should help are all well covered** — `plant` 69.5%,
+`food` 62.7%, `electronics` 49.1% — which is the specific thing that could have killed the
+experiment and did not.
+
+**`lamp` is the outlier and it is a hard ceiling.** Only 102 textured lamps exist in the corpus, and
+43.6% of lamps are a single default-white material — plausibly because a lamp is often modelled as
+geometry plus an emissive, with the shade left uncoloured. No subset composition can raise it, so
+`lamp`'s per-class recall will rest on ~10 test models in either arm and should be read as
+directional at best. `aircraft` (144) and `table` (176) are thin for the same reason, less severely.
+
+**Two decisions follow from these numbers**, both settled 2026-09-05:
+
+- **Only the `texture` tier qualifies.** The pool is 6,816, comfortably above what a 3,000-model
+  subset needs, so there is no reason to dilute the treatment with flat single colours: every model
+  in the textured arm gains real surface detail, and a positive result therefore means textures.
+- **The subset is class-balanced, capped at 300 per class** — 3,090 models, which is the settled
+  size. Eight classes reach the cap (~30 test models each at the hashed 10% split) rather than the
+  4-6 a corpus-proportional draw would give `lamp` and `aircraft`. Both arms share the subset, so
+  the A/B is unaffected; what it does mean is that **both arms sit on different class priors than
+  run 15 did**, and any comparison to run 15's 0.3712 must say so.
+
 ## Coding Standards (ML)
 
 - **Language/framework:** Python 3.11+, PyTorch. Type hints on public functions.
