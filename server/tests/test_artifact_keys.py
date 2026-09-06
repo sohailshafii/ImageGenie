@@ -10,11 +10,17 @@ from __future__ import annotations
 import pytest
 
 from app.artifact_keys import (
+    CONVERTED_PREFIX,
+    DEFAULT_VARIANT,
+    NORMALIZED_PREFIX,
     NUM_VIEWS,
+    RENDERS_PREFIX,
+    TEXTURED_VARIANT,
     converted_key,
     file_type_for_raw_key,
     normalized_key,
     raw_key,
+    renders_prefix,
     uid_from_key,
     view_key,
     view_keys,
@@ -86,3 +92,72 @@ def test_file_type_for_raw_key_rejects_unsupported_formats() -> None:
 def test_fbx_is_not_a_recognised_key() -> None:
     """Upload rejects FBX up front; nothing downstream should treat one as ingestible."""
     assert uid_from_key(f"raw/{UID}.fbx") is None
+
+
+# --- Variants ---------------------------------------------------------------
+#
+# The textured arm of the A/B re-processes models the pipeline has already
+# rendered. Every test here is really one property: it must be impossible for one
+# arm to write over the other's artifacts (ml/ml.md#the-texture-ab).
+
+
+def test_default_variant_keys_are_byte_identical_to_the_unversioned_ones() -> None:
+    """Adding variants must not move a single existing blob."""
+    assert converted_key(UID) == converted_key(UID, DEFAULT_VARIANT)
+    assert converted_key(UID) == f"processed/converted/{UID}.ply"
+    assert normalized_key(UID) == f"processed/normalized/{UID}.ply"
+    assert view_key(UID, 3) == f"processed/renders/{UID}/view_03.png"
+
+
+def test_textured_variant_uses_its_own_paths_and_keeps_glb() -> None:
+    """PLY carries no UVs, so the textured arm stays in GLB through both stages."""
+    assert converted_key(UID, TEXTURED_VARIANT) == f"processed/converted_textured/{UID}.glb"
+    assert normalized_key(UID, TEXTURED_VARIANT) == f"processed/normalized_textured/{UID}.glb"
+    assert view_key(UID, 3, TEXTURED_VARIANT) == f"processed/renders_textured/{UID}/view_03.png"
+
+
+def test_variant_keys_never_collide_with_the_default_arm() -> None:
+    """The control arm's ~12k shape-only renders must survive the treatment arm."""
+    for variant_key, default_key in (
+        (converted_key(UID, TEXTURED_VARIANT), converted_key(UID)),
+        (normalized_key(UID, TEXTURED_VARIANT), normalized_key(UID)),
+        (view_key(UID, 0, TEXTURED_VARIANT), view_key(UID, 0)),
+    ):
+        assert variant_key != default_key
+
+
+@pytest.mark.parametrize("prefix", [CONVERTED_PREFIX, NORMALIZED_PREFIX, RENDERS_PREFIX])
+def test_textured_keys_fall_outside_the_reconcile_families(prefix: str) -> None:
+    """`processed/converted/` must not prefix-match `processed/converted_textured/`.
+
+    This is what keeps `app.reconcile_from_storage` from rebuilding `artifact` rows
+    out of textured blobs. The `artifact` table is unique on `(model_uid, stage)`,
+    so such a row would overwrite the one the control arm's trainability query
+    joins against — the failure the parallel namespace exists to prevent.
+    """
+    for key in (
+        converted_key(UID, TEXTURED_VARIANT),
+        normalized_key(UID, TEXTURED_VARIANT),
+        view_key(UID, 0, TEXTURED_VARIANT),
+    ):
+        assert not key.startswith(prefix)
+
+
+def test_uid_from_key_is_variant_blind() -> None:
+    """Deliberate: a variant blob is not a pipeline artifact and owns no DB row."""
+    assert uid_from_key(converted_key(UID, TEXTURED_VARIANT)) is None
+    assert uid_from_key(view_key(UID, 0, TEXTURED_VARIANT)) is None
+
+
+def test_view_keys_follow_their_variant() -> None:
+    keys = view_keys(UID, TEXTURED_VARIANT)
+    assert len(keys) == NUM_VIEWS
+    assert all(key.startswith(renders_prefix(UID, TEXTURED_VARIANT)) for key in keys)
+
+
+@pytest.mark.parametrize("build_key", [converted_key, normalized_key, renders_prefix])
+def test_an_unknown_variant_is_refused_not_defaulted(build_key) -> None:
+    """A typo that silently fell back to the default paths would have one arm
+    writing over the other's artifacts — the one failure that must be loud."""
+    with pytest.raises(ValueError, match="unknown artifact variant"):
+        build_key(UID, "textured_v2")

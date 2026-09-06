@@ -11,6 +11,8 @@ without pulling in the render stage's GL stack.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # Views per model, evenly spaced on a tilted ring (ml/ml.md — the multi-view CNN's
 # input). The API relies on this to enumerate a model's renders.
 NUM_VIEWS = 12
@@ -23,6 +25,60 @@ NORMALIZED_PREFIX = "processed/normalized/"
 RENDERS_PREFIX = "processed/renders/"
 
 MESH_SUFFIX = ".ply"
+
+# --- Artifact variants -------------------------------------------------------
+#
+# A *variant* is a parallel namespace for the same models processed a different
+# way: `processed/renders_textured/<uid>/` alongside `processed/renders/<uid>/`.
+# It exists for the texture A/B (ml.md#the-texture-ab), which needs to re-render
+# a subset with materials preserved **without destroying the shape-only renders
+# it is being compared against** — `view_keys(uid)` gives a model exactly one
+# render path, so re-rendering in place would overwrite the control arm and make
+# the comparison unreproducible.
+#
+# The two arms differ in mesh format as well as path: the default pipeline's
+# canonical PLY carries no UVs at all, which is why the textured arm keeps GLB
+# through convert and normalize.
+#
+# **Variant keys are deliberately outside the four families above.** A prefix
+# listing of `processed/converted/` does not match `processed/converted_textured/`,
+# so `app.reconcile_from_storage` never sees them — and it must not, because the
+# `artifact` table is unique on `(model_uid, stage)` and a row rebuilt from a
+# textured blob would overwrite the row the control arm's trainability query
+# depends on. `uid_from_key` stays variant-blind for the same reason.
+DEFAULT_VARIANT = "default"
+TEXTURED_VARIANT = "textured"
+
+
+@dataclass(frozen=True)
+class VariantLayout:
+    """How one variant names its blobs: a path suffix and a mesh format."""
+
+    path_suffix: str
+    mesh_suffix: str
+
+
+VARIANT_TO_LAYOUT = {
+    DEFAULT_VARIANT: VariantLayout(path_suffix="", mesh_suffix=MESH_SUFFIX),
+    TEXTURED_VARIANT: VariantLayout(path_suffix="_textured", mesh_suffix=".glb"),
+}
+
+
+def layout_for(variant: str) -> VariantLayout:
+    """The layout for `variant`, or ``ValueError`` for an unknown one.
+
+    Refusing rather than defaulting matters: a typo'd variant that silently fell
+    back to the default paths would have one arm of the A/B quietly writing over
+    the other's artifacts, which is the single failure this whole namespace
+    exists to prevent.
+    """
+    try:
+        return VARIANT_TO_LAYOUT[variant]
+    except KeyError:
+        raise ValueError(
+            f"unknown artifact variant {variant!r}; "
+            f"expected one of {sorted(VARIANT_TO_LAYOUT)}"
+        ) from None
 
 # Source-mesh formats the pipeline accepts, mapped to the `file_type` trimesh
 # loads them as. Ingestion (Objaverse) only ever produces GLB; the others exist
@@ -59,19 +115,21 @@ def file_type_for_raw_key(key: str) -> str:
     raise ValueError(f"no supported mesh format for raw key {key!r}")
 
 
-def converted_key(uid: str) -> str:
-    """Convert stage output — the pipeline's canonical PLY."""
-    return f"{CONVERTED_PREFIX}{uid}{MESH_SUFFIX}"
+def converted_key(uid: str, variant: str = DEFAULT_VARIANT) -> str:
+    """Convert stage output — the pipeline's canonical PLY, or a variant's format."""
+    layout = layout_for(variant)
+    return f"processed/converted{layout.path_suffix}/{uid}{layout.mesh_suffix}"
 
 
-def normalized_key(uid: str) -> str:
-    """Normalize stage output — centered + unit-scaled PLY. What the viewer loads."""
-    return f"{NORMALIZED_PREFIX}{uid}{MESH_SUFFIX}"
+def normalized_key(uid: str, variant: str = DEFAULT_VARIANT) -> str:
+    """Normalize stage output — centered + unit-scaled. What the viewer loads."""
+    layout = layout_for(variant)
+    return f"processed/normalized{layout.path_suffix}/{uid}{layout.mesh_suffix}"
 
 
-def renders_prefix(uid: str) -> str:
+def renders_prefix(uid: str, variant: str = DEFAULT_VARIANT) -> str:
     """Prefix under which a model's per-view PNGs live."""
-    return f"{RENDERS_PREFIX}{uid}/"
+    return f"processed/renders{layout_for(variant).path_suffix}/{uid}/"
 
 
 # Training output, not a pipeline artifact — kept out of the "families" above so
@@ -99,14 +157,14 @@ def dev_set_key(name: str) -> str:
     return f"{DEV_SET_PREFIX}{name}.csv"
 
 
-def view_key(uid: str, view_index: int) -> str:
+def view_key(uid: str, view_index: int, variant: str = DEFAULT_VARIANT) -> str:
     """One rendered view, ``view_00.png`` … ``view_11.png``."""
-    return f"{renders_prefix(uid)}view_{view_index:02d}.png"
+    return f"{renders_prefix(uid, variant)}view_{view_index:02d}.png"
 
 
-def view_keys(uid: str) -> list[str]:
+def view_keys(uid: str, variant: str = DEFAULT_VARIANT) -> list[str]:
     """Every view key for a model, in view order."""
-    return [view_key(uid, index) for index in range(NUM_VIEWS)]
+    return [view_key(uid, index, variant) for index in range(NUM_VIEWS)]
 
 
 def uid_from_key(key: str) -> str | None:
