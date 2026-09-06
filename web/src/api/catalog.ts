@@ -1,8 +1,10 @@
 import { download, request, upload } from './client';
 import type {
+  ArtifactVariant,
   ClassName,
   DeadLetter,
   LabelSource,
+  MeshFormat,
   ModelArtifacts,
   ModelPage,
   ModelSort,
@@ -35,6 +37,8 @@ interface ModelArtifactsResponse {
   uid: string;
   views: string[];
   mesh: string | null;
+  variant: ArtifactVariant;
+  mesh_format: MeshFormat;
 }
 
 interface ModelPageResponse {
@@ -65,10 +69,17 @@ function toModelSummary(model: ModelSummaryResponse): ModelSummary {
  * The grid uses `ModelSummary.thumbnail` instead.
  */
 export async function getModelArtifacts(uid: string): Promise<ModelArtifacts> {
-  return request<ModelArtifactsResponse>(
+  const body = await request<ModelArtifactsResponse>(
     'GET',
     `/models/${encodeURIComponent(uid)}/artifacts`,
   );
+  return {
+    uid: body.uid,
+    views: body.views,
+    mesh: body.mesh,
+    variant: body.variant,
+    meshFormat: body.mesh_format,
+  };
 }
 
 /** GET /models — a page of models, optionally filtered by class, source, and/or title search. */
