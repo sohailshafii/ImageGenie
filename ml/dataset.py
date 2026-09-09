@@ -17,7 +17,7 @@ from PIL import Image
 from taxonomy import ROSTER
 from torch.utils.data import Dataset
 
-from app.artifact_keys import view_keys
+from app.artifact_keys import DEFAULT_VARIANT, view_keys
 from app.storage import Storage
 
 # The resnet backbone is ImageNet-pretrained, so inputs are normalized to the
@@ -48,13 +48,24 @@ def _load_view(storage: Storage, key: str) -> torch.Tensor:
     return decode_view(storage.get_bytes(key))
 
 
-def load_views(storage: Storage, uid: str) -> torch.Tensor:
+def load_views(
+    storage: Storage, uid: str, variant: str = DEFAULT_VARIANT
+) -> torch.Tensor:
     """Every rendered view of one model, stacked into ``[num_views, 3, H, W]``.
 
     Standalone rather than inlined into `MultiViewDataset`, because inference
     (ml/infer.py) needs views for a model whose class is the unknown.
+
+    ``variant`` chooses *which* renders — the shape-only default, or a parallel
+    namespace such as `textured` (server.md#object-storage). It is the whole
+    mechanism by which the two arms of the texture A/B differ: same models, same
+    split, same config, different pixels. `layout_for` raises on an unknown
+    variant rather than falling back, so a typo cannot quietly score one arm
+    against the other's renders.
     """
-    return torch.stack([_load_view(storage, key) for key in view_keys(uid)])
+    return torch.stack(
+        [_load_view(storage, key) for key in view_keys(uid, variant)]
+    )
 
 
 class MultiViewDataset(Dataset):
@@ -68,23 +79,41 @@ class MultiViewDataset(Dataset):
     storage-level check used in the local smoke.
     """
 
-    def __init__(self, samples: list[tuple[str, str]], storage: Storage) -> None:
+    def __init__(
+        self,
+        samples: list[tuple[str, str]],
+        storage: Storage,
+        variant: str = DEFAULT_VARIANT,
+    ) -> None:
         self._samples = samples
         self._storage = storage
+        # Which render namespace the pixels come from. Carried on the dataset
+        # rather than passed per item so one run can only ever read one arm.
+        self._variant = variant
 
     def __len__(self) -> int:
         return len(self._samples)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
         uid, class_name = self._samples[index]
-        return load_views(self._storage, uid), CLASS_TO_INDEX[class_name]
+        return (
+            load_views(self._storage, uid, self._variant),
+            CLASS_TO_INDEX[class_name],
+        )
 
 
-def has_all_views(storage: Storage, uid: str) -> bool:
+def has_all_views(
+    storage: Storage, uid: str, variant: str = DEFAULT_VARIANT
+) -> bool:
     """True if every rendered view for ``uid`` is present in storage.
 
     Used to skip half-rendered models in the local smoke so training never faults
     mid-epoch. At full scale, prefer filtering by the rendered ``artifact`` rows
     (one DB query) over this, which costs a storage HEAD per view.
+
+    The variant arm has no ``artifact`` rows *by design* — writing them would
+    overwrite the rows the control arm's trainability query depends on
+    (server.md#object-storage) — so for a non-default variant this blob check is
+    not the cheap fallback but the only answer available.
     """
-    return all(storage.exists(key) for key in view_keys(uid))
+    return all(storage.exists(key) for key in view_keys(uid, variant))
