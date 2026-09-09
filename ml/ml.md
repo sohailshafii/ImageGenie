@@ -579,7 +579,15 @@ shortfall rather than absorbing it.
 **Read macro recall, not accuracy, across these two.** On a balanced set accuracy *is* macro recall
 up to rounding, and the two agree here to within 0.002 — a free check that the selection is balanced
 and the metrics behave. The skewed split has no such property, so its 8-point gap between the two
-numbers is the skew talking. Comparing accuracies (0.4241 → 0.3730) measures the change of
+numbers is the skew talking.
+
+⚠️ **That free check does not survive into `lvis_textured`** (the texture A/B's dev set, below).
+`build_dev_set` balanced the `lvis` selection at 83 per class, but restricting it to models that
+carry a UV texture keeps a different *fraction* of each class — texture coverage ranges from 45.8%
+of `chair` to 71.1% of `figure` — so the survivors run from **38 (`chair`) to 59 (`figure`)**, a
+1.55:1 spread. Macro recall stays the right headline there, but a gap between accuracy and macro
+recall on `lvis_textured` is now *expected* rather than evidence that something is wrong, and the
+balance assertion must not be carried over. Comparing accuracies (0.4241 → 0.3730) measures the change of
 class balance; comparing macro recalls (0.3401 → **0.3712**) measures the model.
 
 So the model scores **~3 points better against labels made without reference to it**. That is the
@@ -1277,6 +1285,16 @@ the same parser and pushed to `processed/devsets/lvis_textured.csv`. **Both arms
 `lvis_textured`; neither scores `lvis`.** The alternative — letting the treatment arm report 59.7%
 coverage and be marked partial by the [sample floor](#evaluation) — describes the shortfall honestly
 and still leaves the comparison meaningless.
+
+**The restriction costs the set its balance**, which is the price of both arms scoring the same
+objects and is worth stating rather than discovering later. Texture coverage is not uniform across
+classes, so the 83-per-class `lvis` selection becomes 38 (`chair`) to 59 (`figure`) — 587 models at
+1.55:1. Two consequences: the accuracy-equals-macro-recall check above no longer applies (see the
+warning there), and with ~49 models per class the standard error on a per-class recall is around
+0.07, which puts the error on a single arm's macro recall near **0.020**. Both arms score the
+identical models, so the *difference* is paired and better behaved than that — but a 1-2 point move
+is not separable from sampling noise however it is presented, and only a difference of roughly 3-4
+points upward is worth reporting as a result.
 
 The two selections are written in the same breath because together they *are* the experiment's
 population: a regenerated subset paired with a stale dev set is a comparison nobody would notice was
