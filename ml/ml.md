@@ -1336,6 +1336,86 @@ width), so a model in this list can still drop out of the treatment arm. Both ar
 list that survives — otherwise the treatment arm quietly loses models and the two arms are scored on
 different data, which is the failure mode [the metric traps](#evaluation) are full of.
 
+## The Texture A/B: What It Found (2026-09-09)
+
+**Textured renders raised macro recall on the independent dev set from 0.2912 to 0.3869 — up 9.6
+points.** Accuracy moved almost identically (0.3102 → 0.4038, +9.4). Against the ~0.02 standard
+error this dev set supports, that is roughly five times the noise floor and comfortably past the 3-4
+point bar set before the runs. The direction is corroborated on the val split, a different set of
+models: 0.2791 → 0.3449.
+
+| | control (`run 23`) | treatment (`run 24`) |
+|---|---|---|
+| render variant | `default` (shape-only grey) | `textured` |
+| models / split | 3,008 — 2,407 / 294 / 307 | **identical** |
+| epochs, seed, config | 5, seed 0 | **identical** |
+| `lvis_textured` accuracy | 0.3102 | **0.4038** |
+| `lvis_textured` macro recall | 0.2912 | **0.3869** |
+| evaluation row | 10 | 11 |
+
+Both arms trained on the same 3,008 uids with the same hashed split and the same config, differing
+only in `--render-variant`, and both were scored on all 577 `lvis_textured` models with no coverage
+shortfall. The lists were fixed *after* the textured pipeline ran (3,090 → 3,008 and 587 → 577; the
+rest were refused by convert's atlas guard or never rendered), so neither arm was scored on a model
+the other did not have.
+
+### The per-class table, and why it misleads at first read
+
+| class | control recall | treatment recall | delta | control precision | treatment precision |
+|---|---:|---:|---:|---:|---:|
+| aircraft | 0.000 | 0.070 | +0.070 | — | 1.000 |
+| animal | 0.192 | 0.135 | -0.058 | 0.256 | 0.350 |
+| building | 0.125 | 0.625 | **+0.500** | 0.333 | 0.321 |
+| car | 0.362 | 0.426 | +0.064 | 0.486 | 0.714 |
+| chair | 0.189 | 0.703 | **+0.514** | 0.636 | 0.342 |
+| electronics | 0.022 | 0.130 | +0.109 | 1.000 | 0.750 |
+| figure | 0.390 | 0.814 | **+0.424** | 0.319 | 0.291 |
+| food | 0.608 | 0.745 | +0.137 | 0.378 | 0.458 |
+| lamp | 0.143 | 0.057 | -0.086 | 0.833 | 1.000 |
+| plant | 0.842 | 0.316 | **-0.526** | 0.193 | 0.514 |
+| table | 0.111 | 0.133 | +0.022 | 0.833 | 0.750 |
+| weapon | 0.510 | 0.490 | -0.020 | 0.455 | 0.600 |
+
+With 35-59 models per class the per-class standard error is about 0.07, so only `building`, `chair`,
+`figure` and `plant` move outside ±0.14; every other row is within noise and should not be read as a
+finding.
+
+### `plant` fell because the control was over-predicting it
+
+The largest single move is `plant` losing 0.53 of recall, which reads as colour *hurting* the class
+colour was most expected to help. It is the opposite. **The control predicted `plant` for 249 of the
+577 dev-set models — 43.2% of everything** — at a precision of 0.193. Catching 84% of real plants is
+what that buys: a class assigned to nearly half the corpus will contain most of its own members. The
+treatment predicts `plant` 35 times (6.1%) at a precision of 0.514.
+
+So the recall drop is a consequence of the over-prediction ending, not of plants becoming harder to
+recognise, and **recall on its own cannot distinguish the two** — which is exactly the case
+[macro recall is meant to catch](#evaluation) and exactly why precision is tabled beside it here.
+Reading the delta column alone would have recorded the single clearest piece of evidence *for* the
+treatment as evidence against it.
+
+### What this does not show
+
+- **Neither arm is well calibrated.** The treatment is less concentrated, not diffuse: its most-used
+  class is `figure` at 28.6% of predictions, with `building` at 18.9%, against an even split of ~8.3%
+  on a near-balanced dev set. The control's top three take 69.9% of predictions and the treatment's
+  61.9%. Four classes remain effectively unused in the treatment (`lamp` 2 predictions, `aircraft` 3,
+  `electronics` 8, `table` 8) against five in the control.
+- **The predicted mechanism did not hold.** Colour was expected to help `food`, `plant` and
+  `electronics`, where it plausibly carries what shape does not. `food` (+0.137) and `electronics`
+  (+0.109) moved as predicted; `plant` did not, and the three largest gains — `chair`, `building`,
+  `figure` — are classes nobody nominated. The aggregate claim survives; the story about *why* does
+  not, and it should not be repeated as though it did.
+- **The absolute numbers are low and both arms are undertrained.** 5 epochs on 2,407 training
+  models, chosen because runs 14 and 15 used 4 and run 14's val loss was flat after epoch 1. Whether
+  the control's degeneracy is a property of shape-only renders or merely of a small, short run is
+  **not settled by this experiment**.
+- **It is not comparable to run 15's 0.3712.** That was scored on `lvis` (984 balanced models) by a
+  model trained on ~9,400 models drawn from the whole corpus. This population is texture-only and
+  class-balanced, scored on 577. Run 15 is context, not a baseline.
+- **It says nothing about the 42% of the corpus that carries no texture**, whose renders cannot
+  change. Any corpus-wide gain is bounded by the textured share.
+
 ## Coding Standards (ML)
 
 - **Language/framework:** Python 3.11+, PyTorch. Type hints on public functions.

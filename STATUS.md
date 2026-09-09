@@ -218,7 +218,15 @@ restating because they are easy to forget:
 
 So the ceiling is in the *representation* or the *calibration*, in that order:
 
-1. **Texture/material A/B — the leading candidate. Built, not yet run.** Renders are shape-only:
+1. ~~**Texture/material A/B**~~ — **ANSWERED 2026-09-09: +9.6 points of macro recall**
+   (0.2912 → 0.3869 on `lvis_textured`, runs 23 and 24, evaluations 10 and 11). Full result, the
+   per-class table and what it does *not* show: [ml.md](ml/ml.md#the-texture-ab-what-it-found-2026-09-09).
+   The gain is real at ~5x the dev set's standard error, but the mechanism predicted for it was
+   wrong — `plant` recall *fell* 0.53, because the control was predicting `plant` for 43% of the
+   corpus at 0.193 precision and the treatment stopped. Read that section before quoting the
+   headline.
+
+   Original entry: **Built, not yet run.** Renders are shape-only:
    `render.py` overrides every material with neutral grey, and `convert` exports PLY, which carries
    no UVs at all, so colour is gone two stages before rendering. Testing it means preserving textured
    geometry through convert + normalize and re-rendering a subset, then scoring that subset against
