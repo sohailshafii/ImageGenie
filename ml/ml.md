@@ -1263,6 +1263,34 @@ for: the backend defaults to `local`, where a push copies the file into `data/st
 success, which is what `make devset-push` once did — and a listing is the only thing that
 distinguishes a real push from a no-op or a wrong bucket.
 
+### Training an arm
+
+Two flags and one recorded field carry the experiment into a run:
+
+- **`--subset <name>`** replaces the trainable set with the subset's uids. It is an *intersection*
+  with the live trainable query, not a lookup: the uid list fixes the population, the database fixes
+  what each model currently is, so a label corrected between selection and training reaches the run.
+  Uids that are no longer trainable — soft-deleted, unlabeled, or unrendered — are skipped **with a
+  warning**, because a silently shrinking arm is exactly what breaks "both arms on the same models".
+  The name lands in `data_snapshot["subset"]` for the same reason `limit` does: without it the run's
+  `label_count` reads as an unnamed slice of the corpus and two runs on different subsets look
+  comparable.
+- **`--render-variant <name>`** chooses which renders the run reads, and is a `Config` field rather
+  than a runner's memory — so `training_run.config` records the arm (NFR-4) and evaluation reads it
+  back off the run instead of being told again at scoring time. It resolves through `layout_for`
+  **before the run row is created**: an unknown variant would otherwise surface inside a DataLoader
+  worker, mid-epoch, after a spot GPU had been provisioned and a multi-GB image pulled — and it
+  would surface as a missing blob rather than as a typo. `Config.render_variant` defaults to
+  `default`, which is what `infer.rebuild_config` fills in for every run that predates the A/B, so
+  those runs keep reading the renders they actually trained on.
+
+Both arms are launched from the CLI, since the launch form has no field for either flag:
+
+```
+make train-cloud ARGS='--subset textured_subset'                          # control
+make train-cloud ARGS='--subset textured_subset --render-variant textured' # treatment
+```
+
 **The final uid list is fixed after the textured pipeline runs, not here.** Convert refuses a model
 whose packed texture atlas exceeds 16,384 px (4 of 50 sampled qualifying models pack to exactly that
 width), so a model in this list can still drop out of the treatment arm. Both arms then train on the
