@@ -41,7 +41,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 PYRUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help census texture-subset texture-subset-push devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help census texture-subset texture-subset-push seed-variant devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -115,6 +115,22 @@ texture-subset-push: ## copy the existing subset CSV to the processed bucket, fo
 	# then lists the prefix back so "pushed" is checked rather than claimed).
 	IMAGEGENIE_STORAGE_BACKEND=gcs PYTHONPATH=server $(BIN)/python \
 	    ml/build_texture_subset.py --push-only
+
+seed-variant: ## publish variant convert jobs for the texture A/B (LIMIT=N to pilot first)
+	# Starts at CONVERT, not download: these models are already ingested and their
+	# raw GLB is in the bucket, so re-downloading would fetch bytes we hold. Each
+	# stage hands the variant to the next, so one job per model drives the arm.
+	#
+	# Points at the deployed pipeline, hence IMAGEGENIE_PUBSUB_PROJECT + ADC — the
+	# default project is `imagegenie-local`, where these messages would go nowhere.
+	# Cost guardrail (CLAUDE.md): pilot a handful and LOOK AT THE RENDERS before
+	# publishing all 3,677 — the unit tests mock the GL call.
+	#   make seed-variant LIMIT=8
+	#   make seed-variant
+	IMAGEGENIE_PUBSUB_PROJECT=$(GCP_PROJECT) PYTHONPATH=server $(BIN)/python -m app.seed_variant \
+		--from-csv data/experiments/textured_subset.csv \
+		--from-csv data/devset/lvis_textured.csv \
+		$(if $(LIMIT),--limit $(LIMIT),)
 
 devset: ## select the second dev set from un-ingested LVIS gold objects (FR-7; DEVSET_COUNT=N)
 	# Needs BOTH the cert shim (it reads LVIS annotations over the network) and
