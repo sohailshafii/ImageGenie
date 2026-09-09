@@ -1220,6 +1220,55 @@ directional at best. `aircraft` (144) and `table` (176) are thin for the same re
   the A/B is unaffected; what it does mean is that **both arms sit on different class priors than
   run 15 did**, and any comparison to run 15's 0.3712 must say so.
 
+## The Experiment Subset
+
+`ml/build_texture_subset.py` (`make texture-subset`) turns the census into the list both arms of the
+A/B train on: **3,090 models, class-balanced at a cap of 300, drawn from the 6,816 trainable
+`texture`-tier uids**. It reads `data/census/texture_census.csv` rather than the database or the
+bucket, because the census is the only thing that knows which models carry a UV texture and
+re-deriving that would mean re-reading 12,767 GLB headers to reproduce a list that already exists.
+
+**Selection is by hash of the uid** — `sha256("texture-subset:<uid>")`, salted apart from
+`splits.bucket_of`, `train.subsample_rank` and `census_rank` so that no two selection steps rank the
+same models in lockstep. This is the same property [the split](#dataset-splits) is built on, adopted
+for the same reason: index-based selection has twice produced a comparison that looked like a result
+and was not. Concretely, the subset is *nested* — regenerating it at a smaller cap yields a strict
+subset of the larger draw, and censusing more textured models later can displace at most one member
+per class, at the cap boundary. It is seed-free, like `build_dev_set.hash_order`: a seed would only
+buy the ability to draw a *different* 3,090 models, which is not something an experiment whose two
+arms must sit on one list has any use for.
+
+**The shortfall is not redistributed.** Four classes cannot reach the cap — `chair` 268, `table` 176,
+`aircraft` 144, `lamp` 102 — and they contribute what they have. Topping the total back up from the
+large classes is precisely the imbalance the cap exists to remove, and it would paper over the fact
+that `lamp`'s recall rests on a handful of test models however the draw is composed.
+
+**What the hashed 10% split makes of it** (seed 0, the training default): **2,481 train / 299 val /
+310 test**. Per class in test: building 39, plant 33, food 32, weapon 30, car 27, electronics 27,
+figure 26, animal 25, chair 21, table 20, aircraft 18, lamp 12. The three classes the mechanism
+predicts — `food`, `plant`, `electronics` — land at 32, 33 and 27, which is enough for a per-class
+recall to mean something; `lamp` at 12 is directional at best, as the census said it would be.
+
+**The `class` column is written for reporting only.** `ml/train.py --subset` re-resolves each uid's
+current label through the live trainability query, so a label corrected between selection and
+training reaches the run. That is the opposite of the [second dev set](#the-second-dev-set), whose
+classes live in a file precisely so they can never become `label` rows — and the two files sit under
+different bucket prefixes to keep the distinction legible
+([server.md](../server/server.md#object-storage)).
+
+**`make texture-subset-push` is a separate step**, and it forces `IMAGEGENIE_STORAGE_BACKEND=gcs`
+before copying the CSV to `processed/experiments/textured_subset.csv`, then **lists the prefix back**
+so that "pushed" is an observation of the bucket rather than a claim. Both halves of that are paid
+for: the backend defaults to `local`, where a push copies the file into `data/storage/` and reports
+success, which is what `make devset-push` once did — and a listing is the only thing that
+distinguishes a real push from a no-op or a wrong bucket.
+
+**The final uid list is fixed after the textured pipeline runs, not here.** Convert refuses a model
+whose packed texture atlas exceeds 16,384 px (4 of 50 sampled qualifying models pack to exactly that
+width), so a model in this list can still drop out of the treatment arm. Both arms then train on the
+list that survives — otherwise the treatment arm quietly loses models and the two arms are scored on
+different data, which is the failure mode [the metric traps](#evaluation) are full of.
+
 ## Coding Standards (ML)
 
 - **Language/framework:** Python 3.11+, PyTorch. Type hints on public functions.

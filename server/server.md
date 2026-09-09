@@ -137,7 +137,12 @@ the [metadata DB](#database) stores only the object keys, never the blobs themse
   selections** at `processed/devsets/<name>.csv` (`artifact_keys.dev_set_key`): a list of uids and
   gold classes, stored so a Vertex evaluation job — which has no checkout — can read the same
   selection a laptop does. It stays a file rather than becoming `label` rows precisely because a
-  labeled model is a trainable one ([ml.md](../ml/ml.md#the-second-dev-set)).
+  labeled model is a trainable one ([ml.md](../ml/ml.md#the-second-dev-set)). **Experiment subsets**
+  live alongside them at `processed/experiments/<name>.csv` (`artifact_keys.experiment_subset_key`)
+  for the same reachability reason — a Vertex training job has no checkout either. They get their
+  own prefix rather than sharing `processed/devsets/` because the relationship to training is the
+  opposite one: a dev set must never be trained on, and an experiment subset is exactly the list
+  that is ([ml.md](../ml/ml.md#the-experiment-subset)).
 
 **Artifact variants — a parallel namespace.** `artifact_keys` takes an optional `variant`, which
 shifts a stage's output into its own prefix and (for the mesh stages) its own format:
