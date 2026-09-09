@@ -139,6 +139,17 @@ resource "google_pubsub_subscription" "stage_worker" {
 
   ack_deadline_seconds = 600
 
+  # Never expire. Pub/Sub's default is to DELETE a subscription after 31 days of
+  # inactivity, which is a poor fit for a pipeline that runs in bursts months
+  # apart: the subscriptions for normalize, render, download and every DLQ were
+  # silently gone on 2026-09-09, and because a message published to a topic with
+  # no subscription is simply dropped, the first textured convert jobs completed
+  # and then vanished on their way to normalize. Nothing errored — the stage's
+  # logs were clean and the blobs just never appeared.
+  expiration_policy {
+    ttl = "" # empty string = never
+  }
+
   # Push delivery to the stage's Cloud Run service, authenticated by the push SA's
   # OIDC token (server.md#compute); 2xx acks, 5xx nacks.
   push_config {
@@ -166,6 +177,13 @@ resource "google_pubsub_subscription" "stage_dlq" {
   for_each = local.preprocessing_stages
   name     = "${each.key}-jobs-dlq-sub"
   topic    = google_pubsub_topic.stage_dlq[each.key].id
+
+  # A DLQ subscription is idle by design — it exists so quarantined messages can
+  # be inspected long after the run that produced them — so the 31-day default
+  # would delete exactly the evidence it is here to keep.
+  expiration_policy {
+    ttl = ""
+  }
 }
 
 # Dead-lettering needs the Pub/Sub service agent to publish to the DLQ topic and ack

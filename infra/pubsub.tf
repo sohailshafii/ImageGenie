@@ -21,6 +21,17 @@ resource "google_pubsub_subscription" "download_worker" {
 
   ack_deadline_seconds = 600 # a single model download can take a while
 
+  # Never expire. Pub/Sub's default is to DELETE a subscription after 31 days of
+  # inactivity, which is a poor fit for a pipeline that runs in bursts months
+  # apart: the subscriptions for normalize, render, download and every DLQ were
+  # silently gone on 2026-09-09, and because a message published to a topic with
+  # no subscription is simply dropped, the first textured convert jobs completed
+  # and then vanished on their way to normalize. Nothing errored — the stage's
+  # logs were clean and the blobs just never appeared.
+  expiration_policy {
+    ttl = "" # empty string = never
+  }
+
   # Push delivery: Pub/Sub POSTs each message to the Cloud Run service, minting an
   # OIDC token as the push SA so Cloud Run's IAM authenticates the call. The 2xx/5xx
   # response is the ack/nack (server.md#compute).
@@ -49,6 +60,11 @@ resource "google_pubsub_subscription" "download_worker" {
 resource "google_pubsub_subscription" "download_dlq" {
   name  = "download-jobs-dlq-sub"
   topic = google_pubsub_topic.download_dlq.id
+
+  # Idle by design; see the note on download_worker.
+  expiration_policy {
+    ttl = ""
+  }
 }
 
 # Dead-lettering requires the Pub/Sub service agent to publish to the DLQ topic and
