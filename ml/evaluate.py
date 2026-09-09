@@ -35,7 +35,7 @@ from __future__ import annotations
 import argparse
 from typing import NamedTuple
 
-from build_dev_set import load_dev_set
+from build_dev_set import dev_set_path, load_dev_set
 from build_texture_subset import load_subset as load_subset_uids
 from infer import evaluate_samples as score
 from infer import load_run_model
@@ -70,7 +70,17 @@ PARTITIONS = ("test", "val", "train")
 # different corpus — which is why it reads its samples from a file rather than
 # from a split.
 LVIS = "lvis"
-DEV_SETS = (*PARTITIONS, LVIS)
+# The same gold objects restricted to the ones that carry a UV texture
+# (`ml/build_texture_subset.py`). Both arms of the texture A/B score *this*, not
+# `lvis`: only 587 of the 984 gold models can be rendered in colour, and scoring
+# the control on all 984 while the treatment sees 587 would compare two arms on
+# different models — the failure that has twice produced defensible numbers
+# pointing opposite ways (ml.md#evaluation).
+LVIS_TEXTURED = "lvis_textured"
+# Dev sets that are separate corpora rather than slices of ours: a file of uids
+# and gold classes, read by name, with no split to replay or recompute.
+EXTERNAL_DEV_SETS = (LVIS, LVIS_TEXTURED)
+DEV_SETS = (*PARTITIONS, *EXTERNAL_DEV_SETS)
 
 
 # How much of a dev set an evaluation must actually cover.
@@ -192,8 +202,8 @@ class ScoredSelection(NamedTuple):
     basis: str | None
 
 
-def resolve_lvis_dev_set() -> ScoredSelection:
-    """The second dev set: gold-labeled objects, filtered to what is scorable and clean.
+def resolve_external_dev_set(name: str = LVIS) -> ScoredSelection:
+    """A named gold-labeled selection, filtered to what is scorable and clean.
 
     Two filters, and the second is the point of the whole exercise. Models that
     have not finished rendering cannot be scored at all. Models that are
@@ -209,15 +219,15 @@ def resolve_lvis_dev_set() -> ScoredSelection:
     all, and the count is loud because it means the contamination guard has
     actually fired.
     """
-    dev_set = load_dev_set()
+    dev_set = load_dev_set(dev_set_path(name), name)
     rendered_uids_set = load_rendered_uids([uid for uid, _ in dev_set])
     scorable = [(uid, class_name) for uid, class_name in dev_set
                 if uid in rendered_uids_set]
     if not scorable:
         raise SystemExit(
-            f"none of the {len(dev_set)} selected dev-set models are rendered yet — "
+            f"none of the {len(dev_set)} selected {name} models are rendered yet — "
             "seed them through the pipeline first "
-            "(`python -m app.seed --from-labels data/devset/lvis_dev.csv`)"
+            f"(`python -m app.seed --from-labels {dev_set_path(name)}`)"
         )
     if len(scorable) < len(dev_set):
         print(
@@ -492,11 +502,11 @@ def _score_run(
     storage = build_storage(get_settings())
     model, config, snapshot = load_run_model(run_id, storage)
 
-    if dev_set == LVIS:
+    if dev_set in EXTERNAL_DEV_SETS:
         # No split to replay and none to recompute: these objects were never in
         # the corpus the run partitioned, which is exactly what makes them a
         # second dev set rather than another view of the first.
-        selection = resolve_lvis_dev_set()
+        selection = resolve_external_dev_set(dev_set)
         enforce_coverage_floor(selection, run_id, dev_set, min_coverage)
         return score_and_record(
             model, evaluation_id, run_id, dev_set, selection, storage, num_workers,

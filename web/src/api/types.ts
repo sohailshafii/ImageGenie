@@ -302,6 +302,11 @@ export const EVALUATION_DEV_SETS = [
     partition: false,
     hint: 'the second dev set: objects labeled outside this project (needs make devset-push)',
   },
+  {
+    name: 'lvis_textured',
+    partition: false,
+    hint: 'the gold set restricted to models that carry a texture — what the texture A/B scores',
+  },
 ] as const;
 
 /** Whether this deployment can launch a run, and what it would launch. */

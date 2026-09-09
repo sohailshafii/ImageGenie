@@ -16,9 +16,11 @@ import build_texture_subset
 import pytest
 from build_texture_subset import (
     load_qualifying_candidates,
+    load_qualifying_dev_set_uids,
     load_subset,
     push_subset,
     select_subset,
+    select_textured_dev_set,
     subset_rank,
 )
 from taxonomy import ROSTER
@@ -230,3 +232,36 @@ def test_the_classes_are_not_loaded_back(tmp_path) -> None:
     path.write_text(_SUBSET_CSV, encoding="utf-8")
 
     assert load_subset("textured_subset", path) == ["a", "b"]
+
+
+# --- The scoring half ---------------------------------------------------------
+
+
+def test_the_gold_set_is_restricted_to_what_can_be_rendered_in_colour(tmp_path) -> None:
+    """Only the texture-tier gold models can exist in the treatment arm, and both
+    arms have to score the same objects — so the restriction is applied once, to
+    the dev set itself, rather than left to each arm's coverage."""
+    census = _write_census(
+        tmp_path / "census.csv",
+        [
+            ("gold-textured", "chair", "texture", POPULATION_LVIS),
+            ("gold-flat", "chair", "uniform_colour", POPULATION_LVIS),
+            ("trainable-textured", "chair", "texture", POPULATION_TRAINABLE),
+        ],
+    )
+    gold = [("gold-textured", "chair"), ("gold-flat", "chair")]
+
+    restricted = select_textured_dev_set(gold, load_qualifying_dev_set_uids(census))
+
+    assert restricted == [("gold-textured", "chair")]
+
+
+def test_a_trainable_model_never_enters_the_gold_set(tmp_path) -> None:
+    """The census holds both populations in one file, and a uid that leaked from
+    the trainable side into the dev set would be a model the arms trained on."""
+    census = _write_census(
+        tmp_path / "census.csv",
+        [("trainable-textured", "chair", "texture", POPULATION_TRAINABLE)],
+    )
+
+    assert load_qualifying_dev_set_uids(census) == set()

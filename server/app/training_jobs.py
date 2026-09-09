@@ -72,7 +72,7 @@ EVALUATE_COMMAND = ["python", "evaluate.py"]
 # rather than the database. A job reads that file from the processed bucket
 # (`make devset-push` puts it there), so **an evaluation asked for `lvis` fails if
 # nobody has pushed it** — with a message naming the push, not a stack trace.
-EVALUATION_DEV_SETS: tuple[str, ...] = ("test", "val", "train", "lvis")
+EVALUATION_DEV_SETS: tuple[str, ...] = ("test", "val", "train", "lvis", "lvis_textured")
 
 
 class TrainingLaunchError(RuntimeError):
