@@ -16,6 +16,7 @@ import build_texture_subset
 import pytest
 from build_texture_subset import (
     load_qualifying_candidates,
+    load_subset,
     push_subset,
     select_subset,
     subset_rank,
@@ -125,6 +126,9 @@ class _FakeStorage:
     def put_bytes(self, key: str, data: bytes) -> None:
         self.contents[key] = data
 
+    def get_bytes(self, key: str) -> bytes:
+        return self.contents[key]  # KeyError where a real backend 404s
+
     def list_sizes(self, prefix: str):
         return [
             (key, len(data)) for key, data in self.contents.items() if key.startswith(prefix)
@@ -172,3 +176,57 @@ def test_pushing_to_local_storage_is_refused(tmp_path, monkeypatch) -> None:
 
     with pytest.raises(SystemExit, match="no cloud job can read it"):
         push_subset(path)
+
+
+def test_the_local_file_wins_when_it_exists(tmp_path, monkeypatch) -> None:
+    """Where a checkout has the subset, that is the copy being regenerated and
+    edited; reading the bucket instead would train on a stale population."""
+    path = tmp_path / "textured_subset.csv"
+    path.write_text(_SUBSET_CSV, encoding="utf-8")
+    stored = _FakeStorage()
+    stored.contents[build_texture_subset.experiment_subset_key("textured_subset")] = (
+        b"uid,class\nz,car\n"
+    )
+    monkeypatch.setattr(build_texture_subset, "build_storage", lambda _settings: stored)
+    monkeypatch.setattr(build_texture_subset, "get_settings", _gcs_settings)
+
+    assert load_subset("textured_subset", path) == ["a", "b"]
+
+
+def test_falls_back_to_the_stored_copy(tmp_path, monkeypatch) -> None:
+    """The case the push exists for: a Vertex job with no `data/` directory."""
+    stored = _FakeStorage()
+    stored.contents[build_texture_subset.experiment_subset_key("textured_subset")] = (
+        _SUBSET_CSV.encode("utf-8")
+    )
+    monkeypatch.setattr(build_texture_subset, "build_storage", lambda _settings: stored)
+    monkeypatch.setattr(build_texture_subset, "get_settings", _gcs_settings)
+
+    assert load_subset("textured_subset", tmp_path / "absent.csv") == ["a", "b"]
+
+
+def test_missing_everywhere_names_both_places(tmp_path, monkeypatch) -> None:
+    """Two different fixes — select the subset, or push it — so the error has to
+    say which one is missing rather than just failing."""
+    monkeypatch.setattr(
+        build_texture_subset, "build_storage", lambda _settings: _FakeStorage()
+    )
+    monkeypatch.setattr(build_texture_subset, "get_settings", _gcs_settings)
+
+    with pytest.raises(SystemExit) as failure:
+        load_subset("textured_subset", tmp_path / "absent.csv")
+
+    message = str(failure.value)
+    assert "absent.csv" in message
+    assert build_texture_subset.experiment_subset_key("textured_subset") in message
+    assert "texture-subset-push" in message
+
+
+def test_the_classes_are_not_loaded_back(tmp_path) -> None:
+    """Uids only. A training run resolves each label through the live query, and
+    returning the CSV's stale classes here would make training on a frozen copy of
+    them an easy accident."""
+    path = tmp_path / "textured_subset.csv"
+    path.write_text(_SUBSET_CSV, encoding="utf-8")
+
+    assert load_subset("textured_subset", path) == ["a", "b"]

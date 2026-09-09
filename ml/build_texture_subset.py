@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 from collections import Counter
 from pathlib import Path
 
@@ -149,6 +150,52 @@ def report(
         f"carry a {QUALIFYING_TIER} tier; {len(selected):,} selected at a cap of {cap:,} "
         f"per class."
     )
+
+
+def load_subset(name: str = SUBSET_NAME, path: Path | None = None) -> list[str]:
+    """Read a named selection back as a list of uids — the local file first, the
+    stored copy second.
+
+    Named rather than pathed, unlike `build_dev_set.load_dev_set`: a training run
+    is given `--subset textured_subset` and must resolve that identically whether
+    it is running from a checkout or from a Vertex job, so the name is the
+    identifier and both locations are derived from it.
+
+    The same two-place lookup `build_dev_set.load_dev_set` does, and for the same
+    reason: the local file is authoritative where it exists because that is what
+    `make texture-subset` writes and what an operator would edit, while the bucket
+    is how a Vertex job with no checkout reads the identical list.
+
+    **Uids only.** The CSV's `class` column is what the model was labeled at
+    selection time; a training run resolves each uid's *current* label through the
+    live query instead, so a correction landing between selection and training
+    reaches the run. Returning the classes here would make it far too easy to
+    train on a frozen copy of them by accident.
+    """
+    path = path or SUBSET_DIR / f"{name}.csv"
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+    else:
+        text = _read_stored_subset(name, path)
+    return [row["uid"] for row in csv.DictReader(io.StringIO(text))]
+
+
+def _read_stored_subset(name: str, path: Path) -> str:
+    """The bucket copy, or an error naming both places it was not found.
+
+    Two different fixes — select the subset, or push it — so a job that cannot
+    find its list has to say which one is missing rather than just failing.
+    """
+    key = experiment_subset_key(name)
+    try:
+        return build_storage(get_settings()).get_bytes(key).decode("utf-8")
+    except Exception as error:  # noqa: BLE001 - every backend fails differently
+        raise SystemExit(
+            f"no subset at {path} and none stored at {key} ({error}). Build it with "
+            "`make texture-subset`, then `make texture-subset-push` to make it "
+            "readable from a cloud job. It is gitignored (NFR-6), so a fresh "
+            "checkout has neither."
+        ) from error
 
 
 def push_subset(path: Path = SUBSET_PATH, name: str = SUBSET_NAME) -> str:
