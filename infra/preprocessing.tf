@@ -160,10 +160,20 @@ resource "google_pubsub_subscription" "stage_worker" {
     }
   }
 
-  # After 5 failed deliveries, quarantine the message instead of looping forever.
+  # Quarantine a message that keeps failing, rather than looping forever.
+  # 20 attempts, not 5. A dead letter should mean "this message will never
+  # succeed" — the atlas guard refusing an oversized texture — and not "the
+  # service was busy". Cloud Run answers a request it cannot place with an abort,
+  # which is backpressure, and at 5 attempts over a 10s-600s backoff a message
+  # gets roughly ten to twenty minutes of retrying. Draining a burst of ~3,700
+  # jobs through 15 concurrent instances at ~10s each takes about forty, so any
+  # burst larger than the retry window dead-lettered its overflow no matter how
+  # well-behaved the publisher was: 2,029 of 3,677 on 2026-09-09. Raising the
+  # attempts is what separates congestion from poison; the publisher also paces
+  # itself now (app/queue.py:publish_paced).
   dead_letter_policy {
     dead_letter_topic     = google_pubsub_topic.stage_dlq[each.key].id
-    max_delivery_attempts = 5
+    max_delivery_attempts = 20
   }
 
   retry_policy {

@@ -43,11 +43,14 @@ resource "google_pubsub_subscription" "download_worker" {
     }
   }
 
-  # After 5 failed deliveries, route the message to the dead-letter topic instead
-  # of redelivering forever (server.md#queue).
+  # Route a message that keeps failing to the dead-letter topic rather than
+  # redelivering forever (server.md#queue). 20 attempts for the reason spelled out
+  # on the stage subscriptions (infra/preprocessing.tf): a busy service is
+  # backpressure, not poison, and this is the queue that lost 499 of 1,000 uids to
+  # push-level 429s.
   dead_letter_policy {
     dead_letter_topic     = google_pubsub_topic.download_dlq.id
-    max_delivery_attempts = 5
+    max_delivery_attempts = 20
   }
 
   retry_policy {
