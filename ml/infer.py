@@ -30,6 +30,7 @@ from taxonomy import ROSTER
 from torch.utils.data import DataLoader
 from train import Config
 
+from app.artifact_keys import DEFAULT_VARIANT
 from app.db import session_scope
 from app.models import TrainingRun
 from app.storage import Storage
@@ -158,6 +159,7 @@ def rank_samples(
     storage: Storage,
     batch_size: int = 32,
     num_workers: int = 0,
+    variant: str = DEFAULT_VARIANT,
 ) -> Iterator[tuple[str, str, list[tuple[str, float]]]]:
     """Rank the whole roster for each of `samples`, yielding (uid, class_name, ranked).
 
@@ -171,9 +173,14 @@ def rank_samples(
     Yields in `samples` order (the loader does not shuffle), so a caller can pair
     each ranking with the sample it came from and report progress as it goes
     rather than after the last batch.
+
+    ``variant`` selects the render namespace, and a caller scoring a finished run
+    should take it from that run's own config rather than restating it: a run
+    trained on `textured` renders and ranked against the shape-only ones is being
+    shown pixels it never saw, and nothing about the resulting ranking looks wrong.
     """
     loader = DataLoader(
-        MultiViewDataset(samples, storage),
+        MultiViewDataset(samples, storage, variant),
         batch_size=batch_size,
         shuffle=False,  # so the results line up with `samples` positionally
         num_workers=num_workers,
@@ -194,15 +201,18 @@ def evaluate_samples(
     split_name: str,
     batch_size: int = 32,
     num_workers: int = 0,
+    variant: str = DEFAULT_VARIANT,
 ) -> dict:
     """Score `samples` and return the same report shape a run stores for `val`.
 
     Reuses `evaluation_report` so a test-set report and an end-of-run val report
     are directly comparable — the train/dev gap is only readable if both sides
-    were computed the same way.
+    were computed the same way. ``variant`` is part of "the same way": it must be
+    the one the run trained on (`Config.render_variant`), which is why the
+    evaluator reads it off the run instead of taking a flag.
     """
     loader = DataLoader(
-        MultiViewDataset(samples, storage),
+        MultiViewDataset(samples, storage, variant),
         batch_size=batch_size,
         shuffle=False,  # order is irrelevant to the metrics and reproducible without it
         num_workers=num_workers,

@@ -36,13 +36,21 @@ import argparse
 from typing import NamedTuple
 
 from build_dev_set import load_dev_set
+from build_texture_subset import load_subset as load_subset_uids
 from infer import evaluate_samples as score
 from infer import load_run_model
 from model import MultiViewCNN
 from splits import DatasetSplit, stratified_split
 from sqlalchemy import select
-from train import data_snapshot, label_hash, load_trainable_samples, subsample
+from train import (
+    data_snapshot,
+    label_hash,
+    load_trainable_samples,
+    restrict_to_subset,
+    subsample,
+)
 
+from app.artifact_keys import DEFAULT_VARIANT
 from app.config import get_settings
 from app.db import session_scope
 from app.models import (
@@ -408,6 +416,7 @@ def score_and_record(
     num_workers: int,
     backbone: str,
     scored_label_hash: str | None = None,
+    variant: str = DEFAULT_VARIANT,
 ) -> dict:
     """Score `scored`, print the headline, complete the evaluation, return it.
 
@@ -421,9 +430,11 @@ def score_and_record(
     whether the corpus moved under the split.
     """
     scored = selection.samples
-    print(f"scoring run {run_id} on {len(scored)} {dev_set} models ({backbone})")
+    arm = "" if variant == DEFAULT_VARIANT else f", {variant} renders"
+    print(f"scoring run {run_id} on {len(scored)} {dev_set} models ({backbone}{arm})")
     report = with_coverage(
-        score(model, scored, storage, dev_set, num_workers=num_workers), selection
+        score(model, scored, storage, dev_set, num_workers=num_workers, variant=variant),
+        selection,
     )
 
     # Report before storing. Scoring is the expensive part — minutes of GPU or CPU
@@ -489,7 +500,7 @@ def _score_run(
         enforce_coverage_floor(selection, run_id, dev_set, min_coverage)
         return score_and_record(
             model, evaluation_id, run_id, dev_set, selection, storage, num_workers,
-            config.backbone,
+            config.backbone, variant=config.render_variant,
         )
 
     trainable = load_trainable_samples()
@@ -503,6 +514,14 @@ def _score_run(
     # the full trainable set, which is what makes scoring a limited run immune to
     # the subset shifting underneath it.
     samples = trainable
+    # Reproduce the run's subset before its limit, in the order training applied
+    # them. A subset run held out a split of *its* subset, so splitting the full
+    # trainable set would put models it trained on into its own test set — the
+    # same defect measured on run 4, where 141 of 1,173 recomputed "test" models
+    # were ones the run had trained on.
+    subset = snapshot.get("subset")
+    if subset is not None:
+        samples = restrict_to_subset(samples, load_subset_uids(subset))
     limit = snapshot.get("limit")
     if limit is not None:
         samples = subsample(samples, limit, config.seed)
@@ -519,7 +538,7 @@ def _score_run(
 
     return score_and_record(
         model, evaluation_id, run_id, dev_set, selection, storage, num_workers,
-        config.backbone, current_hash,
+        config.backbone, current_hash, variant=config.render_variant,
     )
 
 
