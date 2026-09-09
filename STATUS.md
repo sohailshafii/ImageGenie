@@ -146,7 +146,7 @@ record of what v1 was, rather than being quietly rewritten as the project moves 
 
 `make evaluate RUN=n` needed a checkout, credentials and a laptop willing to spend ~15 minutes on
 CPU. The run's detail page now has an **Evaluate** button instead, admin-only, with a dev-set picker
-covering all four (`test`, `val`, `train`, `lvis`).
+covering every dev set (`test`, `val`, `train`, `lvis`, and now `lvis_textured`).
 
 - [x] `POST /training-runs/{id}/evaluations` submits a **Vertex job**, because the API image ships
       without torch or the ml package and could not score a run given any amount of time. The
@@ -218,12 +218,32 @@ restating because they are easy to forget:
 
 So the ceiling is in the *representation* or the *calibration*, in that order:
 
-1. **Texture/material A/B — the leading candidate.** Renders are shape-only: `render.py` overrides
-   every material with neutral grey, and `convert` exports PLY, which carries no UVs at all, so
-   colour is gone two stages before rendering. Testing it means preserving textured geometry through
-   convert + normalize and re-rendering a subset, then scoring that subset against the same models
-   rendered shape-only. A few dollars of parallel Cloud Run. Most likely to help `food`, `plant` and
-   `electronics`, where colour carries the signal that shape does not.
+1. **Texture/material A/B — the leading candidate. Built, not yet run.** Renders are shape-only:
+   `render.py` overrides every material with neutral grey, and `convert` exports PLY, which carries
+   no UVs at all, so colour is gone two stages before rendering. Testing it means preserving textured
+   geometry through convert + normalize and re-rendering a subset, then scoring that subset against
+   the same models rendered shape-only. A few dollars of parallel Cloud Run. Most likely to help
+   `food`, `plant` and `electronics`, where colour carries the signal that shape does not.
+
+   **Shipped so far:** the [texture census](ml/ml.md#the-texture-census-step-0) (**6,816 of 11,783
+   trainable models, 57.8%, carry a real UV texture**, so the gate passed), the pipeline's textured
+   arm on [variant keys](server/server.md#object-storage), the site's colour preview, and — this
+   branch — the [subset selection](ml/ml.md#the-experiment-subset) (3,090 models, class-balanced at
+   300), `train.py --subset` / `--render-variant`, evaluation reading the arm off a run's own config,
+   and the `lvis_textured` dev set both arms are scored on.
+
+   **What remains is operational**, in order: push the two selections to the bucket, deploy the
+   worker image, run the textured pipeline over the 3,090 subset models and the 587 textured gold
+   models, **re-fix both uid lists from what actually rendered** (convert refuses an atlas above
+   16,384 px, so a model can drop out of the treatment arm), then the control and treatment training
+   runs.
+
+   **Three constraints the writeup has to carry.** The subset is texture-only and class-balanced, so
+   both arms sit on different class priors than run 15 — its 0.3712 is context, not a baseline.
+   Only 587 of the 984 gold models carry a texture, which is why both arms score `lvis_textured` and
+   neither scores `lvis`; comparing an arm to any `lvis` number compares across populations. And
+   `lamp` has 102 textured models in the whole corpus, so its per-class recall rests on ~12 test
+   models and is directional at best.
 2. **Class weighting at full scale.** The calibration failure is now measured twice: small classes
    are precise but under-predicted, and `weapon` precision falls 0.74 → 0.49 the moment the dev set
    is balanced. The run 3/4 A/B lost its conclusion to the split-fraction defect, not to a null
