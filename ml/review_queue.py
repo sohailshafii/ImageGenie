@@ -26,10 +26,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from build_texture_subset import load_subset as load_subset_uids
 from infer import load_run_model, rank_samples
 from io_utils import write_csv
 from splits import stratified_split
-from train import load_trainable_samples, subsample
+from train import load_trainable_samples, restrict_to_subset, subsample
 
 from app.config import get_settings
 from app.storage import build_storage
@@ -72,6 +73,10 @@ def review_rows(
     model, config, snapshot = load_run_model(run_id, storage)
 
     samples = load_trainable_samples()
+    # The run's own population, in the order it was narrowed: a subset first, then
+    # a limit. Without this a subset run's queue is drawn from uids it never saw.
+    if snapshot.get("subset") is not None:
+        samples = restrict_to_subset(samples, load_subset_uids(snapshot["subset"]))
     if snapshot.get("limit") is not None:
         samples = subsample(samples, snapshot["limit"], config.seed)
     uid_to_label = dict(samples)
@@ -94,7 +99,12 @@ def review_rows(
     print(f"scoring {len(scored)} {dev_set} models from run {run_id}", flush=True)
 
     rows = []
-    ranked_samples = rank_samples(model, scored, storage, num_workers=num_workers)
+    # The renders the run trained on, read off its config — a queue built from a
+    # textured run against the shape-only images would rank a model on pixels it
+    # has never seen, and every disagreement it surfaced would be an artefact.
+    ranked_samples = rank_samples(
+        model, scored, storage, num_workers=num_workers, variant=config.render_variant
+    )
     for index, (uid, label, ranked) in enumerate(ranked_samples, 1):
         if index % 200 == 0:
             print(f"  scored {index}/{len(scored)}", flush=True)

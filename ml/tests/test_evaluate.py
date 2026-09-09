@@ -1,10 +1,12 @@
 """Scoring a finished run against a held-out split (M7 C1)."""
 
+from dataclasses import asdict
 from types import SimpleNamespace
 
 import evaluate
 import pytest
 from splits import stratified_split
+from train import Config
 
 
 def test_the_parser_only_accepts_real_dev_sets() -> None:
@@ -31,7 +33,7 @@ def test_scores_the_requested_split_using_the_runs_own_seed(monkeypatch, capsys)
     monkeypatch.setattr(
         evaluate,
         "score",
-        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
             samples=samples, split_name=split_name
         )
         or _REPORT,
@@ -172,11 +174,18 @@ _REPORT = {"accuracy": 0.5, "macro_recall": 0.4, "split": "test", "sample_count"
 
 
 def _stub_run(monkeypatch, config, snapshot) -> None:
-    """Replace the DB/storage-backed pieces so these tests stay hermetic."""
+    """Replace the DB/storage-backed pieces so these tests stay hermetic.
+
+    `config` is filled out the way `infer.rebuild_config` fills a stored one —
+    today's defaults under whatever the test sets — so a stub cannot be missing a
+    field the real path always has, and a test written against a partial config
+    cannot pass for a reason production would not.
+    """
+    resolved = SimpleNamespace(**{**asdict(Config()), **vars(config)})
     monkeypatch.setattr(evaluate, "build_storage", lambda _settings: None)
     monkeypatch.setattr(evaluate, "get_settings", lambda: None)
     monkeypatch.setattr(
-        evaluate, "load_run_model", lambda run_id, storage: (None, config, snapshot)
+        evaluate, "load_run_model", lambda run_id, storage: (None, resolved, snapshot)
     )
     monkeypatch.setattr(evaluate, "start_evaluation", lambda run_id, dev_set: 1)
     monkeypatch.setattr(evaluate, "finish_evaluation", lambda *args, **kwargs: None)
@@ -268,7 +277,7 @@ def test_a_limited_run_is_scored_against_its_own_subset(monkeypatch) -> None:
     monkeypatch.setattr(
         evaluate,
         "score",
-        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
             samples=samples
         )
         or _REPORT,
@@ -306,7 +315,7 @@ def test_a_limited_runs_replay_survives_the_corpus_growing(monkeypatch) -> None:
     monkeypatch.setattr(
         evaluate,
         "score",
-        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
             samples=samples
         )
         or _REPORT,
@@ -580,7 +589,7 @@ def _stub_lvis(monkeypatch, dev_set, rendered, trainable) -> dict:
     monkeypatch.setattr(
         evaluate,
         "score",
-        lambda model, samples, storage, split_name, num_workers=0: scored.update(
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
             samples=samples, split_name=split_name
         )
         or _REPORT,
@@ -669,3 +678,83 @@ def test_lvis_coverage_is_measured_against_the_whole_selected_dev_set(monkeypatc
         "scored": 2,
         "basis": "selected_dev_set",
     }
+
+
+# --- The texture A/B's arm ----------------------------------------------------
+
+
+def test_a_subset_run_is_scored_against_its_own_subset(monkeypatch) -> None:
+    """Same defect as the --limit replay, one selection step earlier. A subset run
+    held out a split of *its* subset, so splitting the whole trainable set would
+    hand it back models it trained on — measured on run 4 at 141 of 1,173."""
+    samples = [(f"m{index}", "chair") for index in range(100)]
+    samples += [(f"w{index}", "weapon") for index in range(100)]
+    subset_uids = [f"m{index}" for index in range(40)]
+    scored: dict = {}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0), {"subset": "textured_subset"})
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    monkeypatch.setattr(evaluate, "load_subset_uids", lambda name: subset_uids)
+    monkeypatch.setattr(
+        evaluate,
+        "score",
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
+            samples=samples
+        )
+        or _REPORT,
+    )
+
+    evaluate.evaluate_run(4)
+
+    restricted = [sample for sample in samples if sample[0] in set(subset_uids)]
+    assert scored["samples"] == stratified_split(restricted, 0).test
+    trained_on = {uid for uid, _ in stratified_split(restricted, 0).train}
+    assert not [uid for uid, _ in scored["samples"] if uid in trained_on]
+
+
+def test_the_run_is_scored_on_the_renders_it_trained_on(monkeypatch) -> None:
+    """The arm is read off the run's own config, never restated at scoring time.
+    Scoring a textured run against the shape-only renders shows the model pixels
+    it has never seen and reports a number that looks like a result."""
+    samples = [(f"m{index}", "chair") for index in range(40)]
+    samples += [(f"w{index}", "weapon") for index in range(40)]
+    scored: dict = {}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0, render_variant="textured"), {})
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    monkeypatch.setattr(
+        evaluate,
+        "score",
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
+            variant=variant
+        )
+        or _REPORT,
+    )
+
+    evaluate.evaluate_run(4)
+
+    assert scored["variant"] == "textured"
+
+
+def test_a_run_predating_the_ab_scores_on_the_shape_only_renders(monkeypatch) -> None:
+    """Every run before the variant existed recorded no arm at all, and its
+    weights were trained on the default renders — so the filled-in default has to
+    be the one it actually saw."""
+    samples = [(f"m{index}", "chair") for index in range(40)]
+    samples += [(f"w{index}", "weapon") for index in range(40)]
+    scored: dict = {}
+
+    _stub_run(monkeypatch, SimpleNamespace(seed=0), {})
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: samples)
+    monkeypatch.setattr(
+        evaluate,
+        "score",
+        lambda model, samples, storage, split_name, num_workers=0, variant=None: scored.update(
+            variant=variant
+        )
+        or _REPORT,
+    )
+
+    evaluate.evaluate_run(4)
+
+    assert scored["variant"] == evaluate.DEFAULT_VARIANT
