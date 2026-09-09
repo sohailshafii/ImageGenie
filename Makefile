@@ -41,7 +41,7 @@ TRAINER_SA   ?= imagegenie-trainer@$(GCP_PROJECT).iam.gserviceaccount.com
 # at parse time, which would fail (e.g. on `make help`) before the venv exists.
 PYRUN := SSL_CERT_FILE=$$($(BIN)/python -m certifi) $(BIN)/python
 
-.PHONY: setup cloud-tools lint test explore clean help census devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
+.PHONY: setup cloud-tools lint test explore clean help census texture-subset texture-subset-push devset devset-push devset-mark compose-up compose-seed compose-down deploy-image backfill-labels backfill-metadata reconcile-storage cleanup-raw migrate migration migration-status train smoke-train evaluate review-queue train-image train-cloud
 
 help: ## show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -98,6 +98,23 @@ census: ## census what colour the raw meshes carry (backlog item 1 step 0; LIMIT
 	# corpus with no colour rather than failing.
 	IMAGEGENIE_STORAGE_BACKEND=gcs PYTHONPATH=server $(BIN)/python ml/texture_census.py \
 		$(if $(LIMIT),--limit $(LIMIT),) $(if $(WORKERS),--num-workers $(WORKERS),)
+
+texture-subset: ## select the texture A/B's training subset from the census (CAP=N per class)
+	# Reads the census CSV on disk, not the bucket or the DB — the census is the
+	# only thing that knows which models carry a UV texture, and re-deriving that
+	# would mean re-reading 12,767 GLB headers. So this needs neither the proxy nor
+	# the GCS backend; `make texture-subset-push` is the half that does.
+	PYTHONPATH=server $(BIN)/python ml/build_texture_subset.py \
+		$(if $(CAP),--cap $(CAP),)
+
+texture-subset-push: ## copy the existing subset CSV to the processed bucket, for the cloud runs
+	# Split from selection deliberately: pushing a subset the two arms are already
+	# training on would redefine the experiment's population mid-flight. The backend
+	# is forced for the `devset-push` reason — it defaults to `local`, and a copy
+	# into data/storage/ is not reachable from a Vertex job (the script refuses it,
+	# then lists the prefix back so "pushed" is checked rather than claimed).
+	IMAGEGENIE_STORAGE_BACKEND=gcs PYTHONPATH=server $(BIN)/python \
+	    ml/build_texture_subset.py --push-only
 
 devset: ## select the second dev set from un-ingested LVIS gold objects (FR-7; DEVSET_COUNT=N)
 	# Needs BOTH the cert shim (it reads LVIS annotations over the network) and

@@ -168,6 +168,19 @@ def dev_set_key(name: str) -> str:
     return f"{DEV_SET_PREFIX}{name}.csv"
 
 
+# An experiment's model list — likewise a selection rather than an artifact. The
+# texture A/B trains both arms on one uid list (ml.md#the-texture-ab), and that
+# list has to be readable from a Vertex job with no checkout, so it lives in the
+# bucket for the same reason a dev set does. Kept under its own prefix rather than
+# `processed/devsets/` because it is not a dev set: these uids ARE trained on.
+EXPERIMENT_PREFIX = "processed/experiments/"
+
+
+def experiment_subset_key(name: str) -> str:
+    """The stored copy of an experiment's uid list, e.g. ``textured_subset``."""
+    return f"{EXPERIMENT_PREFIX}{name}.csv"
+
+
 def view_key(uid: str, view_index: int, variant: str = DEFAULT_VARIANT) -> str:
     """One rendered view, ``view_00.png`` … ``view_11.png``."""
     return f"{renders_prefix(uid, variant)}view_{view_index:02d}.png"
