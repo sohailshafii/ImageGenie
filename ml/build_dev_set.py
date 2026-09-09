@@ -55,10 +55,41 @@ from app.storage import build_storage
 # Where the selection lands, and where the evaluator reads it back from. One
 # constant because the two ends must agree on a path no migration guards: the
 # labels live in a file precisely so they never reach the `label` table.
-DEV_SET_PATH = Path("data/devset/lvis_dev.csv")
+DEV_SET_DIR = Path("data/devset")
+DEV_SET_PATH = DEV_SET_DIR / "lvis_dev.csv"
 # What the stored copy is called. `evaluate.py --dev-set lvis` names the same
 # thing, and the stored key is derived from it (app.artifact_keys.dev_set_key).
 DEV_SET_NAME = "lvis"
+
+# The texture A/B's restriction of the set above to the models that carry a UV
+# texture, so the control and treatment arms score the same objects
+# (ml.md#the-experiment-subset). Selected by `ml/build_texture_subset.py`, but
+# named here because this module owns what a dev-set selection *is* — a file of
+# uids and gold classes that never becomes `label` rows.
+TEXTURED_DEV_SET_NAME = "lvis_textured"
+
+# An explicit map rather than a naming rule: the original selection's file is
+# `lvis_dev.csv` while its stored copy is `devsets/lvis.csv`, and inventing a
+# convention that papers over that would only make the next name ambiguous.
+DEV_SET_NAME_TO_PATH = {
+    DEV_SET_NAME: DEV_SET_PATH,
+    TEXTURED_DEV_SET_NAME: DEV_SET_DIR / f"{TEXTURED_DEV_SET_NAME}.csv",
+}
+
+
+def dev_set_path(name: str) -> Path:
+    """Where a named selection lives locally, or ``ValueError`` for an unknown one.
+
+    Refusing beats guessing: a mistyped dev-set name that resolved to a plausible
+    path would fall through to the bucket, fail to find it there either, and
+    report "run make devset" for a set that was never meant to exist.
+    """
+    try:
+        return DEV_SET_NAME_TO_PATH[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown dev set {name!r}; expected one of {sorted(DEV_SET_NAME_TO_PATH)}"
+        ) from None
 
 
 def push_dev_set(path: Path = DEV_SET_PATH, name: str = DEV_SET_NAME) -> str:

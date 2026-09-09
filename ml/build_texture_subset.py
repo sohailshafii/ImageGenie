@@ -43,9 +43,20 @@ import io
 from collections import Counter
 from pathlib import Path
 
+from build_dev_set import (
+    TEXTURED_DEV_SET_NAME,
+    dev_set_path,
+    load_dev_set,
+    push_dev_set,
+)
 from io_utils import write_csv
 from taxonomy import ROSTER
-from texture_census import CENSUS_PATH, POPULATION_TRAINABLE, TIER_TEXTURE
+from texture_census import (
+    CENSUS_PATH,
+    POPULATION_LVIS,
+    POPULATION_TRAINABLE,
+    TIER_TEXTURE,
+)
 
 from app.artifact_keys import EXPERIMENT_PREFIX, experiment_subset_key
 from app.config import get_settings
@@ -150,6 +161,64 @@ def report(
         f"carry a {QUALIFYING_TIER} tier; {len(selected):,} selected at a cap of {cap:,} "
         f"per class."
     )
+
+
+def load_qualifying_dev_set_uids(census_path: Path = CENSUS_PATH) -> set[str]:
+    """The dev-set uids that carry a UV texture, from the census's `lvis` rows."""
+    with census_path.open(newline="", encoding="utf-8") as census_file:
+        return {
+            row["uid"]
+            for row in csv.DictReader(census_file)
+            if row["population"] == POPULATION_LVIS and row["tier"] == QUALIFYING_TIER
+        }
+
+
+def select_textured_dev_set(
+    dev_set: list[tuple[str, str]], qualifying_uids_set: set[str]
+) -> list[tuple[str, str]]:
+    """The gold selection restricted to models that can be rendered in colour.
+
+    **The headline number depends on this existing.** 587 of the 984 LVIS models
+    are texture-tier, so the treatment arm has no textured renders for the other
+    397 — and scoring the control on all 984 while the treatment sees 587 would
+    put the two arms on different models, which is the failure that has already
+    produced two pairs of opposite-looking numbers in this project
+    (ml.md#evaluation). Both arms score `lvis_textured`; neither scores `lvis`.
+
+    Restricting rather than accepting partial coverage is deliberate. The
+    coverage floor would mark a 59.7% treatment report as partial and let it
+    through, which describes the shortfall honestly and still leaves the
+    comparison meaningless.
+    """
+    return [
+        (uid, class_name)
+        for uid, class_name in dev_set
+        if uid in qualifying_uids_set
+    ]
+
+
+def write_textured_dev_set(
+    dev_set: list[tuple[str, str]], path: Path | None = None
+) -> Path:
+    """Write the restricted selection in the dev-set CSV shape and return its path.
+
+    Same `uid,class,reason` columns `build_dev_set` writes, because
+    `load_dev_set` reads this file back through exactly the same parser — the
+    restriction changes which rows exist, never what a row is.
+
+    It is deliberately **not** marked in `dev_set_member`. Every one of these uids
+    is already reserved under the `lvis` selection, and the labeling UI's guard
+    asks "is this model reserved at all", not "to which set" (server/app/api.py),
+    so a second row per uid would protect nothing that is not already protected.
+    """
+    path = path or dev_set_path(TEXTURED_DEV_SET_NAME)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_csv(
+        path,
+        ("uid", "class", "reason"),
+        [(uid, class_name, "lvis-gold-textured") for uid, class_name in dev_set],
+    )
+    return path
 
 
 def load_subset(name: str = SUBSET_NAME, path: Path | None = None) -> list[str]:
@@ -266,11 +335,13 @@ def main() -> None:
     pushing.add_argument("--push", action="store_true",
                          help="also copy the new selection to the processed bucket")
     pushing.add_argument("--push-only", action="store_true",
-                         help="copy the existing CSV to the bucket and select nothing")
+                         help="copy the existing subset and dev-set CSVs to the "
+                              "bucket and select nothing")
     args = parser.parse_args()
 
     if args.push_only:
         push_subset(args.out)
+        push_dev_set(dev_set_path(TEXTURED_DEV_SET_NAME), TEXTURED_DEV_SET_NAME)
         return
 
     class_to_candidates = load_qualifying_candidates(args.census)
@@ -280,8 +351,20 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     write_csv(args.out, ("uid", "class"), selected)
     print(f"\nwrote {args.out}")
+
+    # The scoring half, written in the same breath as the training half on
+    # purpose: the two lists together *are* the experiment's population, and a
+    # regenerated subset paired with a stale dev set is a comparison nobody would
+    # notice was broken.
+    dev_set = select_textured_dev_set(
+        load_dev_set(), load_qualifying_dev_set_uids(args.census)
+    )
+    dev_set_file = write_textured_dev_set(dev_set)
+    print(f"wrote {dev_set_file} ({len(dev_set)} of the gold set carry a texture)")
+
     if args.push:
         push_subset(args.out)
+        push_dev_set(dev_set_file, TEXTURED_DEV_SET_NAME)
 
 
 if __name__ == "__main__":

@@ -583,7 +583,7 @@ def test_the_parser_carries_the_floor_and_can_be_told_to_drop_it() -> None:
 def _stub_lvis(monkeypatch, dev_set, rendered, trainable) -> dict:
     scored: dict = {}
     _stub_run(monkeypatch, SimpleNamespace(seed=0, backbone="resnet18"), {})
-    monkeypatch.setattr(evaluate, "load_dev_set", lambda: dev_set)
+    monkeypatch.setattr(evaluate, "load_dev_set", lambda path, name: dev_set)
     monkeypatch.setattr(evaluate, "load_rendered_uids", lambda uids: set(rendered))
     monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: trainable)
     monkeypatch.setattr(
@@ -758,3 +758,31 @@ def test_a_run_predating_the_ab_scores_on_the_shape_only_renders(monkeypatch) ->
     evaluate.evaluate_run(4)
 
     assert scored["variant"] == evaluate.DEFAULT_VARIANT
+
+
+def test_a_named_external_dev_set_reads_its_own_selection(monkeypatch) -> None:
+    """`lvis_textured` is a different file and a different stored key from `lvis`;
+    resolving it as `lvis` would score the treatment arm against 397 models that
+    have no textured renders at all."""
+    asked: dict = {}
+    monkeypatch.setattr(
+        evaluate,
+        "load_dev_set",
+        lambda path, name: asked.update(path=path, name=name) or [("a", "chair")],
+    )
+    monkeypatch.setattr(evaluate, "load_rendered_uids", lambda uids: {"a"})
+    monkeypatch.setattr(evaluate, "load_trainable_samples", lambda: [])
+
+    evaluate.resolve_external_dev_set(evaluate.LVIS_TEXTURED)
+
+    assert asked["name"] == "lvis_textured"
+    assert asked["path"].name == "lvis_textured.csv"
+
+
+def test_the_api_and_the_evaluator_agree_on_the_dev_set_names() -> None:
+    """The API image ships without the ml package, so the tuple is duplicated —
+    and a name the form offers but the evaluator rejects fails ~15 minutes into a
+    billed job."""
+    from app.training_jobs import EVALUATION_DEV_SETS
+
+    assert set(EVALUATION_DEV_SETS) == set(evaluate.DEV_SETS)

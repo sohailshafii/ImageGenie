@@ -147,7 +147,7 @@ train: ## run a baseline training run (M6); writes training_run + metrics to the
 	# no cert shim needed — this run only touches Postgres, not the network.
 	PYTHONPATH=server $(BIN)/python ml/train.py
 
-evaluate: ## score a finished run against a dev set (M7; RUN=n, DEVSET=test|val|train|lvis)
+evaluate: ## score a finished run against a dev set (M7; RUN=n, DEVSET=test|val|train|lvis|lvis_textured)
 	# Separate from training because `val` is steered against every epoch and
 	# `test` is not — see ml/evaluate.py. DEVSET=lvis scores the second dev set
 	# (FR-7): a different corpus rather than a partition of ours, read from the
