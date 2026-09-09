@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
 import torch
+from build_texture_subset import load_subset as load_subset_uids
 from dataset import MultiViewDataset
 from metrics import evaluation_report
 from model import MultiViewCNN
@@ -34,7 +35,7 @@ from taxonomy import ROSTER
 from torch import nn
 from torch.utils.data import DataLoader
 
-from app.artifact_keys import weights_key
+from app.artifact_keys import DEFAULT_VARIANT, layout_for, weights_key
 from app.config import get_settings
 from app.db import session_scope
 from app.models import (
@@ -105,6 +106,19 @@ class Config:
     # DataLoader worker processes. 0 = load in the main process, which sidesteps
     # having to pickle the storage client; raise it once at real scale.
     num_workers: int = 0
+
+    # --- Data ---
+    # Which render namespace the run reads: the shape-only default, or a parallel
+    # one such as `textured` (server.md#object-storage). This is *the* variable
+    # the texture A/B changes — the two arms share a subset, a seed and every
+    # other field here, and differ only in which pixels they load.
+    #
+    # It lives on `Config`, not in a flag the runner remembers, because that is
+    # what makes the arm answerable from the database: `training_run.config`
+    # records it (NFR-4), and `ml/evaluate.py` reads it back off the run rather
+    # than being told again at scoring time — the same derived-not-restated shape
+    # the evaluation partition ended up with.
+    render_variant: str = DEFAULT_VARIANT
 
 
 def load_trainable_samples() -> list[tuple[str, str]]:
@@ -423,13 +437,13 @@ def run_training(
     weights = weights_key(run_id)
 
     train_loader = DataLoader(
-        MultiViewDataset(split.train, storage),
+        MultiViewDataset(split.train, storage, config.render_variant),
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=config.num_workers,
     )
     val_loader = DataLoader(
-        MultiViewDataset(split.val, storage),
+        MultiViewDataset(split.val, storage, config.render_variant),
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=config.num_workers,
@@ -536,6 +550,21 @@ def build_parser() -> argparse.ArgumentParser:
             "cloud run: prove the wiring on a few hundred before paying for ~12k."
         ),
     )
+    parser.add_argument(
+        "--subset",
+        help=(
+            "train on a named experiment subset instead of the whole trainable "
+            "set, e.g. `textured_subset` (ml/build_texture_subset.py). Read from "
+            "data/experiments/ or the processed bucket; labels stay live."
+        ),
+    )
+    parser.add_argument(
+        "--render-variant",
+        help=(
+            '"default" (the shape-only renders) | "textured". Which render '
+            "namespace the run reads — the one variable the texture A/B changes."
+        ),
+    )
     parser.add_argument("--notes", help="free-text description shown on the dashboard")
     return parser
 
@@ -589,6 +618,36 @@ def subsample(samples: list[tuple[str, str]], limit: int, seed: int) -> list[tup
     return sorted(ranked[:limit])
 
 
+def restrict_to_subset(
+    samples: list[tuple[str, str]], subset_uids: list[str]
+) -> list[tuple[str, str]]:
+    """Keep only the trainable samples whose uid is in `subset_uids`.
+
+    An *intersection*, not a lookup, and the labels come from `samples` rather
+    than from the subset file: the uid list fixes the population, the database
+    fixes what each model currently is. A label corrected between selecting the
+    subset and training therefore reaches the run, which is the whole reason the
+    CSV's class column is advisory (ml/build_texture_subset.py).
+
+    Missing uids are reported rather than tolerated silently. A uid in the list
+    and not in the trainable set means the model was soft-deleted, lost its label,
+    or lost its renders since selection — all of which shrink the arm, and a
+    shrinking arm is exactly the thing that must not pass unnoticed when two runs
+    are being compared on "the same models".
+    """
+    subset_uids_set = set(subset_uids)
+    restricted = [sample for sample in samples if sample[0] in subset_uids_set]
+    missing = len(subset_uids_set) - len(restricted)
+    if missing:
+        print(
+            f"warning: {missing:,} of the subset's {len(subset_uids_set):,} uids are "
+            "not trainable right now (deleted, unlabeled, or not rendered) and were "
+            "skipped — both arms must train on the same list, so check this before "
+            "comparing runs"
+        )
+    return restricted
+
+
 def main() -> None:
     """Train one multi-view CNN run end to end: load the trainable set (labeled ∩
     rendered), split it, snapshot the data, open the run, train, and finalize. Any
@@ -604,19 +663,37 @@ def main() -> None:
         **{
             name: value
             for name, value in vars(args).items()
-            if name not in ("limit", "notes") and value is not None
+            if name not in ("limit", "notes", "subset") and value is not None
         }
     )
+    # Resolved before anything else, and deliberately not left to the first batch.
+    # An unknown variant would otherwise surface inside a DataLoader worker,
+    # mid-epoch, after a job has queued for a spot GPU and pulled a multi-GB image
+    # — and it would surface as a missing blob rather than as a typo.
+    layout_for(config.render_variant)
     samples = load_trainable_samples()
     if not samples:
         raise SystemExit(
             "no trainable models: need models that are both labeled and rendered "
             "(run the pipeline and the weak-label backfill first)"
         )
+    if args.subset:
+        samples = restrict_to_subset(samples, load_subset_uids(args.subset))
+        if not samples:
+            raise SystemExit(
+                f"the {args.subset!r} subset matched no trainable models — its uids "
+                "are all deleted, unlabeled or unrendered, or the wrong subset was "
+                "named"
+            )
     if args.limit is not None:
         samples = subsample(samples, args.limit, config.seed)
     split = stratified_split(samples, config.seed)
     snapshot = data_snapshot(samples, split)
+    if args.subset:
+        # Named in the snapshot for the same reason `limit` is: without it the
+        # run's label_count reads as a slice of the corpus with nothing saying
+        # which slice, and two runs on different subsets look comparable.
+        snapshot["subset"] = args.subset
     if args.limit is not None:
         # The snapshot must say the run saw a *subset*, or its label_count reads
         # as the whole trainable set and two runs become falsely comparable.

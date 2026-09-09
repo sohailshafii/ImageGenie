@@ -10,9 +10,16 @@ import train
 from splits import stratified_split
 from taxonomy import ROSTER
 from torch import nn
-from train import Config, _build_loss, _save_weights, data_snapshot
+from train import (
+    Config,
+    _build_loss,
+    _save_weights,
+    build_parser,
+    data_snapshot,
+    restrict_to_subset,
+)
 
-from app.artifact_keys import weights_key
+from app.artifact_keys import DEFAULT_VARIANT, TEXTURED_VARIANT, weights_key
 from app.storage import LocalStorage
 
 
@@ -155,3 +162,43 @@ def test_subsample_is_reproducible() -> None:
 
     assert train.subsample(corpus, 50, 0) == train.subsample(corpus, 50, 0)
     assert train.subsample(corpus, 50, 0) != train.subsample(corpus, 50, 1)
+
+
+def test_the_subset_fixes_the_population_and_the_database_fixes_the_labels() -> None:
+    """The intersection is deliberate. The uid list says which models the two arms
+    share; what each model *is* comes from the live query, so a label corrected
+    between selecting the subset and training reaches the run rather than being
+    frozen into a CSV."""
+    samples = [("a", "chair"), ("b", "lamp"), ("c", "car")]
+
+    restricted = restrict_to_subset(samples, ["c", "a"])
+
+    assert restricted == [("a", "chair"), ("c", "car")]
+
+
+def test_a_shrinking_arm_is_reported(capsys) -> None:
+    """A subset uid that is no longer trainable — soft-deleted, unlabeled, or
+    unrendered — silently shrinks one arm, which is precisely what breaks "both
+    arms on the same models". It has to be said out loud."""
+    restrict_to_subset([("a", "chair")], ["a", "gone", "also-gone"])
+
+    warning = capsys.readouterr().out
+    assert "2 of the subset's 3 uids" in warning
+
+
+def test_the_render_variant_defaults_to_the_shape_only_arm() -> None:
+    """Every run before the A/B recorded no variant at all, and `infer.rebuild_
+    config` fills a missing key from these defaults — so the default has to be the
+    arm those runs actually trained on."""
+    assert Config().render_variant == DEFAULT_VARIANT
+
+
+def test_the_launch_flags_carry_the_subset_and_the_arm() -> None:
+    """The launch API builds these flag strings in another file, and a mismatch is
+    only discovered ~15 minutes into a billed job."""
+    args = build_parser().parse_args(
+        ["--subset", "textured_subset", "--render-variant", TEXTURED_VARIANT]
+    )
+
+    assert args.subset == "textured_subset"
+    assert args.render_variant == TEXTURED_VARIANT
