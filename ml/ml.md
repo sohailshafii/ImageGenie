@@ -1263,6 +1263,27 @@ for: the backend defaults to `local`, where a push copies the file into `data/st
 success, which is what `make devset-push` once did — and a listing is the only thing that
 distinguishes a real push from a no-op or a wrong bucket.
 
+### Scoring both arms on the same objects
+
+**587 of the 984 LVIS gold models carry a UV texture**, so the treatment arm has no textured renders
+for the other 397. Scoring the control on all 984 while the treatment sees 587 would compare two arms
+on *different models*, which is [case 1 of the metric traps](#evaluation) exactly — two defensible
+numbers pointing opposite ways, with nothing wrong in the code.
+
+So the restriction is applied once, to the dev set itself. `make texture-subset` writes a second
+selection, **`lvis_textured`**, alongside the training subset: the gold rows whose uid the census puts
+in the `texture` tier, in the same `uid,class,reason` shape `build_dev_set` writes, read back through
+the same parser and pushed to `processed/devsets/lvis_textured.csv`. **Both arms score
+`lvis_textured`; neither scores `lvis`.** The alternative — letting the treatment arm report 59.7%
+coverage and be marked partial by the [sample floor](#evaluation) — describes the shortfall honestly
+and still leaves the comparison meaningless.
+
+The two selections are written in the same breath because together they *are* the experiment's
+population: a regenerated subset paired with a stale dev set is a comparison nobody would notice was
+broken. The new set is deliberately **not** marked in `dev_set_member` — every one of its uids is
+already reserved under `lvis`, and the labeling UI's guard asks whether a model is reserved at all,
+not to which set.
+
 ### Training an arm
 
 Two flags and one recorded field carry the experiment into a run:
