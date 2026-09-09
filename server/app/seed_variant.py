@@ -25,6 +25,10 @@ skips a model whose variant blob already exists (NFR-2).
 end; the full A/B is 3,090 + 587 models. Pilot first and *look at the PNGs* — the
 unit tests mock the GL call, so only a real render proves the texture survived.
 
+Publishing is **paced** (`queue.publish_paced`): a stage holds 15 concurrent models
+and a loop that publishes thousands as fast as it can dead-letters the overflow as
+congestion. Doing exactly that on 2026-09-09 lost 2,029 of 3,677 jobs to the DLQ.
+
 Reads a plain CSV with a ``uid`` column, which is what both selections are
 (`ml/build_texture_subset.py`). Deliberately not an import of that module: the API
 image ships without the ml package, and `app` importing `ml` is the layering that
@@ -39,7 +43,12 @@ from pathlib import Path
 
 from .artifact_keys import DEFAULT_VARIANT, TEXTURED_VARIANT, VARIANT_TO_LAYOUT
 from .config import get_settings
-from .queue import publish_next
+from .queue import (
+    PUBLISH_BATCH_SIZE,
+    PUBLISH_PAUSE_SECONDS,
+    job_payload,
+    publish_paced,
+)
 
 
 def read_uids(csv_paths: list[Path], limit: int | None = None) -> list[str]:
@@ -75,6 +84,10 @@ def main() -> None:
                         help=f"which arm to build (default: {TEXTURED_VARIANT})")
     parser.add_argument("--limit", type=int, default=None,
                         help="publish only the first N uids — pilot before a full run")
+    parser.add_argument("--batch-size", type=int, default=PUBLISH_BATCH_SIZE,
+                        help=f"jobs per batch (default: {PUBLISH_BATCH_SIZE})")
+    parser.add_argument("--batch-pause", type=float, default=PUBLISH_PAUSE_SECONDS,
+                        help=f"seconds between batches (default: {PUBLISH_PAUSE_SECONDS:.0f})")
     parser.add_argument("--dry-run", action="store_true",
                         help="print what would be published and exit")
     args = parser.parse_args()
@@ -96,10 +109,14 @@ def main() -> None:
         print("first: " + ", ".join(uids[:5]))
         return
 
-    for uid in uids:
-        publish_next(settings.convert_topic, uid, args.variant)
+    published = publish_paced(
+        settings.convert_topic,
+        [job_payload(uid, args.variant) for uid in uids],
+        batch_size=args.batch_size,
+        pause_seconds=args.batch_pause,
+    )
     print(
-        f"published {len(uids):,} {args.variant} convert jobs to "
+        f"published {published:,} {args.variant} convert jobs to "
         f"'{settings.convert_topic}' from {sources}"
     )
 

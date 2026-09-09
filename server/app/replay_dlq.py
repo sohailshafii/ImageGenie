@@ -19,7 +19,12 @@ import time
 
 from google.cloud import pubsub_v1
 
-from .queue import decode_message, publish_json, subscription_path
+from .queue import (
+    PUBLISH_PAUSE_SECONDS,
+    decode_message,
+    publish_json,
+    subscription_path,
+)
 
 STAGES = ("download", "convert", "normalize", "render")
 
@@ -29,8 +34,19 @@ _MAX_EMPTY_RETRIES = 3
 _EMPTY_RETRY_BACKOFF_SECONDS = 2.0
 
 
-def replay(stage: str, batch_size: int = 100, max_messages: int | None = None) -> int:
-    """Drain ``<stage>-jobs-dlq-sub`` back to ``<stage>-jobs``; return the count replayed."""
+def replay(
+    stage: str,
+    batch_size: int = 100,
+    max_messages: int | None = None,
+    pause_seconds: float = PUBLISH_PAUSE_SECONDS,
+) -> int:
+    """Drain ``<stage>-jobs-dlq-sub`` back to ``<stage>-jobs``; return the count replayed.
+
+    Paced between batches, and this is the tool where pacing matters most: the
+    usual reason a stage's DLQ is full is that the stage was overwhelmed, so
+    republishing everything as fast as it can be pulled recreates the condition
+    that filled it. `pause_seconds=0` disables the wait for a handful of messages.
+    """
     subscriber = pubsub_v1.SubscriberClient()
     publisher = pubsub_v1.PublisherClient()
     dlq_sub_path = subscription_path(subscriber, f"{stage}-jobs-dlq-sub")
@@ -55,7 +71,9 @@ def replay(stage: str, batch_size: int = 100, max_messages: int | None = None) -
             ack_ids.append(received.ack_id)
         subscriber.acknowledge(request={"subscription": dlq_sub_path, "ack_ids": ack_ids})
         replayed += len(ack_ids)
-        print(f"replayed {replayed} → {topic}")
+        print(f"replayed {replayed} → {topic}", flush=True)
+        if pause_seconds:
+            time.sleep(pause_seconds)
 
     return replayed
 
@@ -64,11 +82,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=STAGES, required=True,
                         help="which stage's DLQ to replay")
+    parser.add_argument("--pause", type=float, default=PUBLISH_PAUSE_SECONDS,
+                        help=f"seconds between batches (default: {PUBLISH_PAUSE_SECONDS:.0f}); "
+                             "0 for a handful of messages")
     parser.add_argument("--max", type=int, default=None,
                         help="cap the number replayed (default: all)")
     args = parser.parse_args()
 
-    total = replay(args.stage, max_messages=args.max)
+    total = replay(args.stage, max_messages=args.max, pause_seconds=args.pause)
     print(f"done: replayed {total} messages to '{args.stage}-jobs'")
 
 

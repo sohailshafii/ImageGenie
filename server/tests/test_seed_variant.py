@@ -60,3 +60,36 @@ def test_the_default_arm_is_not_a_choosable_variant() -> None:
     every catalog query reads — a reconciliation, not a seeding. The CLI refuses
     it; this pins the constant the refusal is written against."""
     assert DEFAULT_VARIANT == "default"
+
+
+def test_publishing_is_paced_into_batches(monkeypatch) -> None:
+    """The defect this exists to prevent. A stage holds 15 concurrent models, so a
+    loop that publishes thousands at once has its overflow aborted by Cloud Run,
+    counted as failed deliveries, and dead-lettered — 2,029 of 3,677 jobs on
+    2026-09-09. The pause is what keeps the burst from being created."""
+    from app import queue
+
+    published: list[dict] = []
+    pauses: list[float] = []
+    monkeypatch.setattr(queue, "_publisher", lambda: None)
+    monkeypatch.setattr(
+        queue, "publish_json", lambda publisher, topic, payload: published.append(payload)
+    )
+    monkeypatch.setattr(queue.time, "sleep", pauses.append)
+
+    payloads = [queue.job_payload(f"uid{index}", "textured") for index in range(25)]
+    count = queue.publish_paced("convert-jobs", payloads, batch_size=10, pause_seconds=7.0)
+
+    assert count == 25
+    assert len(published) == 25
+    # Three batches, two gaps: nothing is paced after the last batch.
+    assert pauses == [7.0, 7.0]
+
+
+def test_a_job_carries_its_variant_and_a_default_one_carries_nothing() -> None:
+    """The default payload must stay byte-identical to what it was before variants
+    existed, so messages in flight during a deploy remain valid."""
+    from app.queue import job_payload
+
+    assert job_payload("abc") == {"uid": "abc"}
+    assert job_payload("abc", "textured") == {"uid": "abc", "variant": "textured"}
