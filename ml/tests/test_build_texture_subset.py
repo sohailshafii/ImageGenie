@@ -265,3 +265,68 @@ def test_a_trainable_model_never_enters_the_gold_set(tmp_path) -> None:
     )
 
     assert load_qualifying_dev_set_uids(census) == set()
+
+
+# --- Fixing the lists to what actually rendered --------------------------------
+
+
+class _ListingStorage:
+    """Storage that only lists — what `rendered_uids` actually needs."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self.keys = keys
+
+    def list_keys(self, prefix: str):
+        return (key for key in self.keys if key.startswith(prefix))
+
+
+def _view_keys_for(uid: str, count: int) -> list[str]:
+    from app.artifact_keys import TEXTURED_VARIANT, renders_prefix
+
+    prefix = renders_prefix(uid, TEXTURED_VARIANT)
+    return [f"{prefix}view_{index:02d}.png" for index in range(count)]
+
+
+def test_a_half_rendered_model_does_not_count(tmp_path) -> None:
+    """It would fault mid-epoch inside a DataLoader worker on a paid GPU. If the
+    shortfall is transient the fix is to replay the job, not to train around it."""
+    from build_texture_subset import rendered_uids
+
+    from app.artifact_keys import NUM_VIEWS
+
+    storage = _ListingStorage(
+        _view_keys_for("complete", NUM_VIEWS) + _view_keys_for("partial", NUM_VIEWS - 1)
+    )
+
+    assert rendered_uids(storage) == {"complete"}
+
+
+def test_both_lists_are_cut_to_the_survivors(tmp_path) -> None:
+    """The protocol step. Convert refuses an oversized atlas, so a selected model
+    can still miss the treatment arm — and a control arm trained on the full list
+    against a short treatment arm is two arms on different populations."""
+    from build_texture_subset import verify_against_renders
+
+    from app.artifact_keys import NUM_VIEWS
+
+    subset = tmp_path / "subset.csv"
+    subset.write_text("uid,class\nkept,chair\ndropped,lamp\n", encoding="utf-8")
+    dev_set = tmp_path / "dev.csv"
+    dev_set.write_text(
+        "uid,class,reason\ngold,car,lvis-gold-textured\nlost,car,lvis-gold-textured\n",
+        encoding="utf-8",
+    )
+    storage = _ListingStorage(
+        _view_keys_for("kept", NUM_VIEWS) + _view_keys_for("gold", NUM_VIEWS)
+    )
+
+    dropped = verify_against_renders([subset, dev_set], storage)
+
+    assert dropped == {subset: 1, dev_set: 1}
+    assert subset.read_text(encoding="utf-8").splitlines() == ["uid,class", "kept,chair"]
+    # The dev set keeps its own third column — the file is read back by the same
+    # parser build_dev_set writes for.
+    assert dev_set.read_text(encoding="utf-8").splitlines() == [
+        "uid,class,reason",
+        "gold,car,lvis-gold-textured",
+    ]

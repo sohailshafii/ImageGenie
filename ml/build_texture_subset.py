@@ -41,6 +41,7 @@ import csv
 import hashlib
 import io
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 from build_dev_set import (
@@ -58,7 +59,13 @@ from texture_census import (
     TIER_TEXTURE,
 )
 
-from app.artifact_keys import EXPERIMENT_PREFIX, experiment_subset_key
+from app.artifact_keys import (
+    EXPERIMENT_PREFIX,
+    NUM_VIEWS,
+    TEXTURED_VARIANT,
+    experiment_subset_key,
+    renders_prefix,
+)
 from app.config import get_settings
 from app.storage import Storage, build_storage
 
@@ -267,6 +274,63 @@ def _read_stored_subset(name: str, path: Path) -> str:
         ) from error
 
 
+def rendered_uids(storage: Storage, variant: str = TEXTURED_VARIANT) -> set[str]:
+    """Uids whose every view exists under `variant`, from one prefix listing.
+
+    A listing rather than `dataset.has_all_views`: that costs a storage HEAD per
+    view, which is ~44,000 requests over this experiment's population, and this
+    answers the same question in one paginated pass. It also keeps the check out
+    of the ml package's torch import, so it can run anywhere the bucket is
+    reachable.
+
+    A model with *some* views is deliberately excluded rather than repaired here.
+    A half-rendered model would fault mid-epoch inside a DataLoader worker on a
+    paid GPU; if the shortfall is transient the fix is to replay its job, not to
+    quietly train around it.
+    """
+    prefix = renders_prefix("", variant).rstrip("/") + "/"
+    uid_to_view_count: Counter[str] = Counter()
+    for key in storage.list_keys(prefix):
+        remainder = key[len(prefix) :]
+        uid, separator, view = remainder.partition("/")
+        if uid and separator and view.endswith(".png"):
+            uid_to_view_count[uid] += 1
+    return {uid for uid, count in uid_to_view_count.items() if count >= NUM_VIEWS}
+
+
+def verify_against_renders(
+    paths: Sequence[Path], storage: Storage, variant: str = TEXTURED_VARIANT
+) -> dict[Path, int]:
+    """Rewrite each CSV down to the models that actually rendered; report the drops.
+
+    **This is the protocol step, not a cleanup.** Convert refuses a model whose
+    packed texture atlas exceeds what a renderer accepts, so a uid selected from
+    the census can still fail to reach the treatment arm — and a control arm
+    trained on the full list against a treatment arm short of it is two arms on
+    different populations, which is the failure this whole experiment is designed
+    to avoid (ml.md#evaluation). Both arms train on what survives.
+
+    Rewrites in place, preserving each file's own columns, because the two lists
+    are read by name from a fixed path and the bucket copy is refreshed from the
+    same file.
+    """
+    surviving_uids_set = rendered_uids(storage, variant)
+    path_to_dropped: dict[Path, int] = {}
+    for path in paths:
+        with path.open(newline="", encoding="utf-8") as csv_file:
+            reader = csv.DictReader(csv_file)
+            header = tuple(reader.fieldnames or ())
+            rows = [row for row in reader]
+        kept = [row for row in rows if row["uid"] in surviving_uids_set]
+        path_to_dropped[path] = len(rows) - len(kept)
+        write_csv(path, header, [tuple(row[column] for column in header) for row in kept])
+        print(
+            f"{path}: {len(kept):,} of {len(rows):,} rendered "
+            f"({path_to_dropped[path]:,} dropped)"
+        )
+    return path_to_dropped
+
+
 def push_subset(path: Path = SUBSET_PATH, name: str = SUBSET_NAME) -> str:
     """Copy the selection into the processed bucket and return the key it landed on.
 
@@ -334,12 +398,28 @@ def main() -> None:
     pushing = parser.add_mutually_exclusive_group()
     pushing.add_argument("--push", action="store_true",
                          help="also copy the new selection to the processed bucket")
+    pushing.add_argument("--verify-renders", action="store_true",
+                         help="cut both selections down to the models that actually "
+                              "rendered under the variant, then push. Run this after "
+                              "the textured pipeline and before either training run")
     pushing.add_argument("--push-only", action="store_true",
                          help="copy the existing subset and dev-set CSVs to the "
                               "bucket and select nothing")
     args = parser.parse_args()
 
     if args.push_only:
+        push_subset(args.out)
+        push_dev_set(dev_set_path(TEXTURED_DEV_SET_NAME), TEXTURED_DEV_SET_NAME)
+        return
+
+    if args.verify_renders:
+        # Run AFTER the textured pipeline, before either training run. Pushing
+        # follows in the same breath: a bucket copy still naming models that never
+        # rendered is what a cloud job would read.
+        settings = get_settings()
+        verify_against_renders(
+            [args.out, dev_set_path(TEXTURED_DEV_SET_NAME)], build_storage(settings)
+        )
         push_subset(args.out)
         push_dev_set(dev_set_path(TEXTURED_DEV_SET_NAME), TEXTURED_DEV_SET_NAME)
         return
