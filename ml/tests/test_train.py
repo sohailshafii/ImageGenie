@@ -13,7 +13,9 @@ from torch import nn
 from train import (
     Config,
     _build_loss,
+    _keeps_this_epoch,
     _save_weights,
+    _validate_checkpoint_selection,
     build_parser,
     data_snapshot,
     restrict_to_subset,
@@ -202,3 +204,47 @@ def test_the_launch_flags_carry_the_subset_and_the_arm() -> None:
 
     assert args.subset == "textured_subset"
     assert args.render_variant == TEXTURED_VARIANT
+
+
+def test_the_best_epoch_is_kept_and_a_worse_one_is_not() -> None:
+    """The A/B's control peaked at epoch 2 of 5 and was scored at epoch 5, because
+    one blob holds a run's weights and every epoch overwrote it. Improvement is
+    strict: an epoch that merely ties keeps the earlier, cheaper checkpoint."""
+    assert _keeps_this_epoch("best_val_loss", 1.92, None) is True  # first epoch
+    assert _keeps_this_epoch("best_val_loss", 1.90, 1.92) is True
+    assert _keeps_this_epoch("best_val_loss", 2.28, 1.92) is False
+    assert _keeps_this_epoch("best_val_loss", 1.92, 1.92) is False
+
+
+def test_without_a_validation_loss_best_degrades_to_last() -> None:
+    """A very small local smoke can produce an empty val split, and `_evaluate`
+    then returns None. With nothing to compare, the run must still end holding
+    weights — "best" becomes "last" rather than "never write any"."""
+    assert _keeps_this_epoch("best_val_loss", None, 1.92) is True
+
+
+def test_last_keeps_every_epoch() -> None:
+    """The pre-2026-09-16 behaviour, kept so a run can reproduce an older one."""
+    assert _keeps_this_epoch("last", 2.28, 1.92) is True
+
+
+def test_unknown_checkpoint_selection_is_rejected() -> None:
+    config = Config(checkpoint_selection="best_val_accuracy")
+
+    with pytest.raises(ValueError, match="unsupported checkpoint_selection"):
+        _validate_checkpoint_selection(config.checkpoint_selection)
+
+
+def test_the_checkpoint_policy_defaults_to_the_best_epoch() -> None:
+    """Unlike `render_variant`, this default does NOT describe the older runs: runs
+    1-24 all kept their last epoch. It is safe to change anyway, because what the
+    dashboard shows is the stored `training_run.config` blob, and for those runs
+    the key is simply absent — absent means no claim. The default is a statement
+    about the next run, not a retrofit of the previous ones."""
+    assert Config().checkpoint_selection == "best_val_loss"
+
+
+def test_the_launch_flags_carry_the_checkpoint_policy() -> None:
+    args = build_parser().parse_args(["--checkpoint-selection", "last"])
+
+    assert args.checkpoint_selection == "last"
