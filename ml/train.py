@@ -98,6 +98,22 @@ class Config:
     adam_eps: float = 1e-8
     seed: int = 0
 
+    # --- Checkpointing ---
+    # Which epoch's weights the run keeps. `weights_uri` is a single blob and
+    # every epoch overwrites it, so this decides *which* model is the one that
+    # later gets scored. "best_val_loss" writes only when the validation loss
+    # improves; "last" keeps the final epoch, which is what every run before
+    # 2026-09-16 did.
+    #
+    # The default is "best_val_loss" because the texture A/B showed the cost of
+    # the alternative (ml.md#the-texture-ab-what-it-found-2026-09-09): both arms'
+    # validation loss bottomed at epoch 2 of 5, and the control's then climbed
+    # while the treatment's held, so the comparison scored the control's *worst*
+    # epoch against a treatment epoch that happened to be fine. Selection on loss
+    # rather than accuracy is the conventional choice and needs no tie-break
+    # rule; on both arms the two criteria picked the same epoch anyway.
+    checkpoint_selection: str = "best_val_loss"  # "best_val_loss" | "last"
+
     # --- Runtime ---
     # "cpu" is the default so the local smoke never depends on a GPU (the locked
     # local-first decision); the cloud config sets "cuda". "auto" (cuda>mps>cpu)
@@ -401,6 +417,41 @@ def _format_metric(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
 
+CHECKPOINT_SELECTIONS = ("best_val_loss", "last")
+
+
+def _validate_checkpoint_selection(selection: str) -> str:
+    """Reject a typo *before* the run starts.
+
+    Checked in `main` alongside the render-variant resolution, and for the same
+    reason: the alternative is finding out at the end of the first epoch, which
+    on a real subset is ~8 minutes into a billed GPU job.
+    """
+    if selection not in CHECKPOINT_SELECTIONS:
+        raise ValueError(
+            f"unsupported checkpoint_selection {selection!r}; "
+            f"use one of {', '.join(CHECKPOINT_SELECTIONS)}"
+        )
+    return selection
+
+
+def _keeps_this_epoch(
+    selection: str, val_loss: float | None, best_val_loss: float | None
+) -> bool:
+    """Whether this epoch's weights should overwrite the run's checkpoint.
+
+    Under "last" every epoch is kept, so the checkpoint is simply the newest one.
+    Under "best_val_loss" an epoch is kept only when it improves on the best seen
+    so far — and always when there is no validation loss to judge it by, which is
+    the empty-val-split case a very small local smoke produces: with nothing to
+    compare, "best" degrades to "last" rather than to writing no weights at all.
+    """
+    _validate_checkpoint_selection(selection)
+    if selection == "last" or val_loss is None or best_val_loss is None:
+        return True
+    return val_loss < best_val_loss
+
+
 def _save_weights(storage: Storage, key: str, model: nn.Module) -> None:
     """Write the model's state_dict to ``key`` (torch.save into an in-memory
     buffer, then one blob write through the storage abstraction)."""
@@ -420,8 +471,9 @@ def run_training(
     gap and the accuracy series. The bookkeeping helpers (create_run / log_metric
     / finalize_run) are unchanged.
 
-    Weights are checkpointed to the same key after every epoch (overwriting), so a
-    spot preemption keeps the latest epoch.
+    Weights are checkpointed to the same key (overwriting) on every epoch the
+    `checkpoint_selection` policy keeps, so a spot preemption keeps the best epoch
+    so far rather than losing the run outright.
 
     Returns ``(weights_key, report)``. The report is the B4 per-class evaluation
     (`ml/metrics.py`) computed once, after the final epoch, on the **validation**
@@ -454,6 +506,13 @@ def run_training(
     loss_fn = _build_loss(config, split.train, device)
 
     global_step = 0
+    # The epoch whose weights are currently at `weights`, and the loss that won
+    # it. `kept_state` is a CPU copy of that checkpoint so the end-of-run report
+    # can be computed on the model that was actually stored, without reading the
+    # blob back.
+    kept_epoch = 0
+    kept_state: dict[str, torch.Tensor] | None = None
+    best_val_loss: float | None = None
     for epoch in range(config.epochs):
         model.train()
         batch_count = len(train_loader)
@@ -476,21 +535,43 @@ def run_training(
         val_loss, val_accuracy = _evaluate(model, val_loader, loss_fn, device)
         # The epoch's final step carries its train loss and both val metrics.
         log_metric(run_id, global_step - 1, last_train_loss, val_loss, val_accuracy)
-        _save_weights(storage, weights, model)  # checkpoint (overwrite) each epoch
+        kept = _keeps_this_epoch(config.checkpoint_selection, val_loss, best_val_loss)
+        if kept:
+            _save_weights(storage, weights, model)  # checkpoint (overwrite)
+            kept_epoch = epoch + 1
+            kept_state = {
+                name: tensor.detach().cpu().clone()
+                for name, tensor in model.state_dict().items()
+            }
+            if val_loss is not None:
+                best_val_loss = val_loss
         print(
             f"epoch {epoch + 1}/{config.epochs}  "
             f"train_loss={last_train_loss:.4f}  "
             f"val_loss={_format_metric(val_loss)}  "
-            f"val_acc={_format_metric(val_accuracy)}"
+            f"val_acc={_format_metric(val_accuracy)}  "
+            f"checkpoint={'kept' if kept else f'held at epoch {kept_epoch}'}"
         )
 
-    # One pass at the end, on the trained model — not per epoch. The report is a
+    # Score the weights that are actually at `weights`, not whatever the last
+    # epoch left in memory: under "best_val_loss" those are different models, and
+    # a run whose recorded metrics describe a checkpoint nobody can load back is
+    # exactly the bookkeeping failure NFR-4 exists to prevent.
+    if kept_state is not None:
+        model.load_state_dict(kept_state)
+    print(f"checkpoint: kept epoch {kept_epoch}/{config.epochs} ({config.checkpoint_selection})")
+
+    # One pass at the end, on the stored model — not per epoch. The report is a
     # summary of the finished run, and computing it every epoch would add a full
     # extra forward pass over val for numbers nothing reads until the run ends.
     report = None
     if len(val_loader) > 0:
         true_indices, predicted_indices = _collect_predictions(model, val_loader, device)
         report = evaluation_report(true_indices, predicted_indices, ROSTER, split="val")
+        # Which epoch produced these numbers, so a run's stored metrics say where
+        # in the curve its weights came from rather than leaving it to be inferred
+        # from `epochs` (which is only right when the last epoch was the best).
+        report["checkpoint_epoch"] = kept_epoch
         print(
             f"val report: accuracy={_format_metric(report['accuracy'])}  "
             f"macro_recall={_format_metric(report['macro_recall'])}"
@@ -540,6 +621,14 @@ def build_parser() -> argparse.ArgumentParser:
             '"none" | "balanced". "balanced" weights each class inversely to its '
             "frequency in the training split, so the 7.7:1 skew stops burying the "
             "tail classes."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-selection",
+        help=(
+            '"best_val_loss" (keep the epoch with the lowest validation loss) | '
+            '"last" (keep the final epoch). One blob holds a run\'s weights, so '
+            "this chooses which epoch is the one that later gets scored."
         ),
     )
     parser.add_argument(
@@ -671,6 +760,7 @@ def main() -> None:
     # mid-epoch, after a job has queued for a spot GPU and pulled a multi-GB image
     # — and it would surface as a missing blob rather than as a typo.
     layout_for(config.render_variant)
+    _validate_checkpoint_selection(config.checkpoint_selection)
     samples = load_trainable_samples()
     if not samples:
         raise SystemExit(
