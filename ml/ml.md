@@ -353,8 +353,9 @@ construction rather than by remembering to check.
   and the accuracy curve. Accuracy is stored rather than derived because on a ~7.7:1 skewed
   corpus a falling loss can hide a model that has collapsed onto the majority class; the
   accuracy sitting flat at that rate is what makes it visible. Weights are
-  checkpointed to `processed/models/{run_id}.pt` after every epoch (overwriting), so a spot
-  preemption keeps the latest epoch; the key becomes the run's `weights_uri` on success.
+  checkpointed to `processed/models/{run_id}.pt` (overwriting) on every epoch the
+  [checkpoint policy](#which-epoch-gets-scored) keeps, so a spot preemption keeps the best epoch so
+  far rather than losing the run; the key becomes the run's `weights_uri` on success.
 - **`main()`** — load samples → split → snapshot → `create_run` → train → `finalize_run(completed,
   weights_uri)`; an empty trainable set exits early, and any exception marks the run `failed` (so it
   never lingers as `running`) and re-raises. A short flag list overrides `Config` — `--device`,
@@ -368,6 +369,54 @@ construction rather than by remembering to check.
   class-balanced**, so a small run rehearses the real (~7.7:1 skewed) distribution rather than an
   easier balanced version of it, and the snapshot records `limit` so a subset run is never mistaken
   for a full one when comparing `label_count`s.
+
+### Which epoch gets scored
+
+A run's weights are **one blob**, `processed/models/{run_id}.pt`, and each kept epoch overwrites it.
+That makes "which epoch" a real decision rather than an implementation detail, because the epoch
+sitting in that blob when training ends is the one [evaluation](#scoring-a-finished-run-m7--c1)
+scores, the one the Evaluate button submits, and the one
+[inference](#scoring-a-finished-run-m7--c1) loads.
+
+`Config.checkpoint_selection` decides it, recorded per run like every other knob (NFR-4):
+
+| value | behaviour |
+|---|---|
+| `best_val_loss` *(default)* | overwrite the blob only when the epoch's validation loss improves on the best so far |
+| `last` | overwrite every epoch — what every run up to and including run 24 did |
+
+**Why the default changed (2026-09-16).** The [texture A/B](#the-texture-ab-what-it-found-2026-09-09)
+ran both arms for 5 epochs and scored epoch 5. Their validation curves say epoch 5 was the wrong
+epoch for both:
+
+| epoch | control (run 23) val loss / acc | treatment (run 24) val loss / acc |
+|---|---|---|
+| 1 | 2.1107 / 0.3129 | 2.2658 / 0.2143 |
+| 2 | **1.9240 / 0.3741** | **1.9244 / 0.3912** |
+| 3 | 1.9497 / 0.3537 | 2.0048 / 0.3537 |
+| 4 | 2.0043 / 0.3537 | 1.9437 / 0.3741 |
+| 5 | 2.2831 / 0.2959 | 2.0071 / 0.3673 |
+
+Both bottomed at epoch 2. The control then climbed away from it while the treatment held, so the
+comparison scored the control's **worst** epoch against a treatment epoch that happened to be fine:
+7.1 points apart on val accuracy at epoch 5, and 1.7 apart at their respective bests. That is not a
+reason to disbelieve the A/B's direction — it is a reason not to quote its *size* until both arms
+are re-run on equal footing, and it is a defect in the harness rather than in either arm.
+
+Three details worth stating, because each is a place this could have gone wrong:
+
+- **Improvement is strict.** An epoch that ties keeps the earlier checkpoint, which is the cheaper
+  model in wall-clock terms and avoids a late epoch displacing an equal early one for nothing.
+- **An empty validation split degrades to `last`, not to writing nothing.** `_evaluate` returns
+  `None` when there is no val data (a very small local smoke), and a run that ends holding no
+  weights at all would be a worse failure than a run that kept its last epoch.
+- **The end-of-run report is computed on the weights that were stored**, not on whatever the final
+  epoch left in memory — otherwise `training_run.metrics` would describe a model that is not the one
+  at `weights_uri`. The report carries `checkpoint_epoch` so a run says where in its own curve its
+  weights came from.
+
+Selection is on **loss**, not accuracy: it is the conventional choice, it needs no tie-break rule,
+and on both A/B arms the two criteria picked the same epoch anyway.
 
 ### Running in the cloud (M6 chunk G)
 
