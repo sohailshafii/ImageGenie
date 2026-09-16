@@ -316,6 +316,26 @@ VM was rejected: cheaper per-hour but requires manual teardown, reintroducing th
   existence rather than the `(model_uid, stage)` gate. The table is unique on that pair, so a
   variant row would overwrite the default arm's.
 
+- **Bulk publishes are paced** (`queue.publish_paced`, 250 jobs then a 20-second wall-clock pause).
+  A stage runs **one model per instance** (`max_instance_request_concurrency = 1`) and scales to 10
+  (download) or 15 (the three preprocessing stages), so a loop that publishes thousands of jobs as
+  fast as it can hands a service that holds fifteen requests a backlog of thousands. Cloud Run aborts
+  what it cannot place, Pub/Sub counts each abort as a failed delivery, and the overflow
+  dead-letters **before a worker ever runs** — so the failures carry no error text and leave no
+  `dead_letter` row (see [Dead letters](#dead-letters)). It has happened twice: 499 of 1,000 uids on
+  the 2026-07-30 dev-set seed, and 2,029 of 3,677 on the 2026-09-09 textured render burst. Raising
+  `max_delivery_attempts` to 20 (`infra/preprocessing.tf`) is the real fix, because it stops
+  congestion being mistaken for a poison message; pacing is the cheap half that keeps the burst from
+  happening at all. **Every bulk publisher paces**: `seed.py` and `seed_variant.py` hand their
+  payloads to `publish_paced` and expose `--batch-size` / `--batch-pause`; `replay_dlq.py` paces its
+  own pull-republish-ack loop on the same `PUBLISH_PAUSE_SECONDS` constant, because it has to
+  acknowledge what it pulled and so cannot hand a finished list to anything (`--pause`, `--max`).
+  That is also the tool where pacing matters most — a full DLQ usually means the stage was
+  overwhelmed, so draining it at full speed recreates the condition that filled it. The pause is
+  deliberately fixed rather than adaptive: the consumer's capacity is a
+  deployment fact the publishing process cannot see, and a feedback loop guessing at it would be one
+  more thing to get wrong in the middle of a paid run.
+
   The preprocessing stages share `workers/mesh.py` (load/concatenate/export) and `workers/artifacts.py`
   (the `(model_uid, stage)` idempotency gate + upsert). Every stage does an `artifact` upsert, so every
   stage's run-twice idempotency test runs against a real Postgres (testcontainers), per the

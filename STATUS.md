@@ -342,12 +342,18 @@ button against prod on 2026-08-16 rather than by review, which is the same lesso
      import bug died before claiming a row, so nothing has yet exercised a cloud job failing
      *after* the claim. It is covered by tests only.
 
-6. **Batch the seed the way the replay is batched.** Publishing 1,000 uids at once overruns the
-   download worker (maxScale 10 × one model per instance): Pub/Sub push gets 429s from Cloud Run,
-   `max_delivery_attempts = 5` quarantines the message, and the job dead-letters **before the worker
-   ever runs**. The 2026-07-30 dev-set seed landed 501 of 1,000 that way and needed
-   `app.replay_dlq --max 250` in rounds to recover (496 → 750 → 947 → 984). The recovery logic is the
-   fix; it just belongs at seed time.
+6. ~~**Batch the seed the way the replay is batched.**~~ — **DONE 2026-09-16.** `seed.py` now
+   publishes through `queue.publish_paced` (250 jobs, then a 20-second pause) with
+   `--batch-size` / `--batch-pause` overrides, matching `seed_variant.py` and `replay_dlq.py`; every
+   bulk publisher is paced. Documented in
+   [server.md](server/server.md#queue--workers). The original entry: publishing 1,000 uids at once
+   overruns the download worker (maxScale 10 × one model per instance): Pub/Sub push gets 429s from
+   Cloud Run, `max_delivery_attempts = 5` quarantines the message, and the job dead-letters **before
+   the worker ever runs**. The 2026-07-30 dev-set seed landed 501 of 1,000 that way and needed
+   `app.replay_dlq --max 250` in rounds to recover (496 → 750 → 947 → 984). **The second half of the
+   fix shipped on 2026-09-09** and is what makes this one sufficient rather than a mitigation:
+   `max_delivery_attempts` is now 20 on all four worker subscriptions, so congestion is retried
+   rather than mistaken for a poison message.
 7. **Push-level rejections leave no `dead_letter` row.** Failures are recorded by the worker at nack
    time — the only place the error text exists — so a message rejected *before* delivery is invisible
    in the admin dead-letter view. During the seed above, 499 quarantined models showed up nowhere in
