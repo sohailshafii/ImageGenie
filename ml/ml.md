@@ -359,11 +359,18 @@ construction rather than by remembering to check.
 - **`main()`** — load samples → split → snapshot → `create_run` → train → `finalize_run(completed,
   weights_uri)`; an empty trainable set exits early, and any exception marks the run `failed` (so it
   never lingers as `running`) and re-raises. A short flag list overrides `Config` — `--device`,
-  `--num-workers`, `--epochs`, `--batch-size`, `--learning-rate`, plus `--limit` and `--notes`.
+  `--num-workers`, `--epochs`, `--batch-size`, `--learning-rate`, `--seed`, plus `--limit` and
+  `--notes`.
   Deliberately short: the knobs a *run* varies (where it runs, how big, how much data), not every
   hyperparameter — the rest stay `Config` defaults edited in code. Each defaults to `None`, so an
   unset flag leaves the `Config` default alone rather than overwriting it. Whatever they resolve to
   is what gets recorded, so a cloud run is as reproducible as a local one.
+- **`--seed`** repeats a run under a different draw, which is how run-to-run spread gets measured
+  rather than assumed. It moves *two* things at once: `splits.bucket_of` hashes the seed with each
+  uid, so a new seed is a new **partition**, and torch's initialization and shuffling change with it.
+  Two seeds are therefore comparable on a **fixed dev set** (`lvis_textured`, `lvis`) and *not* on
+  their own held-out splits — the same trap as [run 14 vs run 15](#why-the-split-is-hashed-not-shuffled),
+  arriving from the other direction.
 - **`--limit N`** takes a seeded random subset — the cost guardrail for a first cloud run: prove the
   wiring on a few hundred models before paying for the full set. It is **proportional, not
   class-balanced**, so a small run rehearses the real (~7.7:1 skewed) distribution rather than an

@@ -248,3 +248,21 @@ def test_the_launch_flags_carry_the_checkpoint_policy() -> None:
     args = build_parser().parse_args(["--checkpoint-selection", "last"])
 
     assert args.checkpoint_selection == "last"
+
+
+def test_the_launch_flags_carry_the_seed() -> None:
+    """Repeating a run at another seed is how run-to-run spread gets measured, and
+    it was code-edit-only until the checkpoint fix needed it. The value reaches
+    `Config` through `vars(args)`, so parsing it is the whole wiring."""
+    args = build_parser().parse_args(["--seed", "1"])
+
+    assert args.seed == 1
+    assert Config(**{"seed": args.seed}).seed == 1
+
+
+def test_an_unset_seed_leaves_the_config_default_alone() -> None:
+    """Every flag defaults to None so an unset one does not overwrite the default
+    with argparse's idea of one — runs 1-24 were all seed 0 and must stay
+    reproducible."""
+    assert build_parser().parse_args([]).seed is None
+    assert Config().seed == 0

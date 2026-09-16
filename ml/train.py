@@ -624,6 +624,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        help=(
+            "the run's seed. It drives *both* the split (splits.bucket_of hashes "
+            "it with each uid) and torch's initialization and shuffling, so two "
+            "seeds are two different partitions as well as two different runs — "
+            "compare them on a fixed dev set, never on their own held-out splits "
+            "(ml.md#why-the-split-is-hashed-not-shuffled)."
+        ),
+    )
+    parser.add_argument(
         "--checkpoint-selection",
         help=(
             '"best_val_loss" (keep the epoch with the lowest validation loss) | '
