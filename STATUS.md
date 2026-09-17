@@ -218,13 +218,16 @@ restating because they are easy to forget:
 
 So the ceiling is in the *representation* or the *calibration*, in that order:
 
-1. ~~**Texture/material A/B**~~ — **ANSWERED 2026-09-09: +9.6 points of macro recall**
-   (0.2912 → 0.3869 on `lvis_textured`, runs 23 and 24, evaluations 10 and 11). Full result, the
-   per-class table and what it does *not* show: [ml.md](ml/ml.md#the-texture-ab-what-it-found-2026-09-09).
-   The gain is real at ~5x the dev set's standard error, but the mechanism predicted for it was
-   wrong — `plant` recall *fell* 0.53, because the control was predicting `plant` for 43% of the
-   corpus at 0.193 precision and the treatment stopped. Read that section before quoting the
-   headline.
+1. ~~**Texture/material A/B**~~ — **ANSWERED 2026-09-16, and the answer is "no measurable effect".**
+   The 2026-09-09 result (+9.6 points of macro recall) **did not survive a re-run** and should not be
+   quoted. It was an artifact of scoring each arm's *last* epoch when the control's last epoch was its
+   worst; a run's weights are one blob and every epoch used to overwrite it. Re-run at two seeds per
+   arm under [best-epoch checkpointing](ml/ml.md#which-epoch-gets-scored), both arms scored on all 577
+   `lvis_textured` models: **+0.0149 at seed 0 (runs 25/26), −0.0262 at seed 1 (runs 27/28)** — opposite
+   signs, with the treatment 0.6 points *lower* on average and a 2.6-point spread between the two
+   control seeds alone. Full write-up, including the prediction-share table that closes the degeneracy
+   question: [ml.md](ml/ml.md#the-texture-ab-re-run-2026-09-16). **The real gain was the harness**:
+   every best-epoch run (0.4088–0.4350) beats both original arms, including the textured one at 0.3869.
 
    Original entry: **Built, not yet run.** Renders are shape-only:
    `render.py` overrides every material with neutral grey, and `convert` exports PLY, which carries
@@ -255,8 +258,31 @@ So the ceiling is in the *representation* or the *calibration*, in that order:
 2. **Class weighting at full scale.** The calibration failure is now measured twice: small classes
    are precise but under-predicted, and `weapon` precision falls 0.74 → 0.49 the moment the dev set
    is balanced. The run 3/4 A/B lost its conclusion to the split-fraction defect, not to a null
-   result, so this is unfinished rather than answered.
+   result, so this is unfinished rather than answered — and it now has a second reason to be redone:
+   both of its arms were scored at their last epoch (item 16), and the best-epoch runs show that
+   calibration is partly a property of *which* epoch is kept. The control's `plant` collapse
+   disappeared without any change to weighting at all.
 3. **Generic hyperparameter search — last.** Listed for completeness. Nothing measured points here.
+
+### New from the checkpoint-selection fix (2026-09-16)
+
+Numbered from 16 because the numbers in this document are stable references, not list positions.
+
+16. **Every result before 2026-09-16 was scored on a last-epoch snapshot**, now known to be the wrong
+    epoch often enough to matter — it cost the control arm 12 points of macro recall. That does not
+    invalidate those runs, but any *comparison* among them can carry the same artifact: the run 3/4
+    class-weighting A/B, the run 14 vs 15 pair, and run 15's 0.3712 on `lvis` were all snapshots of
+    whichever epoch happened to finish last. The cheapest way to learn how much this matters elsewhere
+    is to re-run one comparison that mattered — item 2 is the obvious candidate, at ~$0.50 per
+    arm-run on this subset.
+17. **Settling the texture question needs more seeds** — four or five per arm rather than two, or a
+    longer schedule, since a two-seed comparison cannot resolve an effect smaller than its own
+    2.6-point seed spread. Worth doing only if a sharper answer is needed for the write-up; "no
+    effect we can measure" is already defensible.
+18. **Expose `checkpoint_selection` in the launch form.** `ml/train.py` takes
+    `--checkpoint-selection`, but the dashboard's Start-a-run page does not offer it, so a UI-launched
+    run silently takes the `best_val_loss` default. A small `web/` + `training_jobs.py` change — about
+    the form telling the truth rather than about capability, since the default is the right one.
 
 **Every attempt gets a logged run**, whatever it is. `training_run` already records config, data
 snapshot and metrics for each one (NFR-4), and an experiment scored with `make evaluate` or the

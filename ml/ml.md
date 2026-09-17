@@ -1394,6 +1394,12 @@ different data, which is the failure mode [the metric traps](#evaluation) are fu
 
 ## The Texture A/B: What It Found (2026-09-09)
 
+> ⚠️ **Superseded on 2026-09-16. The +9.6 below did not survive a re-run** — it was an artifact of
+> scoring each arm's *last* epoch, and the control's last epoch was its worst. Read
+> [The Texture A/B, Re-Run](#the-texture-ab-re-run-2026-09-16) for what replaces it. This section is
+> kept because the reasoning it records is still worth reading and because the run rows it cites
+> still exist; every number in it is accurate for the checkpoints it scored.
+
 **Textured renders raised macro recall on the independent dev set from 0.2912 to 0.3869 — up 9.6
 points.** Accuracy moved almost identically (0.3102 → 0.4038, +9.4). Against the ~0.02 standard
 error this dev set supports, that is roughly five times the noise floor and comfortably past the 3-4
@@ -1471,6 +1477,73 @@ treatment as evidence against it.
   class-balanced, scored on 577. Run 15 is context, not a baseline.
 - **It says nothing about the 42% of the corpus that carries no texture**, whose renders cannot
   change. Any corpus-wide gain is bounded by the textured share.
+
+## The Texture A/B, Re-Run (2026-09-16)
+
+**There is no measurable texture effect.** Re-running both arms under
+[best-epoch checkpointing](#which-epoch-gets-scored), at two seeds each, on the same 3,008-model
+subset and scored on all 577 `lvis_textured` models:
+
+| seed | control (shape-only) | treatment (textured) | delta |
+|---|---|---|---|
+| 0 | 0.4095 (`run 25`, evaluation 12) | 0.4244 (`run 26`, evaluation 13) | **+0.0149** |
+| 1 | 0.4350 (`run 27`, evaluation 14) | 0.4088 (`run 28`, evaluation 15) | **−0.0262** |
+| mean | **0.4223** | **0.4166** | **−0.0057** |
+
+Macro recall throughout; accuracy tracks it within 1.5 points on every row, as it should on a
+near-balanced dev set. The two deltas **point in opposite directions**, and the treatment is 0.6
+points *lower* on average. The spread between the two control seeds alone is **2.6 points** — larger
+than seed 0's apparent texture gain — so a one-seed comparison on this dev set cannot resolve an
+effect of the size being claimed. Two seeds cannot either, beyond saying that whatever colour is
+worth here is smaller than the run-to-run noise.
+
+**What the original +9.6 was.** Under the old policy a run's single weights blob held whichever epoch
+finished last. The control's last epoch was its worst (val loss 1.9240 at epoch 2 → 2.2831 at epoch
+5) while the treatment's was near its best, so the comparison measured that difference and attributed
+it to colour. Nothing was wrong with either arm, the code, or the dev set; the harness scored two
+models that were not each run's own result.
+
+**Checkpoint selection is worth more than texture ever appeared to be.** Every one of the four new
+runs (0.4088–0.4350) beats *both* original arms, including the textured one at 0.3869 — a gain of 3
+to 12 points depending on which arm it is measured against, from keeping the right epoch of an
+otherwise identical run.
+
+### It also settles the degeneracy question, with a third answer
+
+The open question left by the first A/B was whether the control's collapse onto one class was a
+property of shape-only renders or merely of a short run on a small subset. It was **neither**: it was
+the late-epoch collapse being the snapshot that got scored. Share of predictions taken by each run's
+most-used class, against an even 8.3%:
+
+| run | arm | top class | share |
+|---|---|---|---|
+| 23 (last epoch) | shape-only | `plant` | **43.2%** |
+| 24 (last epoch) | textured | `figure` | 28.6% |
+| 25 (best epoch) | shape-only | `electronics` | 16.1% |
+| 26 (best epoch) | textured | `chair` | 16.5% |
+| 27 (best epoch) | shape-only | `animal` | 18.9% |
+| 28 (best epoch) | textured | `car` | 17.3% |
+
+All four best-epoch runs sit at 16–19% regardless of arm. The pathology belonged to the epoch, not to
+the renders — which also revises the [reading recorded from the first A/B](#plant-fell-because-the-control-was-over-predicting-it):
+the control's `plant` over-prediction was real and the recall-without-precision lesson stands, but its
+*cause* was the checkpoint rather than the absence of colour.
+
+### What this re-run does and does not license
+
+- **It does not show that texture cannot help.** It shows that on 3,008 models, 5 epochs, this
+  architecture and this dev set, any effect is below the noise floor of a two-seed comparison.
+  Settling the question would need more seeds (four or five per arm), a longer schedule, or both —
+  and the cost is ~$0.50 per arm-run.
+- **The absolute numbers are still low and both arms still undertrained.** 0.42 macro recall on a
+  12-class near-balanced set (chance 8.3%) is a working classifier, not a good one.
+- **It is still not comparable to run 15's 0.3712**, for the same population reasons as before.
+- **Macro precision moved the other way** (control 0.4885/0.5084, treatment 0.4613/0.4468), so the
+  best-epoch runs buy recall and spread at some cost in precision relative to the originals'
+  0.52/0.59. That is what leaving a degenerate high-precision corner looks like, and it is why macro
+  recall is the metric of record here — but it should be stated, not hidden.
+- **Every seed change is also a split change**, so these runs are comparable on `lvis_textured` and
+  never on their own held-out splits ([why](#why-the-split-is-hashed-not-shuffled)).
 
 ## Coding Standards (ML)
 
